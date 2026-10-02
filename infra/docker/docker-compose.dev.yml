@@ -89,6 +89,15 @@ services:
     depends_on:
       redpanda:
         condition: service_healthy
+    # Without a healthcheck, `up --wait` returns as soon as the container is
+    # running, which for a web UI means "the process started", not "it answers".
+    # The debugging UIs being reachable is an acceptance criterion, so it gets
+    # checked rather than assumed.
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8080/admin/health']
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # ── Cache, locks, rate limits ─────────────────────────────────────────────
   redis:
@@ -155,6 +164,14 @@ services:
       - '16686:16686' # UI
       - '4317:4317' # OTLP gRPC
       - '4318:4318' # OTLP HTTP
+    # 14269 is Jaeger's admin port. It is deliberately not published to the host:
+    # the healthcheck runs inside the container, and exposing an admin endpoint to
+    # the host buys nothing a developer needs.
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:14269/']
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   pgdata:

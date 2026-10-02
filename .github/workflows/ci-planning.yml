@@ -1,0 +1,55 @@
+name: CI · Planning
+
+# planning/ is the source of truth for the board, the roadmap and the progress
+# page, so a malformed backlog is a broken board. This runs on its own because it
+# needs neither Node packages nor containers — it is the cheapest gate in the repo
+# and should never queue behind one of the expensive ones.
+#
+# See ci-typescript.yml for why the trigger carries no `paths:` filter.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-planning-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes · planning
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      planning: ${{ steps.filter.outputs.planning }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            planning:
+              - 'planning/**'
+              - 'scripts/validate-backlog.mjs'
+              - 'scripts/sync-board.mjs'
+              - '.github/workflows/ci-planning.yml'
+
+  planning:
+    needs: changes
+    if: needs.changes.outputs.planning == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Enforces acceptance criteria, test coverage, dependency ordering and
+      # cycle-freedom before anything can reach the board.
+      - name: Validate backlog
+        run: node scripts/validate-backlog.mjs

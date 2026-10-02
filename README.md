@@ -8,8 +8,9 @@ Watches Microsoft 365, Google Workspace, cloud and firewall activity around the 
 Collapses alert noise into a handful of real cases · Investigates each one with an LLM that
 is *mechanically forbidden from guessing* · Explains it in plain English · Fixes it on one tap.
 
-[![CI](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci.yml)
-[![Detections](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/detections.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/detections.yml)
+[![TypeScript](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-typescript.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-typescript.yml)
+[![Go](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-go.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-go.yml)
+[![Integration](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-integration.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci-integration.yml)
 [![Tickets](https://img.shields.io/badge/backlog-95%20tickets%20%C2%B7%20348%20tests-38BDF8)](https://github.com/users/ajeetsingh272/projects/2)
 
 </div>
@@ -132,6 +133,9 @@ Full setup including connector OAuth registration:
 
 Build caching, and how to enable the shared Remote Cache:
 [`docs/build-cache.md`](docs/build-cache.md).
+
+What CI gates and why path filtering lives in a job rather than a trigger:
+[`docs/ci.md`](docs/ci.md).
 
 ## Project status & planning
 

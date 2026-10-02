@@ -1,0 +1,127 @@
+name: CI · TypeScript
+
+# One of four CI workflows (P0-02). TypeScript and Go are separate files so they
+# run concurrently, are gated independently, and are owned independently — a Go
+# change never waits on a TypeScript queue, and editing one cannot break the
+# other's trigger.
+#
+# Note what this workflow does NOT do: it has no `paths:` filter on the trigger.
+# That is deliberate and it is the whole reason for the `changes` job below.
+# A workflow skipped by `on.paths` never reports a check at all, and a required
+# status check that never reports blocks the pull request forever. A job skipped
+# by `if:` does report — as skipped, which GitHub counts as satisfied. So the
+# workflow always starts and the work inside is what gets filtered.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Distinct from the other CI workflows. Sharing one group across files would make
+# each push cancel its siblings, which looks exactly like a flaky pipeline.
+concurrency:
+  group: ci-typescript-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes · typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ts: ${{ steps.filter.outputs.ts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ts:
+              - 'apps/**'
+              - 'packages/**'
+              - 'tools/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+              - 'tsconfig.base.json'
+              - 'eslint.config.js'
+              - '.github/workflows/ci-typescript.yml'
+
+  typescript:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    # The pipeline budget is 8 minutes on a warm cache (P0-02 AC4). A timeout
+    # turns a hung job into a failure in minutes instead of six hours.
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Runs first: it checks that every package declares the scripts the gates
+      # below invoke. `turbo run typecheck` reports success for a package with
+      # no typecheck script, so without this a package can silently opt out of
+      # every check that follows.
+      - name: Validate workspace manifests
+        run: node scripts/validate-workspace.mjs
+
+      # Asserts the path filters in these workflows actually route correctly —
+      # a docs-only change must not reach the Go matrix (P0-02 AC3/T3).
+      - name: Validate workflow path filters
+        run: node scripts/validate-workflows.mjs
+
+      # Each gate reports its own real exit code. Nothing is piped to tail or
+      # grep — a swallowed failure here is a failure that ships.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Build
+        run: pnpm build
+
+  # P0-01 T1 — install and build with no cached state of any kind.
+  #
+  # The `typescript` job above restores the pnpm store and the Turborepo cache,
+  # which is what makes it fast and also what makes it a poor test of a first
+  # clone. A lockfile that resolves only because a package is already in the
+  # store, or a build that only passes because a stale artefact was replayed,
+  # both look green there and fail for the next person who clones the repo.
+  #
+  # So this job turns both caches off: no `cache: pnpm`, and TURBO_FORCE to make
+  # every task actually execute rather than replay.
+  clean-clone:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      TURBO_FORCE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # --frozen-lockfile is the point: it fails if the lockfile does not already
+      # satisfy every manifest, which is the state a fresh clone is in.
+      - name: Install from a cold store
+        run: pnpm install --frozen-lockfile
+
+      - name: Build with no cache replay
+        run: pnpm build

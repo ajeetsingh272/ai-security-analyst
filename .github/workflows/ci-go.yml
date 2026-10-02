@@ -1,0 +1,91 @@
+name: CI · Go
+
+# The Go half of CI (P0-02), separate from TypeScript so the two run concurrently
+# and gate independently. See ci-typescript.yml for why the trigger carries no
+# `paths:` filter and the filtering happens in the `changes` job instead.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-go-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes · go
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      detections: ${{ steps.filter.outputs.detections }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'services/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'scripts/go-*.sh'
+              - '.github/workflows/ci-go.yml'
+            # Rules are data, not code: a new rule with a missing fixture must be
+            # caught even when no Go source changed.
+            detections:
+              - 'detections/**'
+              - 'services/detect/**'
+              - 'scripts/validate-detections.sh'
+              - '.github/workflows/ci-go.yml'
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: '**/go.sum'
+
+      # With a go.work, the repo root is not a module, so `./...` cannot
+      # resolve from here. These scripts enter each module explicitly.
+      #
+      # CI runs the race detector. The developer machine cannot — it needs cgo
+      # and a C compiler — so go-test.sh skips it there with a note. This is the
+      # only place races are actually caught, which is why it must not be skipped.
+      - name: Vet and test with race detector
+        run: bash scripts/go-test.sh
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: services/ingest
+
+      - name: Build
+        run: bash scripts/go-build.sh
+
+  # Enforces the rule from CONTRIBUTING.md: every detection rule carries a
+  # MITRE technique and both a positive and a negative fixture. A rule without
+  # a negative fixture is a false-positive generator, so the build refuses it.
+  detections:
+    needs: changes
+    if: needs.changes.outputs.detections == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Validate detection rules
+        run: bash scripts/validate-detections.sh

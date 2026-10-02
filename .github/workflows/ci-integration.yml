@@ -1,0 +1,118 @@
+name: CI · Integration
+
+# Isolation and schema guarantees, tested against real containers (P0-02, P0-03 T1).
+#
+# Kept in its own workflow because it is the slow one: it starts six services and
+# migrates a database, so folding it into the TypeScript workflow would make every
+# lint failure wait behind Docker. Separate files mean the fast gates report fast.
+#
+# See ci-typescript.yml for why the trigger carries no `paths:` filter.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes · integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.ts == 'true' || steps.filter.outputs.go == 'true' || steps.filter.outputs.db == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ts:
+              - 'apps/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+            go:
+              - 'services/**'
+              - 'go.work'
+            # Without this, adding a migration changed nothing CI looked at, so
+            # the schema could move without a single check running against it.
+            db:
+              - 'db/**'
+              - 'scripts/**'
+              - 'infra/**'
+              - 'docs/architecture/data-model.md'
+              - '.github/workflows/ci-integration.yml'
+
+  integration:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    # Longest job in the pipeline: container startup plus migrations plus a
+    # throwaway-database migration run. Still inside the 8-minute warm budget,
+    # with headroom for image pulls.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - run: pnpm install --frozen-lockfile
+
+      # --wait makes compose block until every healthcheck passes and fail if any
+      # does not. `docker compose up` can otherwise return 0 while a pull failed,
+      # so the exit code alone is not evidence the stack is usable.
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait
+
+      # P0-03 T1/T2 — asserts every service is genuinely healthy, that the
+      # debugging UIs answer, and that named volumes survive a restart.
+      - name: Verify stack health and persistence
+        run: pnpm stack:check
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      # Every tenant-scoped table carries a non-null tenant_id. Enumerated from
+      # the live database, so a new table cannot opt out by not being noticed.
+      - name: Schema tenancy lint
+        run: pnpm db:validate
+
+      # Migrates a throwaway database from empty and asserts the seed is
+      # idempotent. Production is migrated from empty exactly once, and this is
+      # the only place that path is exercised.
+      - name: Migrations from empty, seed idempotency
+        run: pnpm db:check
+
+      # The data model document is generated from the schema. If a migration
+      # landed without regenerating it, the committed document is now a
+      # confident description of a schema that no longer exists.
+      - name: Data model doc is current
+        run: pnpm db:docs:check
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Tenant isolation suite
+        run: pnpm test:integration --project=isolation
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v
