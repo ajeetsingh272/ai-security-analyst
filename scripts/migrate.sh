@@ -68,7 +68,7 @@ else
     # Hash with line endings normalised. Hashing raw bytes would make a
     # Windows checkout (CRLF) and Linux CI (LF) disagree about an identical
     # file, producing a spurious "migration edited" failure.
-    sum=$(tr -d '' < "$f" | sha256sum | cut -d' ' -f1)
+    sum=$(tr -d '\015' < "$f" | sha256sum | cut -d' ' -f1)
     prev=$(pg_sql "SELECT checksum FROM schema_migrations WHERE filename = '$name';" | tr -d '[:space:]')
 
     if [ -n "$prev" ]; then
