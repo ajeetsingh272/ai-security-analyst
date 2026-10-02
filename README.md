@@ -10,7 +10,7 @@ is *mechanically forbidden from guessing* · Explains it in plain English · Fix
 
 [![CI](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/ci.yml)
 [![Detections](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/detections.yml/badge.svg)](https://github.com/ajeetsingh272/ai-security-analyst/actions/workflows/detections.yml)
-[![Progress](https://img.shields.io/badge/project-progress%20dashboard-38BDF8)](https://ajeetsingh272.github.io/ai-security-analyst/)
+[![Tickets](https://img.shields.io/badge/backlog-95%20tickets%20%C2%B7%20348%20tests-38BDF8)](https://github.com/users/ajeetsingh272/projects/2)
 
 </div>
 
@@ -131,12 +131,26 @@ Full setup including connector OAuth registration:
 
 This repository is in **Phase 0 — Foundation**. Everything is planned before it is built.
 
-- **[Live progress dashboard](https://ajeetsingh272.github.io/ai-security-analyst/)** — phase
-  completion, burndown, ticket and test-case status, rebuilt automatically on every board change
-- **[Project board](https://github.com/users/ajeetsingh272/projects)** — every ticket with
-  acceptance criteria and test cases
+- **[Progress dashboard](docs/progress-dashboard.md)** — phase completion, burndown,
+  ticket and test-case status, rebuilt automatically on every board change.
+  *(The GitHub Pages deploy is blocked until the repo is public or on GitHub Pro —
+  see that document for the three options.)*
+- **[Project board](https://github.com/users/ajeetsingh272/projects/2)** — 95 tickets,
+  each with acceptance criteria and test cases
 - **[Roadmap](docs/roadmap.md)** — eight phases, scope and honest sizing
-- **[Design spec](docs/superpowers/specs/)** — the approved design this was generated from
+- **[Design spec](docs/superpowers/specs/2026-10-02-ai-security-analyst-design.md)** —
+  the approved design this repository was generated from
+
+| | |
+|---|---|
+| Tickets | 95 |
+| Test cases | 348 |
+| Story points | 502 |
+| Phases | 8 (~34 weeks; ~26 to pilot-ready) |
+
+`planning/` is the source of truth. Edit it, then run `node scripts/sync-board.mjs`
+to regenerate issues, milestones and the board — never edit a generated issue body
+by hand.
 
 ## Trust guarantees
 

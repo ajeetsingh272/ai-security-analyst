@@ -163,26 +163,46 @@ function bar(pct, color) {
 
 const built = new Date().toISOString();
 
-const html = `<!doctype html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sentinel · Delivery</title>
-<meta name="description" content="Live build progress for Sentinel, the AI Security Analyst.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
+const FONTS =
+  'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap';
+
+// Dark-first, matching packages/design-tokens. Every colour is a token defined
+// on bare :root; the light blocks only redefine tokens, so no component rule
+// carries a literal that reads in one theme only.
+const STYLE = `
 :root{
   --void:#070A11; --base:#0C111C; --raised:#131A28; --sunken:#04060B;
   --hair:rgba(255,255,255,.08); --strong:rgba(255,255,255,.16);
   --t1:#E8ECF4; --t2:#9BA6BA; --t3:#7A849A;
   --critical:#FF3D6E; --high:#FF8A3D; --medium:#F5C544; --low:#3DBFF2; --info:#777F8F;
   --signal:#34D1F0; --verified:#4ADE9B;
+  --glow:rgba(52,209,240,.07);
   --f-display:'Bricolage Grotesque','Archivo',system-ui,sans-serif;
-  --f-ui:'Archivo',system-ui,sans-serif;
+  --f-ui:'Archivo',system-ui,-apple-system,sans-serif;
   --f-mono:'IBM Plex Mono',ui-monospace,monospace;
+  color-scheme:dark;
+}
+/* Severity hues shift in lightness, never in hue, so the learned
+   colour-to-meaning mapping survives the theme switch. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --void:#F7F8FA; --base:#FFFFFF; --raised:#F0F2F6; --sunken:#EBEEF3;
+    --hair:rgba(10,14,22,.10); --strong:rgba(10,14,22,.20);
+    --t1:#0C111C; --t2:#4A5568; --t3:#626D7D;
+    --critical:#C70038; --high:#B45309; --medium:#8A6400; --low:#0369A1; --info:#54606F;
+    --signal:#0E7F99; --verified:#15803D;
+    --glow:rgba(14,127,153,.06);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --void:#F7F8FA; --base:#FFFFFF; --raised:#F0F2F6; --sunken:#EBEEF3;
+  --hair:rgba(10,14,22,.10); --strong:rgba(10,14,22,.20);
+  --t1:#0C111C; --t2:#4A5568; --t3:#626D7D;
+  --critical:#C70038; --high:#B45309; --medium:#8A6400; --low:#0369A1; --info:#54606F;
+  --signal:#0E7F99; --verified:#15803D;
+  --glow:rgba(14,127,153,.06);
+  color-scheme:light;
 }
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -190,10 +210,10 @@ body{
   margin:0;background:var(--void);color:var(--t1);
   font-family:var(--f-ui);font-size:14px;line-height:1.55;
   -webkit-font-smoothing:antialiased;
-  background-image:radial-gradient(ellipse 80% 50% at 50% -10%, rgba(52,209,240,.07), transparent 70%);
+  background-image:radial-gradient(ellipse 80% 50% at 50% -10%, var(--glow), transparent 70%);
   background-repeat:no-repeat;
 }
-.wrap{max-width:1180px;margin:0 auto;padding:0 16px 96px}
+.wrap{max-width:1180px;margin:0 auto;padding-block:0 96px;padding-inline:16px}
 a{color:inherit}
 code,.mono{font-family:var(--f-mono);font-variant-ligatures:none}
 
@@ -291,9 +311,9 @@ footer{margin-top:72px;padding-top:24px;border-top:1px solid var(--hair);color:v
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
-</style>
-</head>
-<body>
+`;
+
+const BODY = `
 <div class="wrap">
 
 <header>
@@ -436,11 +456,39 @@ ${Object.entries(testTypeCounts)
 </footer>
 
 </div>
-</body>
+`;
+
+/** Standalone page for GitHub Pages. */
+const page = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sentinel Delivery</title>
+<meta name="description" content="Live build progress for Sentinel, the AI Security Analyst.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="${FONTS}" rel="stylesheet">
+<style>${STYLE}</style>
+</head>
+<body>${BODY}</body>
 </html>`;
 
+/**
+ * Same page as a Claude Artifact fragment. The Artifact platform supplies the
+ * document skeleton, so this omits doctype/html/head/body — one source, two
+ * targets, so the hosted copy can never drift from the Pages copy.
+ */
+const artifact = `<title>Sentinel Delivery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="${FONTS}" rel="stylesheet">
+<style>${STYLE}</style>
+${BODY}`;
+
 mkdirSync(OUT, { recursive: true });
-writeFileSync(join(OUT, 'index.html'), html, 'utf8');
+writeFileSync(join(OUT, 'index.html'), page, 'utf8');
+writeFileSync(join(OUT, 'artifact.html'), artifact, 'utf8');
 writeFileSync(
   join(OUT, 'progress.json'),
   JSON.stringify({ built, live, totals, statusCounts, phases: phases.map(({ tickets: _, ...p }) => p) }, null, 2),
