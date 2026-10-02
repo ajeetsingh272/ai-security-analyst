@@ -1,0 +1,28 @@
+# Normalise line endings.
+#
+# These files are executed on Linux (CI, containers, production). A shell script
+# committed with CRLF fails there with "bad interpreter: /usr/bin/env bash^M",
+# which is confusing to diagnose and trivial to prevent.
+* text=auto eol=lf
+
+# Must be LF regardless of platform — they are interpreted on Linux.
+*.sh      text eol=lf
+*.bash    text eol=lf
+*.sql     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+Dockerfile* text eol=lf
+*.mjs     text eol=lf
+*.js      text eol=lf
+*.ts      text eol=lf
+*.tsx     text eol=lf
+*.go      text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+
+# Binary: never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.pdf binary
