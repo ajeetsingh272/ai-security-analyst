@@ -1,0 +1,308 @@
+[
+  {
+    "id": "P2-01",
+    "title": "Sigma rule parser and intermediate representation",
+    "epic": "Sigma Compiler",
+    "type": "feat",
+    "area": "detect",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-11"],
+    "description": "Parse the Sigma specification subset we support into a typed intermediate representation, rejecting anything outside that subset loudly rather than silently mis-evaluating it.",
+    "acceptance": [
+      "Supports selection, condition, modifiers (contains, startswith, endswith, re, all, base64), and near/aggregation detection for routing to the windowed engine",
+      "An unsupported construct fails the build with a clear message naming the rule and the construct",
+      "The pinned Sigma specification version is recorded in config",
+      "Field names are mapped to OCSF paths through an explicit, reviewable mapping table",
+      "Parse errors identify the file, line and construct"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Parses every rule in the committed corpus without error" },
+      { "id": "T2", "type": "unit", "desc": "Unsupported construct produces a precise, actionable error" },
+      { "id": "T3", "type": "unit", "desc": "Each supported modifier produces the expected intermediate representation" },
+      { "id": "T4", "type": "unit", "desc": "Field mapping failure for an unknown field is an error, not a silent no-match" }
+    ]
+  },
+  {
+    "id": "P2-02",
+    "title": "Sigma-to-Go code generator",
+    "epic": "Sigma Compiler",
+    "type": "feat",
+    "area": "detect",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P2-01"],
+    "description": "Implements ADR-0004. Emits compiled Go predicates plus a per-rule generated test built from that rule's fixtures.",
+    "acceptance": [
+      "Generated code compiles and is committed, clearly marked as generated",
+      "A test is generated per rule asserting its positive fixture fires and its negative fixture does not",
+      "Compilation fails if a rule lacks a MITRE technique id",
+      "Compilation fails if a rule lacks either fixture",
+      "Regenerating produces no diff when inputs are unchanged"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Generated matcher output equals a reference interpreter on a 10,000-event corpus" },
+      { "id": "T2", "type": "unit", "desc": "A rule without a MITRE id fails the build" },
+      { "id": "T3", "type": "unit", "desc": "A rule without a negative fixture fails the build" },
+      { "id": "T4", "type": "integration", "desc": "CI regeneration is diff-free for unchanged inputs" }
+    ]
+  },
+  {
+    "id": "P2-03",
+    "title": "Field-indexed dispatch tree for rule evaluation",
+    "epic": "Sigma Compiler",
+    "type": "feat",
+    "area": "detect",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P2-02"],
+    "description": "Rather than evaluating 150 rules per event, dispatch on high-selectivity fields first so a typical event is tested against a handful of candidates.",
+    "acceptance": [
+      "Dispatch keys on class_uid, activity_id and metadata.product before rule-specific predicates",
+      "Candidate rule count per event is exported as a metric",
+      "Evaluation result is provably identical to exhaustive evaluation",
+      "Per-event evaluation stays under 50 microseconds at p99 on the reference corpus",
+      "Adding a rule does not require hand-editing the dispatch tree"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Dispatch result is identical to exhaustive evaluation across the full fixture corpus" },
+      { "id": "T2", "type": "load", "desc": "p99 per-event evaluation under 50 microseconds with 150 rules loaded" },
+      { "id": "T3", "type": "unit", "desc": "A rule matching on a low-selectivity field is still reached correctly" }
+    ]
+  },
+  {
+    "id": "P2-04",
+    "title": "In-stream detection worker",
+    "epic": "Detection Runtime",
+    "type": "feat",
+    "area": "detect",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P2-03", "P1-05"],
+    "description": "Consumes normalised events, evaluates compiled rules, and emits Signals to the signals topic with full event references attached.",
+    "acceptance": [
+      "Every emitted signal references the event_id that produced it",
+      "Signals carry rule id, MITRE technique, severity and tenant",
+      "Consumer lag is exported per partition",
+      "Evaluation errors route to DLQ without halting the worker",
+      "Horizontal scaling is linear up to the partition count"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A known malicious event sequence produces exactly the expected signal set" },
+      { "id": "T2", "type": "integration", "desc": "A worker crash mid-batch replays without losing signals" },
+      { "id": "T3", "type": "load", "desc": "30k EPS sustained across a scaled worker set" },
+      { "id": "T4", "type": "unit", "desc": "An evaluation panic is recovered, routed to DLQ, and the worker continues" }
+    ]
+  },
+  {
+    "id": "P2-05",
+    "title": "Windowed detection rules executing in ClickHouse",
+    "epic": "Detection Runtime",
+    "type": "feat",
+    "area": "detect",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P1-06"],
+    "description": "Stateful rules that need a join against history — impossible travel, brute force, mass download, baseline deviation — as scheduled parameterised ClickHouse queries.",
+    "acceptance": [
+      "Rule class determines schedule: 30s for high-urgency, up to 15 minutes for baseline rules",
+      "Queries are parameterised and tenant-scoped; no string interpolation of tenant identifiers",
+      "Overlapping executions are prevented by a per-rule lock",
+      "A rule exceeding its time budget is killed and alerted on rather than left running",
+      "Results emit signals on the same topic and in the same shape as in-stream rules"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Impossible travel fires for a seeded two-country sign-in pair inside the velocity threshold" },
+      { "id": "T2", "type": "integration", "desc": "Impossible travel does not fire for legitimate VPN-shaped travel in the negative fixture" },
+      { "id": "T3", "type": "unit", "desc": "Query parameterisation resists an injection attempt via tenant-controlled input" },
+      { "id": "T4", "type": "integration", "desc": "A long-running query is killed at its budget and raises an alert" }
+    ]
+  },
+  {
+    "id": "P2-06",
+    "title": "The first 40 detection rules with fixtures",
+    "epic": "Detection Content",
+    "type": "feat",
+    "area": "detect",
+    "points": 13,
+    "priority": "P0",
+    "dependsOn": ["P2-02", "P2-05"],
+    "description": "The 40 rules that matter for small-business M365 compromise. Chosen by what actually happens, not by what is easy to detect.",
+    "acceptance": [
+      "40 rules covering: impossible travel, external inbox forwarding rule, mass mailbox download, OAuth consent to unverified app, MFA method registration anomaly, anonymous proxy sign-in, mass file download or delete, privileged role assignment, password spray, legacy auth usage, mailbox audit disabled, and inbox rule hiding messages",
+      "Every rule has a positive and a negative fixture derived from realistic event shapes",
+      "Every rule is mapped to a MITRE ATT&CK technique",
+      "Every rule has a plain-English description written for a non-technical owner",
+      "Measured false-positive rate under 20% on the replayed reference dataset"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "All 40 positive fixtures fire their intended rule" },
+      { "id": "T2", "type": "unit", "desc": "All 40 negative fixtures fire nothing" },
+      { "id": "T3", "type": "integration", "desc": "Replay of a benign reference week produces a false-positive rate under 20%" },
+      { "id": "T4", "type": "unit", "desc": "Every rule description is present and contains no unexplained jargon, checked by a term allowlist" }
+    ]
+  },
+  {
+    "id": "P2-07",
+    "title": "MITRE ATT&CK mapping and enforcement",
+    "epic": "Detection Content",
+    "type": "feat",
+    "area": "detect",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P2-06"],
+    "description": "Technique ids validated against the published ATT&CK catalogue, with coverage reporting so gaps are visible rather than assumed.",
+    "acceptance": [
+      "Technique ids are validated against a pinned ATT&CK version at build time",
+      "An invalid or retired technique id fails the build",
+      "A coverage report shows which tactics and techniques are and are not covered",
+      "Coverage is rendered as a navigator-compatible layer for stakeholders",
+      "Technique metadata is available to the AI analyst and the customer-facing report"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "An invalid technique id fails the build" },
+      { "id": "T2", "type": "unit", "desc": "Coverage report counts match the rule corpus" },
+      { "id": "T3", "type": "integration", "desc": "Generated navigator layer loads without error in the ATT&CK Navigator" }
+    ]
+  },
+  {
+    "id": "P2-08",
+    "title": "Critical-alert bypass path",
+    "epic": "Resilience",
+    "type": "security",
+    "area": "detect",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P2-04"],
+    "guarantee": "TG4",
+    "description": "Rules marked critical publish directly to the alert channel in parallel with entering correlation, so a detection reaches the customer even if correlation and the AI analyst are entirely down.",
+    "acceptance": [
+      "Critical signals publish to the alert path in parallel with the correlation path",
+      "The bypass has no dependency on correlation, the analyst, or the LLM provider",
+      "The bypass alert is clearly labelled as rule-generated rather than AI-investigated",
+      "Deduplication prevents the customer receiving both a bypass alert and an AI alert for the same case",
+      "The bypass path is exercised by a scheduled synthetic test in production"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Chaos test: analyst service killed, critical alert still delivered within SLA" },
+      { "id": "T2", "type": "integration", "desc": "Chaos test: correlation service killed, critical alert still delivered" },
+      { "id": "T3", "type": "integration", "desc": "LLM provider returning 503 does not prevent critical alert delivery" },
+      { "id": "T4", "type": "integration", "desc": "Customer receives exactly one notification when both paths complete successfully" }
+    ]
+  },
+  {
+    "id": "P2-09",
+    "title": "Threat intelligence enrichment",
+    "epic": "Detection Content",
+    "type": "feat",
+    "area": "detect",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P2-04"],
+    "description": "IP reputation, anonymiser and hosting-provider classification, and geolocation, cached locally so detection never blocks on a third-party lookup.",
+    "acceptance": [
+      "Feeds are refreshed on a schedule and cached locally; detection never makes a synchronous external call",
+      "Geolocation and ASN are attached to every sign-in event at enrichment time",
+      "Anonymiser, VPN and hosting-provider classification is available as a rule predicate",
+      "A stale feed degrades gracefully and raises an operational alert",
+      "Indicator provenance is recorded so a report can cite which feed flagged an address"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Known Tor exit node is classified as an anonymiser" },
+      { "id": "T2", "type": "unit", "desc": "Geolocation enrichment is correct for a known address set" },
+      { "id": "T3", "type": "integration", "desc": "Feed provider outage does not stall detection" },
+      { "id": "T4", "type": "unit", "desc": "Stale feed beyond its threshold raises an alert" }
+    ]
+  },
+  {
+    "id": "P2-10",
+    "title": "Detection tuning, suppression and allowlisting",
+    "epic": "Detection Runtime",
+    "type": "feat",
+    "area": "detect",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P2-06"],
+    "guarantee": "TG3",
+    "description": "Per-tenant suppression of known-benign patterns, with every suppression recorded and visible. Suppression must never become an invisible hole in coverage.",
+    "acceptance": [
+      "Suppressions are scoped to a tenant, a rule and an entity or pattern",
+      "Every suppression records who created it, when and why",
+      "Suppressed signals are still stored and counted, just not escalated",
+      "Suppressions expire by default and require explicit renewal",
+      "The dashboard shows active suppressions and what they have suppressed"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A suppressed signal is stored but not escalated" },
+      { "id": "T2", "type": "integration", "desc": "An expired suppression stops suppressing" },
+      { "id": "T3", "type": "integration", "desc": "A suppression in one tenant has no effect in another" },
+      { "id": "T4", "type": "unit", "desc": "Creating a suppression without a reason is rejected" }
+    ]
+  },
+  {
+    "id": "P2-11",
+    "title": "Detection engine load test at 30k EPS",
+    "epic": "Resilience",
+    "type": "test",
+    "area": "detect",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P2-04", "P2-03"],
+    "description": "The P2 exit criterion as an executable, repeatable load test with a CI-enforced regression gate.",
+    "acceptance": [
+      "k6 or equivalent harness generates a realistic 30k EPS mixed event stream",
+      "Runs for one hour with stable memory and no goroutine leak",
+      "Detection latency p99 stays under 100 milliseconds",
+      "Results are recorded and a regression beyond 10% fails the build",
+      "The harness is runnable locally at reduced scale"
+    ],
+    "tests": [
+      { "id": "T1", "type": "load", "desc": "30k EPS sustained for one hour with p99 under 100ms" },
+      { "id": "T2", "type": "load", "desc": "Memory stable across the run with no leak" },
+      { "id": "T3", "type": "integration", "desc": "A deliberately introduced 20% regression fails the gate" }
+    ]
+  },
+  {
+    "id": "P2-12",
+    "title": "Emergency hotfix rule path",
+    "epic": "Detection Runtime",
+    "type": "feat",
+    "area": "detect",
+    "points": 3,
+    "priority": "P2",
+    "dependsOn": ["P2-04"],
+    "description": "The escape hatch named in ADR-0004: a small interpreted rule path for urgent detections, deliberately constrained so it cannot become the normal way rules are added.",
+    "acceptance": [
+      "Maximum 10 active hotfix rules platform-wide",
+      "Each expires automatically after 7 days with no option to extend in place",
+      "Creating one requires an elevated role and writes an audit entry",
+      "Active hotfix rules are listed on the operations dashboard with their expiry",
+      "Expiry notification prompts proper compilation of the rule"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "An 11th hotfix rule is rejected" },
+      { "id": "T2", "type": "integration", "desc": "A hotfix rule stops evaluating after 7 days" },
+      { "id": "T3", "type": "integration", "desc": "Creation by a non-elevated role is denied and audited" }
+    ]
+  },
+  {
+    "id": "P2-13",
+    "title": "Detection engineering guide",
+    "epic": "Detection Content",
+    "type": "docs",
+    "area": "detect",
+    "points": 2,
+    "priority": "P2",
+    "dependsOn": ["P2-06"],
+    "description": "How to write, map, fixture and tune a rule, written so a new detection engineer can ship their first rule without reading the compiler.",
+    "acceptance": [
+      "Covers rule authoring, MITRE mapping, fixture construction and the tuning workflow",
+      "Explains why negative fixtures are mandatory, with a concrete example of the failure they prevent",
+      "Includes a worked end-to-end example of adding one rule",
+      "Documents the supported Sigma subset and what to do when a rule needs more"
+    ],
+    "tests": [
+      { "id": "T1", "type": "manual", "desc": "A new engineer ships a working rule following only the guide" }
+    ]
+  }
+]

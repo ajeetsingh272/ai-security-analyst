@@ -1,0 +1,269 @@
+[
+  {
+    "id": "P5-01",
+    "title": "Notification abstraction with channel failover",
+    "epic": "Alerting",
+    "type": "feat",
+    "area": "response",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P4-07"],
+    "description": "One interface over WhatsApp, Slack and email with ordered failover, so an alert that matters always lands somewhere.",
+    "acceptance": [
+      "A single interface covers all channels; adding a channel does not change calling code",
+      "Failover order is configurable per tenant and defaults to WhatsApp, Slack, email, dashboard banner",
+      "Delivery is retried with backoff and every attempt is recorded",
+      "Delivery status is queryable per alert",
+      "An alert that fails on every channel raises an operational page"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Primary channel failure falls through to the secondary" },
+      { "id": "T2", "type": "integration", "desc": "All channels failing raises an operational page" },
+      { "id": "T3", "type": "unit", "desc": "Delivery attempts are recorded with their outcome" },
+      { "id": "T4", "type": "integration", "desc": "Duplicate suppression prevents the same alert being sent twice on one channel" }
+    ]
+  },
+  {
+    "id": "P5-02",
+    "title": "WhatsApp Cloud API integration with interactive approval",
+    "epic": "Alerting",
+    "type": "feat",
+    "area": "response",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P5-01"],
+    "description": "The channel the brief's owner actually reads at 2am, with an Approve button and a Call Me First option.",
+    "acceptance": [
+      "Approved message templates cover critical, high and digest alert types",
+      "Interactive buttons map to approval and escalation actions",
+      "Inbound webhooks are signature-verified before processing",
+      "Opt-in and opt-out are handled per regulation and recorded",
+      "Template rejection by Meta is surfaced to operations, not silently retried"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A critical alert is delivered against the sandbox with buttons rendered" },
+      { "id": "T2", "type": "security", "desc": "A webhook with an invalid signature is rejected" },
+      { "id": "T3", "type": "integration", "desc": "Button tap resolves to the correct case and action" },
+      { "id": "T4", "type": "integration", "desc": "Opt-out stops delivery and is recorded" }
+    ]
+  },
+  {
+    "id": "P5-03",
+    "title": "Signed single-use approval tokens",
+    "epic": "Approvals",
+    "type": "security",
+    "area": "response",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P5-01", "P0-06"],
+    "guarantee": "TG2",
+    "description": "Implements the token half of ADR-0007. Bound to one action on one case for one tenant, 15-minute expiry, single use, GET never mutates.",
+    "acceptance": [
+      "Token payload binds case_id, action_id, tenant_id, approver_id, nonce and expiry, HMAC-signed",
+      "Expiry is 15 minutes and is enforced server-side",
+      "The nonce is burned on first use in Redis with a Postgres fallback",
+      "GET renders a confirmation page only; execution requires POST",
+      "Invalid, expired, reused or malformed tokens fail closed and are audited"
+    ],
+    "tests": [
+      { "id": "T1", "type": "security", "desc": "A replayed token is rejected on second use" },
+      { "id": "T2", "type": "security", "desc": "An expired token is rejected" },
+      { "id": "T3", "type": "security", "desc": "A tampered payload fails signature verification" },
+      { "id": "T4", "type": "security", "desc": "A token for case A cannot approve an action on case B" },
+      { "id": "T5", "type": "security", "desc": "A GET from a link-preview user agent executes nothing" },
+      { "id": "T6", "type": "integration", "desc": "Redis unavailability falls back to the Postgres uniqueness constraint and still enforces single use" }
+    ]
+  },
+  {
+    "id": "P5-04",
+    "title": "Step-up authentication for destructive actions",
+    "epic": "Approvals",
+    "type": "security",
+    "area": "response",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P5-03", "P0-09"],
+    "guarantee": "TG2",
+    "description": "A valid token is necessary but not sufficient for the actions that hurt most. disable_user, isolate_device and force_password_reset require re-authentication regardless.",
+    "acceptance": [
+      "Playbooks declare whether they require step-up authentication",
+      "Step-up is enforced server-side at execution, not at the UI",
+      "The step-up challenge is usable from a phone in under 30 seconds",
+      "Step-up completion is recorded in the audit entry for the action",
+      "A failed step-up leaves the case in awaiting_approval"
+    ],
+    "tests": [
+      { "id": "T1", "type": "security", "desc": "A destructive action with a valid token but no step-up is refused" },
+      { "id": "T2", "type": "security", "desc": "Bypassing the UI and calling the API directly still requires step-up" },
+      { "id": "T3", "type": "integration", "desc": "Successful step-up is recorded in the audit entry" },
+      { "id": "T4", "type": "integration", "desc": "Failed step-up returns the case to awaiting_approval" }
+    ]
+  },
+  {
+    "id": "P5-05",
+    "title": "Response playbook registry and executor",
+    "epic": "Response Actions",
+    "type": "feat",
+    "area": "response",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P5-03"],
+    "description": "Idempotent playbooks with declared blast radius and documented reversal: disable_user, revoke_sessions, delete_inbox_rule, block_ip, force_password_reset, isolate_device.",
+    "acceptance": [
+      "Each playbook declares blast radius, required scopes, step-up requirement and reversal procedure",
+      "Execution is idempotent — repeating it produces the same end state without a second side effect",
+      "Pre-execution validation confirms the target still matches the case's premise",
+      "Partial failure leaves a recorded, recoverable state with explicit manual steps",
+      "Every execution writes an audit entry before and after"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Each playbook executes correctly against a Microsoft test tenant" },
+      { "id": "T2", "type": "integration", "desc": "Repeated execution is idempotent" },
+      { "id": "T3", "type": "integration", "desc": "A playbook whose target no longer matches the premise refuses to execute" },
+      { "id": "T4", "type": "integration", "desc": "Partial failure returns the case to awaiting_approval with manual steps shown" },
+      { "id": "T5", "type": "unit", "desc": "Every registered playbook declares a reversal procedure" }
+    ]
+  },
+  {
+    "id": "P5-06",
+    "title": "Pre-approved action policy",
+    "epic": "Approvals",
+    "type": "feat",
+    "area": "response",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P5-05"],
+    "guarantee": "TG2",
+    "description": "The brief's 'customers can later allow specific safe actions to run automatically — their choice, their control.' Opt-in, scoped, revocable and fully audited.",
+    "acceptance": [
+      "Pre-approval is opt-in per playbook, never on by default",
+      "Destructive playbooks cannot be pre-approved at all",
+      "Pre-approval is revocable immediately and takes effect on the next action",
+      "Granting, using and revoking pre-approval are all audited",
+      "Automatically executed actions are reported to the tenant within the hour"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A pre-approved action executes without a prompt and is audited" },
+      { "id": "T2", "type": "security", "desc": "A destructive playbook cannot be pre-approved" },
+      { "id": "T3", "type": "integration", "desc": "Revocation takes effect on the next action" },
+      { "id": "T4", "type": "integration", "desc": "An automatic execution notifies the tenant within the window" }
+    ]
+  },
+  {
+    "id": "P5-07",
+    "title": "Slack app with interactive approval",
+    "epic": "Alerting",
+    "type": "feat",
+    "area": "response",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P5-01", "P5-03"],
+    "description": "The channel MSPs and startups live in, with the same approval semantics as WhatsApp.",
+    "acceptance": [
+      "OAuth installation flow per tenant workspace",
+      "Interactive blocks render the alert with Approve and Call Me First",
+      "Request signatures are verified and timestamps checked against replay",
+      "Channel routing is configurable per severity",
+      "Uninstalling the app cleanly disables the channel and fails over"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Installation flow completes and posts a test alert" },
+      { "id": "T2", "type": "security", "desc": "An invalid request signature is rejected" },
+      { "id": "T3", "type": "security", "desc": "A replayed interaction payload is rejected on timestamp" },
+      { "id": "T4", "type": "integration", "desc": "Uninstall disables the channel and triggers failover" }
+    ]
+  },
+  {
+    "id": "P5-08",
+    "title": "Email alerting and transactional delivery",
+    "epic": "Alerting",
+    "type": "feat",
+    "area": "response",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P5-01"],
+    "description": "The universal fallback channel, with deliverability configured properly so security alerts do not land in spam.",
+    "acceptance": [
+      "SPF, DKIM and DMARC are configured and verified",
+      "Templates render correctly in major clients including Outlook",
+      "Approval links carry the same token semantics as other channels",
+      "Bounces and complaints are processed and surfaced",
+      "Plain-text alternative is always included"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Delivery succeeds with passing authentication checks" },
+      { "id": "T2", "type": "unit", "desc": "Template renders without breakage across the client matrix" },
+      { "id": "T3", "type": "integration", "desc": "A bounce is processed and surfaced on the tenant's channel health" }
+    ]
+  },
+  {
+    "id": "P5-09",
+    "title": "Action audit integration and tamper-evidence verification",
+    "epic": "Response Actions",
+    "type": "security",
+    "area": "response",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P5-05", "P0-06"],
+    "guarantee": "TG6",
+    "description": "Every alert, approval, execution and failure enters the hash-chained log, with the chain verified continuously.",
+    "acceptance": [
+      "Alert sent, approval granted, action started, action completed and action failed are all audited",
+      "Audit entries distinguish AI-initiated from human-approved",
+      "Audit writes share a transaction with the state change they describe",
+      "Chain verification runs on a schedule and alerts on any break",
+      "An audit export for a tenant and date range is available for compliance"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A full alert-to-action flow produces the complete expected audit sequence" },
+      { "id": "T2", "type": "integration", "desc": "A failed action still produces a complete audit record" },
+      { "id": "T3", "type": "unit", "desc": "Chain verification detects an induced break" },
+      { "id": "T4", "type": "integration", "desc": "Audit export contains every entry for the requested range and nothing outside it" }
+    ]
+  },
+  {
+    "id": "P5-10",
+    "title": "End-to-end BEC scenario test",
+    "epic": "Response Actions",
+    "type": "test",
+    "area": "response",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P5-05", "P5-03", "P4-04"],
+    "description": "The P5 exit criterion: reproduce the brief's scenario as an automated test — 02:14 impossible travel, 02:17 inbox rule, 02:18 alert, 02:21 fixed.",
+    "acceptance": [
+      "Seeds the exact event sequence from the brief",
+      "Asserts one case, not three separate alerts",
+      "Asserts the alert is delivered within 3 minutes of the second signal",
+      "Asserts approval executes both remediation actions",
+      "Asserts the complete audit chain verifies afterwards"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Full scenario completes within the latency budget" },
+      { "id": "T2", "type": "e2e", "desc": "Exactly one case is produced from the two signals" },
+      { "id": "T3", "type": "e2e", "desc": "Approval executes both revoke_sessions and delete_inbox_rule" },
+      { "id": "T4", "type": "e2e", "desc": "Audit chain verifies across the whole scenario" }
+    ]
+  },
+  {
+    "id": "P5-11",
+    "title": "Response runbooks and failure procedures",
+    "epic": "Response Actions",
+    "type": "docs",
+    "area": "response",
+    "points": 2,
+    "priority": "P2",
+    "dependsOn": ["P5-05"],
+    "description": "What an operator does when an action fails, a token secret must be rotated, or a playbook causes customer impact.",
+    "acceptance": [
+      "A runbook exists for each documented failure mode in the architecture failure table",
+      "Approval token secret rotation is documented with overlapping validity",
+      "Each playbook's reversal procedure is written and verified by execution",
+      "Customer communication templates exist for an action that caused impact"
+    ],
+    "tests": [
+      { "id": "T1", "type": "manual", "desc": "An operator executes each reversal procedure successfully in a test tenant" },
+      { "id": "T2", "type": "manual", "desc": "Token secret rotation is performed with no failed approvals during the overlap" }
+    ]
+  }
+]

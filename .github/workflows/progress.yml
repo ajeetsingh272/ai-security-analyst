@@ -1,0 +1,62 @@
+name: Progress Dashboard
+
+# Rebuilds the live progress page whenever the board changes, so the page is
+# never a stale snapshot someone has to remember to refresh.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'planning/**'
+      - 'tools/progress/**'
+      - '.github/workflows/progress.yml'
+  issues:
+    types: [opened, closed, reopened, edited, labeled, unlabeled, assigned, unassigned]
+  project_card:
+    types: [created, moved, deleted]
+  schedule:
+    # Daily floor, so the page stays current even if no event fires.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  issues: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate backlog
+        run: node scripts/validate-backlog.mjs
+
+      - name: Build dashboard
+        run: node tools/progress/build.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,31 @@
+name: Bug
+description: Something behaves incorrectly
+labels: ["type:feat"]
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: Include the tenant id (never customer data), trace id, and timestamps.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: What should have happened
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Exact steps. A bug without a reproduction is a rumour.
+    validations: { required: true }
+  - type: dropdown
+    attributes:
+      label: Does this affect a trust guarantee?
+      description: See SECURITY.md. If yes, this is treated as a security issue.
+      options:
+        - "No"
+        - "TG1 — AI output is never unsourced"
+        - "TG2 — AI never acts without approval"
+        - "TG3 — Nothing is hidden"
+        - "TG4 — Critical alerts survive an AI outage"
+        - "TG5 — Tenants are isolated"
+        - "TG6 — The audit log is tamper-evident"
+    validations: { required: true }

@@ -1,0 +1,109 @@
+{
+  "project": "Sentinel — AI Security Analyst",
+  "repo": "ajeetsingh272/ai-security-analyst",
+  "board": "Sentinel Delivery",
+  "generatedBy": "scripts/sync-board.mjs",
+  "phases": [
+    {
+      "key": "P0",
+      "name": "Foundation",
+      "weeks": 3,
+      "color": "1f6feb",
+      "goal": "A developer clones, runs one command, and has the full stack running locally with two isolated tenants.",
+      "exit": "pnpm install && pnpm dev:stack && pnpm dev produces a running system; cross-tenant isolation test passes; audit chain verifier passes on seeded data."
+    },
+    {
+      "key": "P1",
+      "name": "Ingest & Storage",
+      "weeks": 4,
+      "color": "0e8a16",
+      "goal": "Microsoft 365 events flow continuously into ClickHouse, normalised to OCSF, with no loss across an induced outage.",
+      "exit": "72h continuous ingest; killing the connector mid-batch and restarting loses nothing and duplicates nothing observable downstream."
+    },
+    {
+      "key": "P2",
+      "name": "Detection Engine",
+      "weeks": 4,
+      "color": "d93f0b",
+      "goal": "40 MITRE-mapped detection rules evaluating in-stream at 30k EPS, each with a positive and negative fixture.",
+      "exit": "40 rules green in CI; 30k EPS sustained load test; chaos test proves critical alerts survive an analyst outage."
+    },
+    {
+      "key": "P3",
+      "name": "Correlation",
+      "weeks": 3,
+      "color": "fbca04",
+      "goal": "Deterministic clustering of signals into cases, achieving at least a 10:1 noise reduction.",
+      "exit": "Reduction ratio >= 10:1 on replayed data; case state fully reconstructible from the append-only transition log."
+    },
+    {
+      "key": "P4",
+      "name": "AI Analyst",
+      "weeks": 4,
+      "color": "8250df",
+      "goal": "LLM investigation producing plain-English reports where every claim is mechanically proven against a real logged event.",
+      "exit": "100% of delivered reports pass grounding validation; eval suite green on 50 golden cases; per-tenant cost inside budget."
+    },
+    {
+      "key": "P5",
+      "name": "Response & Alerting",
+      "weeks": 3,
+      "color": "b60205",
+      "goal": "Alerts on the owner's phone with a one-tap approval that executes a fix safely and auditably.",
+      "exit": "The 02:14 detect to 02:21 fixed scenario reproduced end to end in an automated test, every step in a verified audit chain."
+    },
+    {
+      "key": "P6",
+      "name": "Product Surface",
+      "weeks": 5,
+      "color": "006b75",
+      "goal": "The dashboard, MSP console, weekly report and the free security scan that converts trials.",
+      "exit": "A pilot customer onboards unassisted in under 15 minutes and receives their first weekly report."
+    },
+    {
+      "key": "P7",
+      "name": "Scale & Compliance",
+      "weeks": 8,
+      "color": "5319e7",
+      "goal": "More connectors, sharding for hot tenants, cold tiering, and SOC 2 evidence.",
+      "exit": "30k EPS sustained for one hour with p95 alert latency under 3 minutes; SOC 2 Type I evidence collected."
+    }
+  ],
+  "labels": [
+    { "name": "phase:P0", "color": "1f6feb", "description": "Foundation" },
+    { "name": "phase:P1", "color": "0e8a16", "description": "Ingest & Storage" },
+    { "name": "phase:P2", "color": "d93f0b", "description": "Detection Engine" },
+    { "name": "phase:P3", "color": "fbca04", "description": "Correlation" },
+    { "name": "phase:P4", "color": "8250df", "description": "AI Analyst" },
+    { "name": "phase:P5", "color": "b60205", "description": "Response & Alerting" },
+    { "name": "phase:P6", "color": "006b75", "description": "Product Surface" },
+    { "name": "phase:P7", "color": "5319e7", "description": "Scale & Compliance" },
+    { "name": "type:feat", "color": "a2eeef", "description": "New capability" },
+    { "name": "type:infra", "color": "c5def5", "description": "Infrastructure or tooling" },
+    { "name": "type:test", "color": "bfd4f2", "description": "Test coverage or harness" },
+    { "name": "type:docs", "color": "d4c5f9", "description": "Documentation" },
+    { "name": "type:security", "color": "ee0701", "description": "Security-critical — needs two reviewers" },
+    { "name": "priority:P0", "color": "b60205", "description": "Blocker — nothing else ships without it" },
+    { "name": "priority:P1", "color": "d93f0b", "description": "Required for the phase exit criterion" },
+    { "name": "priority:P2", "color": "fbca04", "description": "Valuable, schedulable" },
+    { "name": "priority:P3", "color": "0e8a16", "description": "Cuttable under pressure" },
+    { "name": "area:ingest", "color": "e4e669", "description": "Connectors and normalisation" },
+    { "name": "area:detect", "color": "e4e669", "description": "Detection engine and rules" },
+    { "name": "area:correlate", "color": "e4e669", "description": "Entity graph and cases" },
+    { "name": "area:ai", "color": "e4e669", "description": "LLM analyst and grounding" },
+    { "name": "area:response", "color": "e4e669", "description": "Alerting, approvals, playbooks" },
+    { "name": "area:frontend", "color": "e4e669", "description": "Dashboard and design system" },
+    { "name": "area:platform", "color": "e4e669", "description": "Data stores, CI, infrastructure" },
+    { "name": "trust-guarantee", "color": "ff6b6b", "description": "Implements a documented product trust guarantee — weakening requires an ADR" },
+    { "name": "cuttable", "color": "cfd3d7", "description": "Scope that can be dropped to compress the schedule" }
+  ],
+  "statuses": ["Backlog", "Ready", "In Progress", "In Review", "Blocked", "Done"],
+  "trustGuarantees": {
+    "TG1": "AI output is never unsourced",
+    "TG2": "AI never acts without approval",
+    "TG3": "Nothing is hidden — dismissals are surfaced",
+    "TG4": "Critical alerts survive an AI outage",
+    "TG5": "Tenants are isolated",
+    "TG6": "The audit log is tamper-evident"
+  }
+}

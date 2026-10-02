@@ -1,0 +1,35 @@
+{
+  "name": "ai-security-analyst",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI Security Analyst — autonomous SOC for small businesses and MSPs",
+  "packageManager": "pnpm@10.18.0",
+  "engines": { "node": ">=22.0.0", "pnpm": ">=10.0.0" },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "test:e2e": "playwright test",
+    "go:build": "bash scripts/go-build.sh",
+    "go:test": "bash scripts/go-test.sh",
+    "dev:stack": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
+    "dev:stack:down": "docker compose -f infra/docker/docker-compose.dev.yml down -v",
+    "db:migrate": "bash scripts/migrate.sh",
+    "detections:validate": "bash scripts/validate-detections.sh",
+    "progress:build": "node tools/progress/build.mjs",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml}\"",
+    "prepare": "husky || true"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

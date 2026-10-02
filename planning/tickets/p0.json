@@ -1,0 +1,285 @@
+[
+  {
+    "id": "P0-01",
+    "title": "Monorepo skeleton with pnpm workspaces, Turborepo and Go modules",
+    "epic": "Repository & CI",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": [],
+    "description": "Stand up the polyglot monorepo described in ADR-0001 so that TypeScript and Go builds coexist with independent, cacheable pipelines.",
+    "acceptance": [
+      "pnpm install succeeds from a clean clone with no manual steps",
+      "turbo run build succeeds across all TypeScript packages",
+      "go build ./... succeeds for every service under services/",
+      "Shared tsconfig.base.json is extended by every TypeScript package rather than duplicated",
+      "Turborepo remote caching is configured and documented, even if disabled by default"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Clean-clone CI job runs install and build with no cached state and succeeds" },
+      { "id": "T2", "type": "unit", "desc": "Workspace manifest lints — every package has name, version and the required scripts" },
+      { "id": "T3", "type": "manual", "desc": "A second developer follows README setup on a clean machine and reaches a running build" }
+    ]
+  },
+  {
+    "id": "P0-02",
+    "title": "CI pipelines: lint, typecheck, test, Go test, path filtering",
+    "epic": "Repository & CI",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P0-01"],
+    "description": "GitHub Actions workflows gating every pull request. Go and TypeScript run in parallel and are independently gated. Path filters keep unrelated changes from running the whole matrix.",
+    "acceptance": [
+      "Separate workflows for TypeScript and Go, running concurrently",
+      "Jobs gate on real exit codes — no piping test output to tail or grep",
+      "Path filtering: a docs-only change does not run the Go test matrix",
+      "Pipeline completes in under 8 minutes on a warm cache",
+      "Required status checks are configured on the main branch"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A PR with a deliberately failing TypeScript test is blocked from merging" },
+      { "id": "T2", "type": "integration", "desc": "A PR with a deliberately failing Go test is blocked from merging" },
+      { "id": "T3", "type": "integration", "desc": "A docs-only PR completes without triggering the Go matrix" }
+    ]
+  },
+  {
+    "id": "P0-03",
+    "title": "Local development stack via Docker Compose",
+    "epic": "Local Development",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P0-01"],
+    "description": "One command brings up ClickHouse, Postgres, Redpanda, Redis and MinIO with health checks, seeded schemas and no manual configuration.",
+    "acceptance": [
+      "pnpm dev:stack brings every service to healthy within 90 seconds",
+      "Health checks gate dependent services so startup order is deterministic",
+      "Named volumes persist data across restarts; dev:stack:down removes them",
+      "Ports are documented and do not collide with common local defaults",
+      "Redpanda console and ClickHouse play UI are reachable for debugging"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "CI brings the stack up, asserts every health check passes, and tears it down" },
+      { "id": "T2", "type": "integration", "desc": "Restarting the stack preserves previously written data" },
+      { "id": "T3", "type": "manual", "desc": "Fresh machine with only Docker installed reaches a healthy stack" }
+    ]
+  },
+  {
+    "id": "P0-04",
+    "title": "Control-plane schema in Postgres with Drizzle migrations",
+    "epic": "Tenancy & Data",
+    "type": "feat",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-03"],
+    "description": "Tenants, users, memberships, connectors, cases, case transitions, actions, approvals and audit. Forward-only migrations with a documented rollback procedure per migration.",
+    "acceptance": [
+      "Every tenant-scoped table carries a non-null tenant_id",
+      "Migrations run forward cleanly from an empty database",
+      "Each migration documents its rollback procedure, even if that is restore-from-backup",
+      "Seed script provisions two tenants with distinct data for isolation testing",
+      "Schema is documented in docs/architecture/data-model.md and regenerated, not hand-maintained"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Migrations apply cleanly to an empty database in CI" },
+      { "id": "T2", "type": "integration", "desc": "Seed script is idempotent — running it twice leaves identical state" },
+      { "id": "T3", "type": "unit", "desc": "Schema lint asserts no tenant-scoped table is missing tenant_id" }
+    ]
+  },
+  {
+    "id": "P0-05",
+    "title": "Postgres row-level security and the tenant context boundary",
+    "epic": "Tenancy & Data",
+    "type": "security",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-04"],
+    "guarantee": "TG5",
+    "description": "Implements ADR-0008. RLS forced on every tenant-scoped table; the application role cannot bypass it; tenant context is established once at the request edge and a repository cannot be constructed without it.",
+    "acceptance": [
+      "FORCE ROW LEVEL SECURITY is enabled on every tenant-scoped table",
+      "The application database role lacks BYPASSRLS",
+      "Middleware sets app.tenant_id per transaction from the authenticated session",
+      "Constructing a repository outside a tenant context throws at construction time, not at query time",
+      "A CI check enumerates tenant-scoped tables and fails if any lacks a policy"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Cross-tenant read returns zero rows for every tenant-scoped table" },
+      { "id": "T2", "type": "integration", "desc": "A query deliberately written without a tenant_id filter still returns only the current tenant's rows" },
+      { "id": "T3", "type": "unit", "desc": "Repository construction without tenant context throws" },
+      { "id": "T4", "type": "integration", "desc": "Adding a new tenant-scoped table without a policy fails the CI schema check" }
+    ]
+  },
+  {
+    "id": "P0-06",
+    "title": "Hash-chained append-only audit log",
+    "epic": "Tenancy & Data",
+    "type": "security",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-04"],
+    "guarantee": "TG6",
+    "description": "Implements the audit half of ADR-0007. Each entry hashes its predecessor; the application role holds INSERT and SELECT only; a verifier detects any break in the chain.",
+    "acceptance": [
+      "entry_hash = SHA256(prev_hash || canonical_json(row)) with a stable canonical JSON encoding",
+      "The application role has no UPDATE or DELETE grant on audit_log",
+      "actor_type distinguishes human, ai, system and connector",
+      "A verifier walks the chain for a tenant and reports the first break with its entry id",
+      "The verifier runs as a scheduled job and alerts on failure"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Chain verifier accepts a well-formed chain of 1000 entries" },
+      { "id": "T2", "type": "unit", "desc": "Verifier detects a mutated payload and reports the correct entry id" },
+      { "id": "T3", "type": "unit", "desc": "Verifier detects a deleted middle entry" },
+      { "id": "T4", "type": "integration", "desc": "An UPDATE issued as the application role is rejected by Postgres grants" },
+      { "id": "T5", "type": "unit", "desc": "Canonical JSON encoding is stable across key insertion order" }
+    ]
+  },
+  {
+    "id": "P0-07",
+    "title": "Design tokens package — the Control Room theme",
+    "epic": "Design System",
+    "type": "feat",
+    "area": "frontend",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P0-01"],
+    "description": "Colour, typography, spacing, elevation and motion tokens per docs/design/ui-ux-spec.md. Dark-first with a light mode. The severity ramp must be distinguishable without colour.",
+    "acceptance": [
+      "Tokens exported as CSS custom properties, a Tailwind v4 theme, and typed TypeScript constants from one source",
+      "Dark and light themes both defined; dark is the default",
+      "Every text/background pair in the palette meets WCAG 2.1 AA contrast",
+      "Severity is encoded by hue, icon and label — never by hue alone",
+      "A contrast-checking test runs in CI over the generated token pairs"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Automated contrast check asserts AA compliance for all defined foreground/background pairs" },
+      { "id": "T2", "type": "unit", "desc": "Severity tokens each carry a distinct icon and label, asserted programmatically" },
+      { "id": "T3", "type": "manual", "desc": "Deuteranopia and protanopia simulation review of the severity ramp" }
+    ]
+  },
+  {
+    "id": "P0-08",
+    "title": "Shared UI component library on the design tokens",
+    "epic": "Design System",
+    "type": "feat",
+    "area": "frontend",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P0-07"],
+    "description": "Base components built on Radix primitives and the token package: button, badge, severity pill, card, table, dialog, toast, empty state, skeleton. No hardcoded colour values anywhere.",
+    "acceptance": [
+      "Every component consumes tokens; a lint rule rejects hardcoded hex values in packages/ui",
+      "All interactive components are keyboard operable and have visible focus states",
+      "Components render correctly in both themes",
+      "Each component has documented props and at least one usage example",
+      "Loading, empty and error states exist for every data-bearing component"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Component render tests in both light and dark themes" },
+      { "id": "T2", "type": "unit", "desc": "Keyboard navigation test — tab order and focus visibility for every interactive component" },
+      { "id": "T3", "type": "unit", "desc": "axe accessibility assertions pass with no violations" },
+      { "id": "T4", "type": "unit", "desc": "Lint rule fails on an introduced hardcoded hex value" }
+    ]
+  },
+  {
+    "id": "P0-09",
+    "title": "Authentication, sessions and role-based access control",
+    "epic": "Authentication",
+    "type": "security",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-05"],
+    "description": "Email and OAuth sign-in, secure session handling, and the role model: owner, admin, analyst, read-only, plus the MSP role that spans client tenants.",
+    "acceptance": [
+      "Sessions are httpOnly, secure, SameSite=Lax with server-side revocation",
+      "Roles are enforced server-side on every endpoint; the UI only hides, never protects",
+      "The MSP role grants scoped access to explicitly linked client tenants and nothing else",
+      "Failed sign-ins are rate limited per account and per IP",
+      "Every authentication event is written to the audit log"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Each role is denied every endpoint outside its permission set" },
+      { "id": "T2", "type": "integration", "desc": "An MSP user cannot read a tenant they are not linked to" },
+      { "id": "T3", "type": "integration", "desc": "Session revocation takes effect immediately on the next request" },
+      { "id": "T4", "type": "integration", "desc": "Brute-force attempt is rate limited and audited" }
+    ]
+  },
+  {
+    "id": "P0-10",
+    "title": "Observability baseline — OpenTelemetry traces, metrics and structured logs",
+    "epic": "Observability",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P0-03"],
+    "description": "Tracing, metrics and structured logging wired into every service from the start, with trace context propagating across the Go and TypeScript boundary.",
+    "acceptance": [
+      "trace_id propagates from an ingested event through to a delivered alert",
+      "Logs are structured JSON and always carry tenant_id and trace_id",
+      "No secret, credential or raw log payload is ever logged — enforced by a redaction layer",
+      "Golden-signal metrics are exported and visible in a local Grafana",
+      "A developer can answer 'why did this alert take 4 minutes' from a single trace"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A synthetic event produces one unbroken trace spanning Go and TypeScript services" },
+      { "id": "T2", "type": "unit", "desc": "Redaction layer strips known secret patterns from log payloads" },
+      { "id": "T3", "type": "integration", "desc": "Every expected golden-signal metric is present after a synthetic run" }
+    ]
+  },
+  {
+    "id": "P0-11",
+    "title": "Shared schema package with Go code generation",
+    "epic": "Repository & CI",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P0-01"],
+    "description": "One definition of the OCSF event, Signal, Case and Action contracts, generating both TypeScript types and Go structs so the two planes cannot disagree.",
+    "acceptance": [
+      "Contracts are defined once in packages/schema",
+      "Go structs are generated, not hand-written",
+      "CI regenerates and fails on any diff against committed output",
+      "Schema changes are versioned with an explicit compatibility policy",
+      "Generated code is clearly marked as generated and excluded from manual edits"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "CI regeneration produces no diff on an unchanged schema" },
+      { "id": "T2", "type": "unit", "desc": "Round-trip serialisation TypeScript to Go to TypeScript preserves every field" },
+      { "id": "T3", "type": "unit", "desc": "A breaking schema change without a version bump fails the compatibility check" }
+    ]
+  },
+  {
+    "id": "P0-12",
+    "title": "Live project progress dashboard on GitHub Pages",
+    "epic": "Repository & CI",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P2",
+    "dependsOn": ["P0-02"],
+    "description": "A single page showing phase completion, ticket status, test-case coverage and burndown, rebuilt automatically by a GitHub Action whenever issues change.",
+    "acceptance": [
+      "Published to GitHub Pages at a stable URL",
+      "Rebuilds automatically on issue open, close, label change and board move",
+      "Shows per-phase progress, ticket counts by status, and aggregate test-case counts",
+      "Degrades gracefully when the API is unavailable — serves the last good build",
+      "Renders correctly on a phone and in both colour schemes"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Workflow builds and deploys successfully from a clean checkout" },
+      { "id": "T2", "type": "unit", "desc": "Generator produces correct counts from a fixture issue set" },
+      { "id": "T3", "type": "manual", "desc": "Page is legible at 375px width in light and dark mode" }
+    ]
+  }
+]

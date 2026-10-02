@@ -1,0 +1,240 @@
+[
+  {
+    "id": "P3-01",
+    "title": "Entity resolution and alias graph",
+    "epic": "Entity Graph",
+    "type": "feat",
+    "area": "correlate",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P2-04"],
+    "description": "Resolve signals to canonical entities — identity, host, IP, session, mailbox — maintaining aliases so a user's UPN, object id and email are recognised as one entity.",
+    "acceptance": [
+      "Identity aliases (UPN, object id, primary and proxy addresses) resolve to one canonical entity",
+      "Resolution is tenant-scoped; identical identifiers in different tenants never merge",
+      "Unresolvable entities are retained as provisional rather than discarded",
+      "Resolution adds under 5 milliseconds p99 to signal processing",
+      "An alias merge is reversible and audited, because a bad merge corrupts correlation"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "UPN, object id and email for one user resolve to a single entity" },
+      { "id": "T2", "type": "unit", "desc": "Identical email addresses in two tenants resolve to two distinct entities" },
+      { "id": "T3", "type": "unit", "desc": "An unknown identifier produces a provisional entity rather than an error" },
+      { "id": "T4", "type": "integration", "desc": "An alias merge can be reversed and the reversal is audited" }
+    ]
+  },
+  {
+    "id": "P3-02",
+    "title": "Signal clustering into cases",
+    "epic": "Case Construction",
+    "type": "feat",
+    "area": "correlate",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P3-01"],
+    "description": "The component that makes the product viable. Signals sharing an entity within a sliding window become one case. Contains no AI.",
+    "acceptance": [
+      "Default 60-minute sliding window with per-rule override",
+      "Signals sharing any entity within the window join the same case",
+      "A late-arriving signal joins an open case rather than creating a duplicate",
+      "A case closes its window after a configurable quiet period",
+      "Clustering is deterministic — identical input produces an identical case set"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Three signals on one identity within the window produce one case" },
+      { "id": "T2", "type": "unit", "desc": "Signals on one identity outside the window produce two cases" },
+      { "id": "T3", "type": "unit", "desc": "A signal arriving late joins the existing open case" },
+      { "id": "T4", "type": "unit", "desc": "Replaying identical input twice produces an identical case set" },
+      { "id": "T5", "type": "integration", "desc": "The brief's BEC scenario — impossible travel then inbox rule — produces exactly one case" }
+    ]
+  },
+  {
+    "id": "P3-03",
+    "title": "Case lifecycle and append-only transition log",
+    "epic": "Case Construction",
+    "type": "feat",
+    "area": "correlate",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P3-02", "P0-06"],
+    "guarantee": "TG6",
+    "description": "States open, triaging, investigating, awaiting_approval, actioned, closed, dismissed — with every transition appended, never overwritten, so a case's full history is reconstructible.",
+    "acceptance": [
+      "Transitions are appended; current state is derived, never stored destructively",
+      "Illegal transitions are rejected with a clear error",
+      "Every transition records actor type, actor id, timestamp and reason",
+      "A case's full history is reconstructible from the log alone",
+      "Transition events are written in the same transaction as the audit entry"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Every legal transition is permitted and every illegal one is rejected" },
+      { "id": "T2", "type": "unit", "desc": "Case state is correctly derived from an arbitrary transition sequence" },
+      { "id": "T3", "type": "integration", "desc": "A transition and its audit entry commit atomically or not at all" },
+      { "id": "T4", "type": "integration", "desc": "Full case history is reconstructible after 100 transitions" }
+    ]
+  },
+  {
+    "id": "P3-04",
+    "title": "Case scoring and escalation threshold",
+    "epic": "Case Construction",
+    "type": "feat",
+    "area": "correlate",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P3-02"],
+    "description": "Score cases deterministically before any LLM sees them, so the expensive model is spent only where it is earned.",
+    "acceptance": [
+      "Score combines entity criticality, signal count, maximum severity, MITRE kill-chain progression and baseline deviation",
+      "A case spanning two kill-chain stages outranks two single-stage cases",
+      "The escalation threshold is configurable per tenant plan tier",
+      "Score components are stored so a score is explainable after the fact",
+      "Scoring is pure and deterministic"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "A multi-stage kill-chain case scores above a single-stage case with the same signal count" },
+      { "id": "T2", "type": "unit", "desc": "A case touching a flagged high-value identity scores above an equivalent case on an ordinary identity" },
+      { "id": "T3", "type": "unit", "desc": "Scoring is deterministic across repeated invocations" },
+      { "id": "T4", "type": "unit", "desc": "Stored score components reproduce the final score exactly" }
+    ]
+  },
+  {
+    "id": "P3-05",
+    "title": "Entity baselines for anomaly context",
+    "epic": "Entity Graph",
+    "type": "feat",
+    "area": "correlate",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P3-01", "P1-06"],
+    "description": "Per-entity behavioural baselines — usual countries, devices, sign-in hours, typical data volumes — computed in ClickHouse and used by scoring and by the AI analyst as a tool.",
+    "acceptance": [
+      "Baselines cover usual countries, ASNs, devices, sign-in hour distribution and data-transfer volume",
+      "A rolling 30-day window with a minimum-observation threshold before a baseline is considered valid",
+      "A new entity with insufficient history is explicitly marked as such, never treated as anomalous by default",
+      "Baselines are exposed as a tool the analyst can call",
+      "Recomputation is incremental, not a full rescan"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Baseline correctly identifies a habitual sign-in country from seeded history" },
+      { "id": "T2", "type": "unit", "desc": "An entity below the observation threshold returns insufficient-data rather than a baseline" },
+      { "id": "T3", "type": "integration", "desc": "Incremental recomputation matches a full recomputation" },
+      { "id": "T4", "type": "integration", "desc": "A new employee's first week does not generate anomaly signals purely from novelty" }
+    ]
+  },
+  {
+    "id": "P3-06",
+    "title": "Reduction-ratio SLO instrumentation",
+    "epic": "Noise Reduction SLO",
+    "type": "feat",
+    "area": "correlate",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P3-04"],
+    "guarantee": "TG3",
+    "description": "The 10:1 signal-to-case reduction is a business-critical SLO, not an aspiration. Measure it per tenant per day and alert when it degrades.",
+    "acceptance": [
+      "signals_in / cases_escalated is computed and exported per tenant per day",
+      "An alert fires when the ratio drops below 8:1",
+      "The platform-wide ratio is visible on the operations dashboard",
+      "The metric is backfillable from historical data for trend analysis",
+      "Degradation is documented as a product incident, with a runbook"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Ratio is computed correctly from a seeded signal and case set" },
+      { "id": "T2", "type": "integration", "desc": "A deliberately noisy rule drives the ratio below threshold and fires the alert" },
+      { "id": "T3", "type": "unit", "desc": "A tenant with zero signals produces no division error and no spurious alert" }
+    ]
+  },
+  {
+    "id": "P3-07",
+    "title": "Dismissed-signal digest",
+    "epic": "Noise Reduction SLO",
+    "type": "feat",
+    "area": "correlate",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P3-04"],
+    "guarantee": "TG3",
+    "description": "Implements the 'nothing is hidden' guarantee. Every signal that did not escalate is retained and summarised daily with the reason it was closed.",
+    "acceptance": [
+      "Every non-escalated signal records a machine-readable dismissal reason",
+      "A daily digest per tenant lists dismissals grouped by reason",
+      "The digest is retrievable through the API and rendered in the dashboard",
+      "No signal is ever deleted rather than dismissed",
+      "A dismissal can be challenged, which reopens the case and is audited"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Every dismissed signal appears in that day's digest" },
+      { "id": "T2", "type": "unit", "desc": "A dismissal without a reason is rejected at write time" },
+      { "id": "T3", "type": "integration", "desc": "Challenging a dismissal reopens the case and writes an audit entry" }
+    ]
+  },
+  {
+    "id": "P3-08",
+    "title": "Case contract freeze in the shared schema",
+    "epic": "Case Construction",
+    "type": "infra",
+    "area": "correlate",
+    "points": 2,
+    "priority": "P0",
+    "dependsOn": ["P3-03"],
+    "description": "Freeze the Case contract so dashboard work can parallelise from here, as the roadmap dependency graph requires.",
+    "acceptance": [
+      "The Case contract is finalised in packages/schema and versioned",
+      "A compatibility policy is documented: additive changes only without a major version bump",
+      "Both the Go and TypeScript generated types are published",
+      "A CI check fails on a breaking change without a version bump",
+      "The frozen contract is announced in the roadmap as the parallelisation gate"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "A breaking change without a version bump fails the compatibility check" },
+      { "id": "T2", "type": "unit", "desc": "An additive field change passes" },
+      { "id": "T3", "type": "integration", "desc": "Go and TypeScript consumers both compile against the frozen contract" }
+    ]
+  },
+  {
+    "id": "P3-09",
+    "title": "Correlation replay harness for ratio measurement",
+    "epic": "Noise Reduction SLO",
+    "type": "test",
+    "area": "correlate",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P3-06", "P1-09"],
+    "description": "The P3 exit criterion as an executable test: replay a realistic week of data and measure the actual reduction ratio.",
+    "acceptance": [
+      "Replays a seeded realistic dataset containing both benign noise and a known attack sequence",
+      "Measures and reports the reduction ratio",
+      "Asserts the known attack produces exactly one escalated case",
+      "Asserts the ratio is at least 10:1",
+      "Runs in CI on a reduced dataset and nightly on the full one"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Reduction ratio on the reference dataset is at least 10:1" },
+      { "id": "T2", "type": "integration", "desc": "The seeded attack sequence yields exactly one escalated case" },
+      { "id": "T3", "type": "integration", "desc": "No benign pattern in the reference set escalates" }
+    ]
+  },
+  {
+    "id": "P3-10",
+    "title": "Hot-tenant correlation sharding readiness",
+    "epic": "Entity Graph",
+    "type": "infra",
+    "area": "correlate",
+    "points": 3,
+    "priority": "P2",
+    "dependsOn": ["P3-02"],
+    "description": "Ensure correlation can merge windows across the shard suffix introduced in P1-05, so the Phase 7 hot-tenant split is a configuration change rather than a redesign.",
+    "acceptance": [
+      "Correlation reads the shard suffix and merges windows for a sharded tenant",
+      "Merging is correct when a tenant's signals span multiple shards",
+      "Behaviour is identical for an unsharded tenant",
+      "The merge path is tested even though sharding is not yet enabled in production"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Signals across two shards for one tenant cluster into one case" },
+      { "id": "T2", "type": "unit", "desc": "An unsharded tenant behaves identically to before" },
+      { "id": "T3", "type": "integration", "desc": "Enabling sharding mid-stream does not split an open case" }
+    ]
+  }
+]

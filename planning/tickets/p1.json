@@ -1,0 +1,311 @@
+[
+  {
+    "id": "P1-01",
+    "title": "Connector framework — interface, scheduler, cursor store",
+    "epic": "Connector Framework",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-11"],
+    "description": "The Go Connector interface from the architecture doc, plus a scheduler that runs connectors per tenant on an interval and persists cursors transactionally.",
+    "acceptance": [
+      "Adding a new source requires implementing one interface and registering it — no change to ingest, detection or correlation",
+      "Cursors are committed to Postgres only after the batch is durably acknowledged by Kafka",
+      "The scheduler isolates failures: one failing tenant or connector does not stall others",
+      "Per-connector health is exposed as a metric and surfaced through the API",
+      "Graceful shutdown drains in-flight batches before exiting"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Cursor advances only after a successful Kafka acknowledgement" },
+      { "id": "T2", "type": "unit", "desc": "A connector returning an error does not advance its cursor" },
+      { "id": "T3", "type": "integration", "desc": "One tenant's failing connector does not delay another tenant's schedule" },
+      { "id": "T4", "type": "integration", "desc": "SIGTERM during a batch drains cleanly with no partial commit" }
+    ]
+  },
+  {
+    "id": "P1-02",
+    "title": "Microsoft 365 OAuth onboarding and consent flow",
+    "epic": "M365 Connector",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P1-01", "P0-09"],
+    "description": "Admin consent flow for the Microsoft 365 Management Activity API and Graph audit logs, with least-privilege read-only scopes and encrypted credential storage.",
+    "acceptance": [
+      "Only read-only scopes are requested; the requested scope list is documented and justified in the repo",
+      "Refresh tokens are envelope-encrypted with a per-tenant DEK",
+      "The consent flow completes in under 10 minutes for a non-technical admin",
+      "Token refresh is automatic, with clear surfacing when consent is revoked",
+      "Revoking the connector deletes stored credentials and stops collection within one scheduling interval"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Full consent flow against a Microsoft test tenant yields a working token" },
+      { "id": "T2", "type": "unit", "desc": "Stored credentials are unreadable without the KMS key" },
+      { "id": "T3", "type": "integration", "desc": "Expired access token triggers a transparent refresh" },
+      { "id": "T4", "type": "integration", "desc": "Revoked consent surfaces as a degraded connector health state, not a silent stall" }
+    ]
+  },
+  {
+    "id": "P1-03",
+    "title": "M365 Management Activity API collector with blob checkpointing",
+    "epic": "M365 Connector",
+    "type": "feat",
+    "area": "ingest",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P1-02"],
+    "description": "Subscribe to M365 audit content types, enumerate available content blobs, fetch and parse them, and checkpoint by blob id so a restart never re-processes or skips.",
+    "acceptance": [
+      "Subscribes to Audit.Exchange, Audit.SharePoint, Audit.AzureActiveDirectory and Audit.General",
+      "Blob ids form the checkpoint; a restart resumes exactly where it stopped",
+      "Microsoft throttling (429) is honoured with Retry-After backoff",
+      "Blobs that fail to parse go to the DLQ with the raw content preserved, never dropped",
+      "Collection keeps pace with a 1,000-seat tenant within one scheduling interval"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Recorded API fixtures produce the expected set of raw events" },
+      { "id": "T2", "type": "integration", "desc": "Restart mid-batch resumes without loss or observable duplication" },
+      { "id": "T3", "type": "unit", "desc": "429 with Retry-After is respected rather than hot-retried" },
+      { "id": "T4", "type": "unit", "desc": "Malformed blob routes to DLQ with raw content intact" },
+      { "id": "T5", "type": "load", "desc": "Sustains a simulated 1,000-seat tenant inside one interval" }
+    ]
+  },
+  {
+    "id": "P1-04",
+    "title": "OCSF normalisation for M365 event families",
+    "epic": "Normalisation",
+    "type": "feat",
+    "area": "ingest",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P1-03", "P0-11"],
+    "guarantee": "TG1",
+    "description": "Implements ADR-0002 for M365: sign-in, mailbox, file, admin and consent activity mapped to OCSF classes. Pure and total — no I/O, no clock, no network.",
+    "acceptance": [
+      "Normalise is a pure function with no I/O, enforced by review and by the absence of injected clients",
+      "Unmapped vendor fields are preserved under unmapped rather than discarded",
+      "Every event carries event_id, tenant_id, time and schema_version",
+      "event_id is deterministic from the source event and stable across re-normalisation — the grounding validator in P4-04 resolves claims by this id, so an unstable id silently breaks the product's central guarantee",
+      "Timestamps are normalised to UTC with the original offset retained",
+      "A mapping coverage report lists which M365 operations are mapped and which are not"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Golden fixture per event family maps to the expected OCSF output, byte for byte" },
+      { "id": "T2", "type": "unit", "desc": "Unknown event type is preserved rather than dropped or erroring" },
+      { "id": "T3", "type": "unit", "desc": "Property test: normalisation is deterministic across repeated invocations" },
+      { "id": "T4", "type": "unit", "desc": "Timezone handling is correct for events in non-UTC offsets, including DST boundaries" },
+      { "id": "T5", "type": "integration", "desc": "event_id survives ingest to ClickHouse unchanged and is resolvable by a lookup query — the operation the grounding validator performs" },
+      { "id": "T6", "type": "integration", "desc": "Re-normalising the same raw payload after a replay produces the identical event_id, so previously grounded claims stay resolvable" }
+    ]
+  },
+  {
+    "id": "P1-05",
+    "title": "Redpanda topics, partitioning and producer",
+    "epic": "Stream",
+    "type": "infra",
+    "area": "platform",
+    "points": 3,
+    "priority": "P0",
+    "dependsOn": ["P0-03"],
+    "description": "Topic creation with the partition counts and retention from the architecture doc, keyed by tenant with a reserved shard suffix, plus a batching idempotent producer.",
+    "acceptance": [
+      "Topics are created declaratively and are idempotent to re-apply",
+      "Keys use the tenant_id:shard_n format from day one, with shard 0 as the default",
+      "The producer batches and uses idempotent delivery",
+      "A DLQ topic exists for every main topic",
+      "Per-tenant ordering is preserved and verified"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Topic provisioning is idempotent across repeated runs" },
+      { "id": "T2", "type": "integration", "desc": "Events for one tenant arrive in production order on a single partition" },
+      { "id": "T3", "type": "integration", "desc": "Producer retries on broker unavailability without duplicating or reordering" }
+    ]
+  },
+  {
+    "id": "P1-06",
+    "title": "ClickHouse event schema, partitioning and TTL",
+    "epic": "Event Store",
+    "type": "feat",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-03"],
+    "description": "Implements ADR-0005. ReplacingMergeTree keyed on (tenant_id, event_id), partitioned by day, ordered tenant-first, with a TTL policy moving cold partitions to object storage.",
+    "acceptance": [
+      "ORDER BY (tenant_id, time, event_id) so every tenant-scoped query uses the primary index",
+      "ReplacingMergeTree collapses the duplicates at-least-once ingest produces",
+      "Partitioned by day with a 90-day hot TTL and an S3 cold tier",
+      "Row policies enforce tenant isolation at the storage layer",
+      "A 30-day single-identity lookup over a billion-row table returns in under one second"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Duplicate insert of the same event_id collapses after merge" },
+      { "id": "T2", "type": "integration", "desc": "Row policy blocks a cross-tenant read" },
+      { "id": "T3", "type": "load", "desc": "Benchmark: 30-day identity lookup under one second at one billion rows" },
+      { "id": "T4", "type": "integration", "desc": "TTL moves an aged partition to the cold tier and queries still return it" }
+    ]
+  },
+  {
+    "id": "P1-07",
+    "title": "Kafka-to-ClickHouse ingest writer with batching",
+    "epic": "Event Store",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P1-05", "P1-06"],
+    "description": "Consumes normalised events and writes them to ClickHouse in batches sized for merge health, with offset commits only after a durable write.",
+    "acceptance": [
+      "Batched inserts only — never per-row",
+      "Offsets commit after the ClickHouse write is acknowledged",
+      "Backpressure propagates: a slow ClickHouse slows consumption rather than buffering unboundedly",
+      "Merge queue depth is monitored and alerted on",
+      "Sustains 30,000 events per second in the load test"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Consumer restart replays uncommitted offsets with no data loss" },
+      { "id": "T2", "type": "integration", "desc": "ClickHouse unavailability pauses consumption and recovers without loss" },
+      { "id": "T3", "type": "load", "desc": "Sustains 30k EPS for 15 minutes with stable merge queue depth" },
+      { "id": "T4", "type": "unit", "desc": "Batch sizing respects both the row-count and time-window triggers" }
+    ]
+  },
+  {
+    "id": "P1-08",
+    "title": "Raw log archive to object storage",
+    "epic": "Archive & Replay",
+    "type": "feat",
+    "area": "ingest",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P1-03"],
+    "description": "Every raw vendor payload is archived before normalisation, partitioned by tenant and date, so a mapping bug is recoverable by replay rather than by apology.",
+    "acceptance": [
+      "Raw payloads are written before normalisation, never after",
+      "Partitioned by tenant_id and date for efficient selective replay",
+      "Compressed, with lifecycle rules for the retention tier",
+      "Server-side encrypted at rest",
+      "Archive write failure fails the batch rather than silently proceeding"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Every ingested event has a corresponding archived raw payload" },
+      { "id": "T2", "type": "unit", "desc": "Archive write failure causes batch failure, not silent continuation" },
+      { "id": "T3", "type": "integration", "desc": "Lifecycle policy transitions an aged object to the cheaper storage class" }
+    ]
+  },
+  {
+    "id": "P1-09",
+    "title": "Replay tooling — re-ingest historical raw events",
+    "epic": "Archive & Replay",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P1-08"],
+    "description": "Re-run archived raw events through normalisation and detection for a tenant and time range. This is how mapping bugs are fixed and it is the engine behind the free 7-day security scan.",
+    "acceptance": [
+      "Replay is scoped by tenant and time range and never touches another tenant",
+      "Replay is idempotent — re-running produces no observable duplication",
+      "Replay can target a separate output topic so production state is not disturbed",
+      "Progress is reported and the job is resumable after interruption",
+      "Replaying 7 days for a 100-seat tenant completes in under 10 minutes"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Replay of a known range reproduces the identical normalised event set" },
+      { "id": "T2", "type": "integration", "desc": "Replay twice produces no duplicate rows after merge" },
+      { "id": "T3", "type": "integration", "desc": "Interrupted replay resumes from its checkpoint" },
+      { "id": "T4", "type": "load", "desc": "7-day replay for a 100-seat tenant completes inside 10 minutes" }
+    ]
+  },
+  {
+    "id": "P1-10",
+    "title": "Per-tenant rate limiting and ingest backpressure",
+    "epic": "Connector Framework",
+    "type": "feat",
+    "area": "ingest",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P1-01"],
+    "description": "Token-bucket quotas in Redis so a tenant emitting 50x its normal volume cannot starve the others. Overflow spills to archive for later replay instead of being dropped.",
+    "acceptance": [
+      "Per-tenant EPS quota is configurable and defaults by plan tier",
+      "Exceeding the quota throttles that tenant's fetch rate without affecting others",
+      "Overflow is archived for replay, never discarded",
+      "Quota breaches are surfaced to the tenant and to operations",
+      "Redis unavailability fails open with a conservative global limit rather than halting ingest"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A tenant at 50x normal volume does not increase another tenant's ingest lag" },
+      { "id": "T2", "type": "unit", "desc": "Token bucket refills at the configured rate" },
+      { "id": "T3", "type": "integration", "desc": "Redis outage degrades to the global limit and ingest continues" }
+    ]
+  },
+  {
+    "id": "P1-11",
+    "title": "Ingest observability — lag, EPS and connector health",
+    "epic": "Ingest Observability",
+    "type": "infra",
+    "area": "ingest",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P1-07", "P0-10"],
+    "description": "The metrics needed to answer 'is this tenant's data flowing' without reading logs, plus alerting on ingest lag.",
+    "acceptance": [
+      "Ingest lag is measured per tenant and per connector and exported as a metric",
+      "EPS, batch size and error rate are exported per connector",
+      "Alert fires when ingest lag exceeds 5 minutes",
+      "Connector health is visible through the API for the dashboard to render",
+      "A dashboard panel shows the 20 most-lagging tenants"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Induced connector stall produces a lag metric increase and fires the alert" },
+      { "id": "T2", "type": "unit", "desc": "Lag calculation is correct when a connector has produced no events at all" },
+      { "id": "T3", "type": "integration", "desc": "Health endpoint reflects a revoked-consent connector as degraded" }
+    ]
+  },
+  {
+    "id": "P1-12",
+    "title": "72-hour continuous ingest soak with induced failures",
+    "epic": "Ingest Observability",
+    "type": "test",
+    "area": "ingest",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P1-07", "P1-10"],
+    "description": "The P1 exit criterion as an executable test: run continuously for 72 hours against a seeded tenant while injecting broker, database and vendor-API failures, and reconcile counts.",
+    "acceptance": [
+      "Runs 72 hours continuously without manual intervention",
+      "Injects broker restart, ClickHouse restart, and vendor 429 and 503 responses",
+      "Produced count reconciles exactly with stored count after merge",
+      "No unhandled panic or goroutine leak over the run",
+      "A written report of lag distribution and failure recovery times is produced"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Count reconciliation is exact after induced broker restart" },
+      { "id": "T2", "type": "integration", "desc": "Count reconciliation is exact after induced ClickHouse restart" },
+      { "id": "T3", "type": "load", "desc": "Memory and goroutine counts are stable across the full 72 hours" }
+    ]
+  },
+  {
+    "id": "P1-13",
+    "title": "Connector developer guide and the second-connector dry run",
+    "epic": "Connector Framework",
+    "type": "docs",
+    "area": "ingest",
+    "points": 2,
+    "priority": "P2",
+    "dependsOn": ["P1-04"],
+    "description": "Prove the connector abstraction actually abstracts, by documenting it and building a trivial second connector (generic syslog) against the guide alone.",
+    "acceptance": [
+      "A guide covers the interface, cursor semantics, normalisation rules and testing requirements",
+      "A syslog connector is implemented following only the guide",
+      "Building it required no change to ingest, detection or correlation",
+      "Any friction encountered is recorded and turned into follow-up tickets"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Syslog connector ingests RFC 5424 messages end to end" },
+      { "id": "T2", "type": "manual", "desc": "An engineer unfamiliar with the ingest code builds the connector from the guide alone" }
+    ]
+  }
+]

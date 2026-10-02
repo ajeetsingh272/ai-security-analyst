@@ -1,0 +1,204 @@
+# Getting Started
+
+From a clean machine to a running system. If any step here fails, that is a bug
+in this document — open an issue.
+
+---
+
+## 1. Prerequisites
+
+| Tool | Version | Why | Install |
+|---|---|---|---|
+| **Node.js** | 22 LTS or newer | Dashboard, API, AI analyst, tooling | [nodejs.org](https://nodejs.org) or `nvm install 22` |
+| **pnpm** | 10+ | Workspace package manager | `corepack enable && corepack prepare pnpm@10 --activate` |
+| **Go** | 1.23+ | Ingest, detection and correlation services | [go.dev/dl](https://go.dev/dl/) |
+| **Docker** | 24+ with Compose v2 | The whole local data stack | [docker.com](https://docs.docker.com/get-docker/) |
+| **Git** | 2.40+ | — | [git-scm.com](https://git-scm.com) |
+
+Optional but recommended:
+
+| Tool | Why |
+|---|---|
+| **gh** (GitHub CLI) | Regenerating the board from `planning/` via `scripts/sync-board.mjs` |
+| **psql** | `scripts/migrate.sh` uses it; Docker exec also works |
+| **golangci-lint** | Matches what CI runs, so you find lint failures before pushing |
+| **k6** | Load tests under `tests/load/` |
+
+Verify everything at once:
+
+```bash
+node --version && pnpm --version && go version && docker --version && git --version
+```
+
+### Resource requirements
+
+The dev stack runs ClickHouse, Postgres, Redpanda, Valkey, MinIO and Jaeger.
+Budget **8 GB of RAM** for Docker and ~10 GB of disk. On Docker Desktop, raise
+the memory limit in Settings → Resources if the stack is being OOM-killed —
+ClickHouse is usually the first casualty.
+
+---
+
+## 2. Clone and install
+
+```bash
+git clone https://github.com/ajeetsingh272/ai-security-analyst.git
+cd ai-security-analyst
+pnpm install
+```
+
+---
+
+## 3. Configure
+
+```bash
+cp .env.example .env
+```
+
+Nothing is required to bring the stack up. To exercise the AI analyst you need
+at minimum:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The connector credentials (`MS_GRAPH_*`, `GOOGLE_*`) are only needed when you
+work on ingest against a real tenant — see §7.
+
+`.env` is gitignored. If you ever find yourself about to commit a credential,
+stop: `git diff --cached` first. A leaked connector secret is a customer's
+mailbox.
+
+---
+
+## 4. Start the stack
+
+```bash
+pnpm dev:stack
+```
+
+Brings up, with health checks gating startup order:
+
+| Service | URL | Purpose |
+|---|---|---|
+| Postgres | `localhost:5432` | Control plane |
+| ClickHouse | `localhost:8123` | Event store |
+| Redpanda | `localhost:19092` | Stream |
+| Redpanda Console | <http://localhost:8080> | Topic and message inspection |
+| Valkey | `localhost:6379` | Cache, locks, rate limits |
+| MinIO | <http://localhost:9001> | Raw archive (`minioadmin` / `minioadmin`) |
+| Jaeger | <http://localhost:16686> | Distributed traces |
+
+Everything should be healthy within 90 seconds:
+
+```bash
+docker compose -f infra/docker/docker-compose.dev.yml ps
+```
+
+Then apply schemas:
+
+```bash
+pnpm db:migrate
+```
+
+---
+
+## 5. Run
+
+```bash
+pnpm dev          # TypeScript apps (dashboard :3000, API :4000)
+pnpm go:build     # Go services into bin/
+```
+
+---
+
+## 6. Verify your setup
+
+Run what CI runs. Each gates on a real exit code — if one of these passes
+locally and fails in CI, that is worth investigating rather than retrying.
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm go:test
+pnpm detections:validate
+```
+
+Tear down when you are done. `-v` also removes the volumes:
+
+```bash
+pnpm dev:stack:down
+```
+
+---
+
+## 7. Connecting a real Microsoft 365 tenant
+
+Only needed for ingest work. **Use a Microsoft developer tenant, never a
+production one** — you will be reading an organisation's complete audit trail.
+
+1. Create a free [Microsoft 365 Developer tenant](https://developer.microsoft.com/microsoft-365/dev-program)
+2. Register an application in Entra ID → App registrations
+3. Add **application** permissions (not delegated):
+   `ActivityFeed.Read`, `AuditLog.Read.All`, `Directory.Read.All`
+4. Grant admin consent
+5. Create a client secret and put the values in `.env`
+6. Set the redirect URI to `http://localhost:3000/api/connectors/m365/callback`
+
+Every scope above is read-only. If you find yourself needing a write scope for
+ingest, that is a design discussion, not a configuration change.
+
+---
+
+## 8. Project planning workflow
+
+`planning/` is the source of truth for the board, the roadmap and the progress
+dashboard. Edit it, then regenerate — never edit a generated issue body by hand,
+because the next sync overwrites it.
+
+```bash
+node scripts/validate-backlog.mjs      # always run before syncing
+node scripts/sync-board.mjs --dry-run  # preview
+node scripts/sync-board.mjs            # create/update issues, milestones, board
+node tools/progress/build.mjs          # build the progress page into site/
+```
+
+`sync-board.mjs` is idempotent and resumable — a run interrupted by a rate limit
+is safe to repeat.
+
+---
+
+## 9. Where to go next
+
+| You want to | Read |
+|---|---|
+| Understand the system | [`docs/architecture/overview.md`](architecture/overview.md) |
+| Know why something is the way it is | [`docs/adr/`](adr/) |
+| See what is being built and when | [`docs/roadmap.md`](roadmap.md) |
+| Build UI | [`docs/design/ui-ux-spec.md`](design/ui-ux-spec.md) |
+| Write a detection rule | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| Pick up work | The [project board](https://github.com/users/ajeetsingh272/projects) |
+
+---
+
+## 10. Troubleshooting
+
+**ClickHouse exits immediately.** Almost always memory. Raise Docker's limit to
+8 GB. Check with `docker compose -f infra/docker/docker-compose.dev.yml logs clickhouse`.
+
+**Port already in use.** MinIO is deliberately on `9100` because ClickHouse's
+native protocol owns `9000`. If something else collides, change the host-side
+port in `infra/docker/docker-compose.dev.yml` — never the container-side one.
+
+**Redpanda unhealthy.** It needs a moment longer than the others on first start
+while it initialises its data directory. If it persists:
+`docker compose -f infra/docker/docker-compose.dev.yml down -v` and start again.
+
+**A query returns nothing and you are sure the data is there.** Row-level
+security is almost certainly doing its job — `app.tenant_id` is not set for your
+transaction. This is the designed behaviour from [ADR-0008](adr/0008-tenant-isolation.md):
+a missing tenant filter returns zero rows rather than another customer's data.
+
+**`pnpm install` fails on a fresh clone.** Check Node is 22+. `corepack enable`
+if pnpm is not found.

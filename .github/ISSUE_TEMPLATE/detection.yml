@@ -1,0 +1,29 @@
+name: Detection rule
+description: Propose a new detection
+labels: ["type:feat", "area:detect"]
+body:
+  - type: input
+    attributes:
+      label: Attack behaviour
+      description: What an attacker does, in plain English.
+    validations: { required: true }
+  - type: input
+    attributes:
+      label: MITRE ATT&CK technique
+      description: "e.g. T1114.003. CI rejects unmapped rules."
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Positive case
+      description: An event sequence that MUST fire this rule.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Negative case
+      description: Legitimate activity that looks similar and must NOT fire. A rule without this is a false-positive generator.
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Plain-English description for the owner
+      description: What a non-technical business owner should read when this fires.
+    validations: { required: true }

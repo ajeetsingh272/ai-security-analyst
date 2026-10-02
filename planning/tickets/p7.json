@@ -1,0 +1,263 @@
+[
+  {
+    "id": "P7-01",
+    "title": "Google Workspace connector",
+    "epic": "Connectors",
+    "type": "feat",
+    "area": "ingest",
+    "points": 8,
+    "priority": "P1",
+    "dependsOn": ["P1-13"],
+    "description": "The second major identity platform, built against the connector guide to prove the abstraction holds.",
+    "acceptance": [
+      "Admin SDK Reports API consent flow with read-only scopes",
+      "Login, admin, Drive, Gmail and token audit activities are collected",
+      "OCSF normalisation produces output equivalent to M365 for comparable events",
+      "Required no change to ingest, detection or correlation",
+      "Existing rules fire correctly on Google events without modification where the technique applies"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Consent flow and collection succeed against a Google test tenant" },
+      { "id": "T2", "type": "unit", "desc": "Equivalent sign-in events from Google and Microsoft normalise to the same OCSF shape" },
+      { "id": "T3", "type": "integration", "desc": "Impossible travel fires correctly on Google sign-in data" },
+      { "id": "T4", "type": "integration", "desc": "Cursor and checkpoint semantics survive a restart" }
+    ]
+  },
+  {
+    "id": "P7-02",
+    "title": "AWS CloudTrail connector",
+    "epic": "Connectors",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P2",
+    "dependsOn": ["P1-13"],
+    "description": "Push-based ingest via EventBridge and SQS — the lowest-latency source and the first non-polling connector.",
+    "acceptance": [
+      "Cross-account role assumption with an external id, documented for the customer",
+      "SQS consumption with correct visibility timeout and deletion semantics",
+      "CloudTrail events normalise to OCSF",
+      "The push path coexists with polling connectors without special-casing downstream",
+      "Message loss is impossible — deletion occurs only after durable write"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Role assumption and consumption succeed against a test account" },
+      { "id": "T2", "type": "integration", "desc": "A consumer crash before deletion results in redelivery, not loss" },
+      { "id": "T3", "type": "unit", "desc": "CloudTrail normalisation matches golden fixtures" }
+    ]
+  },
+  {
+    "id": "P7-03",
+    "title": "Azure and Entra ID connector",
+    "epic": "Connectors",
+    "type": "feat",
+    "area": "ingest",
+    "points": 5,
+    "priority": "P2",
+    "dependsOn": ["P1-13"],
+    "description": "Diagnostic settings to Event Hub for Azure activity and Entra ID sign-in logs beyond what the M365 connector covers.",
+    "acceptance": [
+      "Event Hub consumption with checkpointing",
+      "Entra ID risk detections and conditional access results are captured",
+      "Normalises to OCSF consistently with the M365 connector",
+      "Customer configuration is documented with screenshots",
+      "Overlap with M365-sourced events is deduplicated"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Event Hub consumption with checkpoint recovery after restart" },
+      { "id": "T2", "type": "unit", "desc": "Deduplication against M365-sourced equivalents is correct" },
+      { "id": "T3", "type": "integration", "desc": "Risk detections surface as signals" }
+    ]
+  },
+  {
+    "id": "P7-04",
+    "title": "Hot-tenant sharding activation",
+    "epic": "Scale",
+    "type": "feat",
+    "area": "platform",
+    "points": 8,
+    "priority": "P1",
+    "dependsOn": ["P3-10", "P1-05"],
+    "description": "Activate the shard split designed for in P1 and P3, so a single large tenant can no longer pin a partition.",
+    "acceptance": [
+      "Tenants exceeding a configured EPS threshold are automatically re-keyed across shards",
+      "Correlation merges windows across shards correctly",
+      "Shard assignment changes do not split an open case",
+      "The threshold is configurable and changes take effect without redeployment",
+      "Sharded and unsharded tenants behave identically from the product's perspective"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A tenant crossing the threshold is sharded automatically" },
+      { "id": "T2", "type": "integration", "desc": "An open case is not split by a shard assignment change" },
+      { "id": "T3", "type": "load", "desc": "A single tenant at 10k EPS does not increase other tenants' lag" },
+      { "id": "T4", "type": "integration", "desc": "Un-sharding a tenant that falls below threshold is safe" }
+    ]
+  },
+  {
+    "id": "P7-05",
+    "title": "ClickHouse cold tiering and retention enforcement",
+    "epic": "Scale",
+    "type": "infra",
+    "area": "platform",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P1-06"],
+    "description": "Age partitions beyond 90 days to object storage, enforce per-plan retention, and keep queries working transparently across tiers.",
+    "acceptance": [
+      "Storage policy moves aged partitions to S3 automatically",
+      "Queries spanning hot and cold return correct results with only a latency difference",
+      "Retention is enforced per plan tier and deletion is verifiable",
+      "Cold-tier query latency is documented and surfaced in the UI as a slower path",
+      "Storage cost per tenant is measured against the cost model"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "An aged partition moves to cold storage and remains queryable" },
+      { "id": "T2", "type": "integration", "desc": "A query spanning both tiers returns a complete result set" },
+      { "id": "T3", "type": "integration", "desc": "Retention deletion removes data and is verifiable" }
+    ]
+  },
+  {
+    "id": "P7-06",
+    "title": "Production Kubernetes deployment and Terraform infrastructure",
+    "epic": "Scale",
+    "type": "infra",
+    "area": "platform",
+    "points": 13,
+    "priority": "P0",
+    "dependsOn": ["P0-03"],
+    "description": "Everything that has run in Docker Compose now runs as declared, reproducible production infrastructure.",
+    "acceptance": [
+      "All infrastructure is declared in Terraform; no manual console changes",
+      "Services deploy via Kubernetes manifests with resource limits and health probes",
+      "Horizontal autoscaling is configured against meaningful metrics, not just CPU",
+      "Secrets come from a secret manager, never from environment files in the repo",
+      "A full environment can be rebuilt from scratch in under two hours, and this has been done"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Terraform apply builds a complete environment from nothing" },
+      { "id": "T2", "type": "integration", "desc": "Pod failure is recovered automatically without data loss" },
+      { "id": "T3", "type": "load", "desc": "Autoscaling responds correctly to a load spike" },
+      { "id": "T4", "type": "manual", "desc": "A disaster-recovery rebuild is performed and timed" }
+    ]
+  },
+  {
+    "id": "P7-07",
+    "title": "Full-scale load test at 30k EPS",
+    "epic": "Scale",
+    "type": "test",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P7-06", "P7-04"],
+    "description": "The P7 exit criterion: the whole pipeline, not just detection, sustaining peak load with the alert latency SLO intact.",
+    "acceptance": [
+      "30,000 EPS sustained for one hour across the complete pipeline",
+      "p95 critical alert latency stays under 3 minutes throughout",
+      "No unbounded queue growth anywhere in the pipeline",
+      "Cost at this load is measured and compared against the model",
+      "Results are published and a regression gate is established"
+    ],
+    "tests": [
+      { "id": "T1", "type": "load", "desc": "30k EPS sustained for one hour end to end" },
+      { "id": "T2", "type": "load", "desc": "p95 alert latency under 3 minutes at peak" },
+      { "id": "T3", "type": "load", "desc": "No queue in the pipeline grows unboundedly" },
+      { "id": "T4", "type": "load", "desc": "Measured cost at load is within 20% of the model" }
+    ]
+  },
+  {
+    "id": "P7-08",
+    "title": "SOC 2 Type I evidence collection",
+    "epic": "Compliance",
+    "type": "security",
+    "area": "platform",
+    "points": 13,
+    "priority": "P1",
+    "dependsOn": ["P7-06"],
+    "description": "The certification larger customers and MSP procurement require before signing.",
+    "acceptance": [
+      "Control mapping is documented against the trust services criteria",
+      "Access reviews, change management and incident response procedures are written and followed",
+      "Evidence collection is automated where possible rather than assembled manually",
+      "A gap assessment is completed and remediation tracked to closure",
+      "Policies are approved and acknowledged by everyone with production access"
+    ],
+    "tests": [
+      { "id": "T1", "type": "manual", "desc": "Gap assessment completed with every finding tracked" },
+      { "id": "T2", "type": "integration", "desc": "Automated evidence collection runs and produces the expected artefacts" },
+      { "id": "T3", "type": "manual", "desc": "Access review is executed end to end" }
+    ]
+  },
+  {
+    "id": "P7-09",
+    "title": "Backup, restore and disaster recovery verification",
+    "epic": "Compliance",
+    "type": "infra",
+    "area": "platform",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P7-06"],
+    "description": "A backup that has never been restored is not a backup. RPO and RTO are stated, tested and evidenced.",
+    "acceptance": [
+      "Postgres and ClickHouse backups run on schedule with monitored success",
+      "RPO and RTO targets are stated per data store and justified",
+      "A full restore is performed and timed at least quarterly",
+      "The audit chain verifies after a restore",
+      "The procedure is documented well enough for someone who did not write it"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "A full Postgres restore completes within the stated RTO" },
+      { "id": "T2", "type": "integration", "desc": "A ClickHouse restore completes and data reconciles" },
+      { "id": "T3", "type": "integration", "desc": "Audit chain verification passes after restore" },
+      { "id": "T4", "type": "manual", "desc": "An engineer who did not write the runbook executes the restore successfully" }
+    ]
+  },
+  {
+    "id": "P7-10",
+    "title": "Customer-authored detection rules [cuttable]",
+    "epic": "Extensibility",
+    "type": "feat",
+    "area": "detect",
+    "points": 13,
+    "priority": "P3",
+    "dependsOn": ["P2-12"],
+    "cuttable": true,
+    "description": "A sandboxed path for customer-written rules. ADR-0004 says this supersedes rather than bends the compiled-rule decision, so it needs its own ADR first.",
+    "acceptance": [
+      "A new ADR is written superseding the relevant part of ADR-0004",
+      "Customer rules execute in a resource-limited sandbox with a hard timeout",
+      "A customer rule cannot degrade platform performance for other tenants",
+      "Rules are validated and tested against fixtures before activation",
+      "Customer rules are scoped strictly to the authoring tenant"
+    ],
+    "tests": [
+      { "id": "T1", "type": "security", "desc": "A pathological customer rule is terminated at its resource limit" },
+      { "id": "T2", "type": "security", "desc": "A customer rule cannot read another tenant's events" },
+      { "id": "T3", "type": "load", "desc": "Customer rules do not affect platform-wide evaluation latency" },
+      { "id": "T4", "type": "integration", "desc": "A rule failing its own fixtures cannot be activated" }
+    ]
+  },
+  {
+    "id": "P7-11",
+    "title": "Multi-region readiness [cuttable]",
+    "epic": "Extensibility",
+    "type": "infra",
+    "area": "platform",
+    "points": 13,
+    "priority": "P3",
+    "dependsOn": ["P7-06"],
+    "cuttable": true,
+    "description": "Data residency for customers who require it, and reduced latency for distant regions. Cut unless a contract requires it.",
+    "acceptance": [
+      "Tenant data residency is selectable at provisioning and enforced thereafter",
+      "Regional isolation is verified — no tenant data crosses its assigned region",
+      "The control plane operates across regions without becoming a single point of failure",
+      "Cross-region failover is documented and tested",
+      "Cost impact is measured per region"
+    ],
+    "tests": [
+      { "id": "T1", "type": "security", "desc": "Tenant data never leaves its assigned region, verified at the storage layer" },
+      { "id": "T2", "type": "integration", "desc": "Cross-region failover completes within the stated RTO" },
+      { "id": "T3", "type": "integration", "desc": "Control plane survives the loss of one region" }
+    ]
+  }
+]

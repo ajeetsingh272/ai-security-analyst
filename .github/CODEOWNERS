@@ -1,0 +1,8 @@
+# Security-critical paths need deliberate review. These implement the product
+# trust guarantees in SECURITY.md; weakening one requires an ADR.
+
+/db/postgres/migrations/   @ajeetsingh272
+/docs/adr/                 @ajeetsingh272
+/SECURITY.md               @ajeetsingh272
+/apps/analyst/src/grounding/  @ajeetsingh272
+/services/detect/internal/sigmac/ @ajeetsingh272

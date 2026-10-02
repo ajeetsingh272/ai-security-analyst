@@ -1,0 +1,188 @@
+/**
+ * Control Room — generated CSS custom properties.
+ * Source of truth: src/tokens.ts. Do not edit by hand.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ── Surfaces ──────────────────────────────────────────────────────────── */
+  --cr-bg-void: #070a11;
+  --cr-bg-base: #0c111c;
+  --cr-bg-raised: #131a28;
+  --cr-bg-sunken: #04060b;
+
+  --cr-border-hairline: rgba(255, 255, 255, 0.08);
+  --cr-border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --cr-text-primary: #e8ecf4;
+  --cr-text-secondary: #9ba6ba;
+  --cr-text-tertiary: #7a849a;
+  --cr-text-disabled: #3c465c;
+
+  /* ── Severity (colour-blind-safe blue→magenta axis) ────────────────────── */
+  --cr-sev-critical: #ff3d6e;
+  --cr-sev-high: #ff8a3d;
+  --cr-sev-medium: #f5c544;
+  --cr-sev-low: #3dbff2;
+  --cr-sev-info: #777f8f;
+
+  /* ── Accents (scarce by design) ────────────────────────────────────────── */
+  --cr-signal: #34d1f0;
+  /* Reserved exclusively for grounded evidence. Used nowhere else. */
+  --cr-verified: #4ade9b;
+
+  /* ── Type ──────────────────────────────────────────────────────────────── */
+  --cr-font-display: 'Bricolage Grotesque', 'Archivo', system-ui, sans-serif;
+  --cr-font-ui: 'Archivo', system-ui, -apple-system, sans-serif;
+  --cr-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  --cr-text-display-xl: 3.5rem;
+  --cr-text-display-l: 2.375rem;
+  --cr-text-display-m: 1.6875rem;
+  --cr-text-body-l: 1.0625rem;
+  --cr-text-body-m: 0.875rem;
+  --cr-text-body-s: 0.8125rem;
+  --cr-text-label: 0.6875rem;
+  --cr-text-mono-m: 0.8125rem;
+  --cr-text-mono-s: 0.71875rem;
+
+  /* ── Space ─────────────────────────────────────────────────────────────── */
+  --cr-space-1: 0.25rem;
+  --cr-space-2: 0.5rem;
+  --cr-space-3: 0.75rem;
+  --cr-space-4: 1rem;
+  --cr-space-5: 1.25rem;
+  --cr-space-6: 1.5rem;
+  --cr-space-8: 2rem;
+  --cr-space-10: 2.5rem;
+  --cr-space-12: 3rem;
+  --cr-space-16: 4rem;
+
+  --cr-radius-sm: 0.25rem;
+  --cr-radius-md: 0.375rem;
+  --cr-radius-lg: 0.5rem;
+  --cr-radius-xl: 0.75rem;
+  --cr-radius-full: 9999px;
+
+  /* ── Density (default: comfortable) ────────────────────────────────────── */
+  --cr-row-height: 3.5rem;
+  --cr-section-gap: var(--cr-space-8);
+  --cr-card-padding: var(--cr-space-6);
+
+  /* ── Motion ────────────────────────────────────────────────────────────── */
+  --cr-motion-instant: 80ms cubic-bezier(0, 0, 0.2, 1);
+  --cr-motion-quick: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cr-motion-considered: 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  --cr-stagger: 40ms;
+}
+
+[data-density='compact'] {
+  --cr-row-height: 2.25rem;
+  --cr-section-gap: var(--cr-space-5);
+  --cr-card-padding: var(--cr-space-4);
+}
+
+/* Severity hues shift in lightness, never in hue, so the learned
+   colour-to-meaning mapping survives the theme switch. */
+[data-theme='light'] {
+  --cr-bg-void: #f7f8fa;
+  --cr-bg-base: #ffffff;
+  --cr-bg-raised: #f0f2f6;
+  --cr-bg-sunken: #ebeef3;
+
+  --cr-border-hairline: rgba(10, 14, 22, 0.1);
+  --cr-border-strong: rgba(10, 14, 22, 0.2);
+
+  --cr-text-primary: #0c111c;
+  --cr-text-secondary: #4a5568;
+  --cr-text-tertiary: #626d7d;
+  --cr-text-disabled: #a3acbd;
+
+  --cr-sev-critical: #c70038;
+  --cr-sev-high: #b45309;
+  --cr-sev-medium: #8a6400;
+  --cr-sev-low: #0369a1;
+  --cr-sev-info: #54606f;
+
+  --cr-signal: #0e7f99;
+  --cr-verified: #15803d;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--cr-bg-void);
+  color: var(--cr-text-primary);
+  font-family: var(--cr-font-ui);
+  font-size: var(--cr-text-body-m);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Machine-generated values are always mono. The reader learns within minutes
+   that monospace means machine fact — a signal worth more than decoration. */
+code,
+kbd,
+samp,
+.cr-mono {
+  font-family: var(--cr-font-mono);
+  font-size: var(--cr-text-mono-m);
+  font-variant-ligatures: none;
+}
+
+/* Focus is never removed, including on mouse interaction. */
+:focus-visible {
+  outline: 2px solid var(--cr-signal);
+  outline-offset: 2px;
+  border-radius: var(--cr-radius-sm);
+}
+
+/* ── Live indicator ───────────────────────────────────────────────────────
+   The only persistent animation in the product. Its job is to make
+   "we are watching" continuously true rather than a marketing claim. When
+   ingest degrades the pulse stops — absence of motion carries the bad news,
+   which is quieter and more credible than an alarm. */
+
+.cr-live {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--cr-radius-full);
+  background: var(--cr-signal);
+  animation: cr-pulse 3000ms cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.cr-live[data-state='degraded'] {
+  background: var(--cr-sev-medium);
+  animation: none;
+}
+
+.cr-live[data-state='down'] {
+  background: var(--cr-sev-critical);
+  animation: none;
+}
+
+@keyframes cr-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 209, 240, 0.4); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 0.375rem rgba(52, 209, 240, 0); }
+}
+
+/* Reduced motion removes everything, including the live pulse, which falls back
+   to a static dot. This path is tested, not assumed. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

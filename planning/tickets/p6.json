@@ -1,0 +1,311 @@
+[
+  {
+    "id": "P6-01",
+    "title": "Dashboard application shell, navigation and theming",
+    "epic": "Tenant Dashboard",
+    "type": "feat",
+    "area": "frontend",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P0-08", "P3-08"],
+    "description": "The Next.js 15 shell: authenticated layout, navigation, theme switching, tenant switcher, and the loading and error boundaries every subsequent screen inherits.",
+    "acceptance": [
+      "App Router with server components by default; client components only where interaction requires",
+      "Dark default with a working light mode, persisted per user",
+      "Responsive from 375px upward with no horizontal scroll",
+      "Error and loading boundaries at every route segment",
+      "Navigation reflects the user's role; an unauthorised route is refused server-side, not merely hidden"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Authenticated navigation works across every top-level route" },
+      { "id": "T2", "type": "e2e", "desc": "Theme preference persists across sessions" },
+      { "id": "T3", "type": "unit", "desc": "axe accessibility checks pass on the shell in both themes" },
+      { "id": "T4", "type": "e2e", "desc": "Direct navigation to an unauthorised route is refused server-side" }
+    ]
+  },
+  {
+    "id": "P6-02",
+    "title": "Case list with filtering, sorting and live updates",
+    "epic": "Tenant Dashboard",
+    "type": "feat",
+    "area": "frontend",
+    "points": 5,
+    "priority": "P0",
+    "dependsOn": ["P6-01"],
+    "description": "The main working surface: open cases ranked by severity and score, filterable, updating live as new cases arrive.",
+    "acceptance": [
+      "Filter by severity, status, entity, rule and date range",
+      "New cases appear without a manual refresh",
+      "Pagination performs acceptably at 10,000 cases",
+      "Empty, loading and error states are designed, not default",
+      "Keyboard navigable end to end"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Filters produce correct result sets" },
+      { "id": "T2", "type": "e2e", "desc": "A new case appears live without refresh" },
+      { "id": "T3", "type": "load", "desc": "List renders responsively at 10,000 cases" },
+      { "id": "T4", "type": "e2e", "desc": "Full keyboard navigation of the list and its filters" }
+    ]
+  },
+  {
+    "id": "P6-03",
+    "title": "Case detail view with inline evidence",
+    "epic": "Tenant Dashboard",
+    "type": "feat",
+    "area": "frontend",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P6-02", "P4-07"],
+    "guarantee": "TG1",
+    "description": "The screen that makes the grounding guarantee visible: the plain-English report, with every claim expandable to the exact log events that prove it.",
+    "acceptance": [
+      "The report is presented in plain English with a timeline of the case",
+      "Every claim expands to show the referenced raw events",
+      "The MITRE technique for each signal is shown with a plain-English explanation",
+      "Recommended actions are presented with their blast radius and an approval control",
+      "The full case history including every state transition is viewable"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Expanding a claim displays the referenced events" },
+      { "id": "T2", "type": "e2e", "desc": "A claim whose evidence is still indexing shows a pending state, not an error" },
+      { "id": "T3", "type": "e2e", "desc": "Approving an action from this screen executes the correct playbook" },
+      { "id": "T4", "type": "unit", "desc": "Accessibility checks pass on the expanded evidence view" }
+    ]
+  },
+  {
+    "id": "P6-04",
+    "title": "Connector management and onboarding wizard",
+    "epic": "Self-Serve Onboarding",
+    "type": "feat",
+    "area": "frontend",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P6-01", "P1-02"],
+    "description": "The brief promises 10-minute setup. A non-technical admin connects Microsoft 365 without reading documentation.",
+    "acceptance": [
+      "The wizard explains in plain language what permissions are requested and why",
+      "Connection status, last sync and health are clearly visible",
+      "A failed or revoked connection states what to do, not just that it failed",
+      "Disconnecting explains exactly what stops happening",
+      "An unassisted non-technical user completes it in under 10 minutes"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "The full connection flow completes against a test tenant" },
+      { "id": "T2", "type": "e2e", "desc": "A revoked connection surfaces actionable recovery guidance" },
+      { "id": "T3", "type": "manual", "desc": "Five non-technical testers complete setup unassisted in under 10 minutes" }
+    ]
+  },
+  {
+    "id": "P6-05",
+    "title": "Free 10-minute security scan",
+    "epic": "Growth",
+    "type": "feat",
+    "area": "frontend",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P6-04", "P1-09"],
+    "description": "The commercial centrepiece. Connect, replay the last 7 days through detection, and present real findings. The go-to-market plan assumes this converts 1 in 4 trials.",
+    "acceptance": [
+      "Connect to scan results in under 10 minutes for a 100-seat tenant",
+      "Findings are presented in business terms with estimated exposure, not technical counts",
+      "A shareable report is produced that an owner can forward internally",
+      "Honest when nothing serious is found — the product must not manufacture urgency",
+      "Conversion from scan to trial is instrumented end to end"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Scan completes inside 10 minutes for a 100-seat tenant" },
+      { "id": "T2", "type": "integration", "desc": "A seeded tenant with known issues surfaces exactly those issues" },
+      { "id": "T3", "type": "integration", "desc": "A clean tenant produces an honest clean result with no invented findings" },
+      { "id": "T4", "type": "e2e", "desc": "Conversion funnel events fire at each step" }
+    ]
+  },
+  {
+    "id": "P6-06",
+    "title": "MSP multi-client console",
+    "epic": "MSP Console",
+    "type": "feat",
+    "area": "frontend",
+    "points": 8,
+    "priority": "P0",
+    "dependsOn": ["P6-02", "P0-09"],
+    "description": "The primary customer segment manages 20 to 200 clients. One screen showing every client's posture, with cross-tenant access strictly scoped to linked clients.",
+    "acceptance": [
+      "A single view ranks all linked clients by open critical cases",
+      "Drilling into a client enters that tenant's scope cleanly and visibly",
+      "Cross-client search covers only linked clients",
+      "Performance is acceptable at 200 clients",
+      "An MSP user cannot reach a tenant they are not linked to, enforced server-side"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Console renders 200 clients within the performance budget" },
+      { "id": "T2", "type": "security", "desc": "Direct API access to an unlinked tenant is refused" },
+      { "id": "T3", "type": "e2e", "desc": "Drill-down and return preserve correct tenant scope" },
+      { "id": "T4", "type": "security", "desc": "Unlinking a client immediately removes access" }
+    ]
+  },
+  {
+    "id": "P6-07",
+    "title": "Weekly owner report",
+    "epic": "Reporting",
+    "type": "feat",
+    "area": "frontend",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P6-03"],
+    "description": "The brief's one-page weekly summary in simple language: what happened, what was blocked, and the one thing to improve.",
+    "acceptance": [
+      "Generated weekly per tenant on a configurable schedule",
+      "Fits one page and names exactly one improvement, not a list",
+      "Delivered by email with a dashboard copy and a PDF export",
+      "Readability is checked against the same threshold as case reports",
+      "A week with nothing to report says so plainly rather than padding"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Report generates correctly from a seeded week" },
+      { "id": "T2", "type": "unit", "desc": "A quiet week produces an honest low-activity report" },
+      { "id": "T3", "type": "unit", "desc": "PDF export renders correctly" },
+      { "id": "T4", "type": "unit", "desc": "Readability threshold is met" }
+    ]
+  },
+  {
+    "id": "P6-08",
+    "title": "Dismissal digest and suppression management UI",
+    "epic": "Tenant Dashboard",
+    "type": "feat",
+    "area": "frontend",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P6-02", "P3-07"],
+    "guarantee": "TG3",
+    "description": "Makes the 'nothing is hidden' guarantee visible and actionable: what was dismissed, why, and the ability to challenge it.",
+    "acceptance": [
+      "Daily dismissals are browsable and grouped by reason",
+      "Each dismissal shows whether a rule or the AI closed it, and why",
+      "A dismissal can be challenged, reopening the case",
+      "Active suppressions are listed with their creator, reason and expiry",
+      "A suppression can be revoked from the UI"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Dismissals are listed with their reasons" },
+      { "id": "T2", "type": "e2e", "desc": "Challenging a dismissal reopens the case" },
+      { "id": "T3", "type": "e2e", "desc": "Revoking a suppression takes effect on the next evaluation" }
+    ]
+  },
+  {
+    "id": "P6-09",
+    "title": "Public API and OpenAPI specification",
+    "epic": "Reporting",
+    "type": "feat",
+    "area": "platform",
+    "points": 5,
+    "priority": "P1",
+    "dependsOn": ["P3-08"],
+    "description": "A documented, versioned API so MSPs can integrate with their own tooling — a frequent procurement requirement in this segment.",
+    "acceptance": [
+      "OpenAPI specification is generated from code, not hand-maintained",
+      "API keys are scoped per tenant with configurable permissions",
+      "Rate limiting is applied per key and documented",
+      "Versioning policy is documented with a deprecation process",
+      "Every endpoint enforces tenant scoping independently of the key's claims"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "The generated specification matches actual endpoint behaviour" },
+      { "id": "T2", "type": "security", "desc": "A key scoped to tenant A cannot read tenant B through any endpoint" },
+      { "id": "T3", "type": "integration", "desc": "Rate limiting returns 429 with correct headers" },
+      { "id": "T4", "type": "security", "desc": "A revoked key is rejected immediately" }
+    ]
+  },
+  {
+    "id": "P6-10",
+    "title": "Billing, plans and usage metering",
+    "epic": "Growth",
+    "type": "feat",
+    "area": "platform",
+    "points": 8,
+    "priority": "P1",
+    "dependsOn": ["P4-06"],
+    "description": "The three pricing tiers from the brief, with usage metered against the per-tenant cost model so margin is visible per account.",
+    "acceptance": [
+      "MSP, startup and small-business plans are modelled with their limits",
+      "Seat count and event volume are metered per tenant",
+      "Cost of goods per tenant is computed and compared to revenue",
+      "Plan limits are enforced with graceful degradation, not a hard stop",
+      "An operations view shows margin per tenant"
+    ],
+    "tests": [
+      { "id": "T1", "type": "integration", "desc": "Usage metering matches actual consumption" },
+      { "id": "T2", "type": "integration", "desc": "Exceeding a plan limit degrades gracefully and notifies" },
+      { "id": "T3", "type": "unit", "desc": "Margin calculation is correct for each plan tier" }
+    ]
+  },
+  {
+    "id": "P6-11",
+    "title": "Accessibility audit and remediation",
+    "epic": "Tenant Dashboard",
+    "type": "test",
+    "area": "frontend",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P6-03", "P6-06"],
+    "description": "WCAG 2.1 AA across the product. A security console that fails colour-blind users is failing roughly 8% of its operators on the one dimension that matters most: severity.",
+    "acceptance": [
+      "Every screen meets WCAG 2.1 AA",
+      "Severity is never conveyed by colour alone, verified on every surface",
+      "Full keyboard operation of every workflow including approval",
+      "Screen reader walkthrough of the critical path is completed and recorded",
+      "Automated accessibility checks run in CI and gate the build"
+    ],
+    "tests": [
+      { "id": "T1", "type": "unit", "desc": "Automated axe checks pass on every route" },
+      { "id": "T2", "type": "manual", "desc": "Screen reader walkthrough of case review and approval" },
+      { "id": "T3", "type": "manual", "desc": "Colour-blindness simulation review of every severity surface" },
+      { "id": "T4", "type": "e2e", "desc": "Approval workflow completes using keyboard only" }
+    ]
+  },
+  {
+    "id": "P6-12",
+    "title": "Pilot onboarding and feedback instrumentation",
+    "epic": "Growth",
+    "type": "feat",
+    "area": "frontend",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P6-04", "P6-05"],
+    "description": "The P6 exit criterion made measurable: track time to first value, and capture structured feedback from the 5 to 10 pilot customers.",
+    "acceptance": [
+      "Time from signup to first connector and to first case is measured",
+      "Drop-off points in onboarding are instrumented",
+      "In-product feedback capture is attached to cases and reports",
+      "False-positive reports from customers feed the tuning backlog automatically",
+      "A pilot dashboard shows progress against each success criterion"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Onboarding funnel events fire at each step" },
+      { "id": "T2", "type": "integration", "desc": "A customer false-positive report creates a tuning backlog item" },
+      { "id": "T3", "type": "integration", "desc": "Pilot dashboard reflects seeded metric values correctly" }
+    ]
+  },
+  {
+    "id": "P6-13",
+    "title": "End-to-end self-serve onboarding test",
+    "epic": "Self-Serve Onboarding",
+    "type": "test",
+    "area": "frontend",
+    "points": 3,
+    "priority": "P1",
+    "dependsOn": ["P6-04", "P6-05", "P6-07"],
+    "description": "The P6 exit criterion as an automated test: signup to connector to scan to first case to weekly report, unassisted.",
+    "acceptance": [
+      "Covers signup, connector consent, scan, first case and weekly report",
+      "Asserts the whole path completes in under 15 minutes of wall-clock",
+      "Runs against a real Microsoft test tenant, not a mock",
+      "Runs nightly and gates the release",
+      "Failure identifies which step broke"
+    ],
+    "tests": [
+      { "id": "T1", "type": "e2e", "desc": "Full onboarding path completes within 15 minutes" },
+      { "id": "T2", "type": "e2e", "desc": "A weekly report is generated for the new tenant" },
+      { "id": "T3", "type": "e2e", "desc": "Failure reporting correctly identifies a deliberately broken step" }
+    ]
+  }
+]
