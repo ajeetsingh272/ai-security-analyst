@@ -71,7 +71,10 @@ goods near ₹1,000–1,800 per tenant per month against ₹4,000–30,000 of re
 ```
 
 Read [`docs/architecture/overview.md`](docs/architecture/overview.md) for the full
-treatment, and [`docs/adr/`](docs/adr/) for why each choice was made.
+treatment, [`docs/architecture/data-model.md`](docs/architecture/data-model.md) for
+the control-plane schema as the database actually reports it — including which
+tables are tenant-scoped and which role can bypass isolation — and
+[`docs/adr/`](docs/adr/) for why each choice was made.
 
 ## Scale targets
 
@@ -117,7 +120,7 @@ Requires Node 22+, pnpm 10+, Go 1.23+, Docker.
 ```bash
 pnpm install
 cp .env.example .env          # fill in at minimum ANTHROPIC_API_KEY
-pnpm dev:stack                # ClickHouse, Postgres, Redpanda, Redis, MinIO
+pnpm dev:stack                # ClickHouse, Postgres, Redpanda, Redis, SeaweedFS
 pnpm db:migrate
 pnpm dev
 ```
@@ -126,6 +129,9 @@ Dashboard on <http://localhost:3000>, API on <http://localhost:4000>.
 
 Full setup including connector OAuth registration:
 [`docs/getting-started.md`](docs/getting-started.md).
+
+Build caching, and how to enable the shared Remote Cache:
+[`docs/build-cache.md`](docs/build-cache.md).
 
 ## Project status & planning
 

@@ -9,6 +9,11 @@
     "NODE_ENV",
     "CI"
   ],
+  "remoteCache": {
+    "enabled": false,
+    "timeout": 30,
+    "uploadTimeout": 60
+  },
   "tasks": {
     "build": {
       "dependsOn": [

@@ -52,14 +52,34 @@ bypass=$(pg "SELECT rolbypassrls FROM pg_roles WHERE rolname = 'sentinel_app';" 
 if [ "$bypass" = "f" ]; then ok "sentinel_app cannot bypass RLS"; else bad "sentinel_app has BYPASSRLS (=$bypass)"; fi
 
 # The real test: two tenants, read as one, see only your own.
+#
+# Clean up by id as well as by name. These two ids belong to this script, and
+# anything else already holding one of them — a seed row, a leftover fixture —
+# would make the INSERT below fail on the primary key. The isolation query would
+# then find nothing and report a leak, which is a confusing way to be told that
+# the setup did not happen.
 pg "DELETE FROM cases WHERE title LIKE 'verify-%';
-    DELETE FROM tenants WHERE name LIKE 'verify-%';" > /dev/null
-pg "INSERT INTO tenants (id, name, plan) VALUES
+    DELETE FROM tenants
+     WHERE name LIKE 'verify-%'
+        OR id IN ('11111111-1111-1111-1111-111111111111',
+                  '22222222-2222-2222-2222-222222222222');" > /dev/null
+fixture=$(pg "INSERT INTO tenants (id, name, plan) VALUES
       ('11111111-1111-1111-1111-111111111111', 'verify-a', 'trial'),
       ('22222222-2222-2222-2222-222222222222', 'verify-b', 'trial');
     INSERT INTO cases (tenant_id, title, window_start) VALUES
       ('11111111-1111-1111-1111-111111111111', 'verify-case-a', now()),
-      ('22222222-2222-2222-2222-222222222222', 'verify-case-b', now());" > /dev/null
+      ('22222222-2222-2222-2222-222222222222', 'verify-case-b', now());")
+
+# Assert the premise before testing the conclusion. An isolation test run against
+# fixtures that were never created passes or fails for the wrong reason.
+planted=$(pg "SELECT count(*) FROM cases WHERE title LIKE 'verify-case-%';" | tr -d '[:space:]')
+if [ "$planted" = "2" ]; then
+  ok "isolation fixtures planted for two tenants"
+else
+  bad "could not plant isolation fixtures (found $planted of 2 cases)"
+  note "$(printf '%s' "$fixture" | tr '
+' ' ')"
+fi
 
 # Deliberately omit a tenant_id filter — the classic developer mistake.
 seen=$(pg "SET ROLE sentinel_app;

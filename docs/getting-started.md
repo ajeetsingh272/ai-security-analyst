@@ -104,6 +104,39 @@ pnpm db:migrate
 Migrations are tracked in a `schema_migrations` ledger, so `db:migrate` is safe
 to re-run. Editing a migration that has already been applied is detected by
 checksum and refused, rather than silently diverging your schema from production.
+To change the schema, add a migration — never edit one that has run.
+
+Then load the development fixtures:
+
+```bash
+pnpm db:seed
+```
+
+This provisions two tenants — a direct small-business customer and an MSP that
+manages it — with deliberately different connectors, case counts and severities.
+The difference is the point: with one tenant, every query returns the right rows
+by accident, and isolation cannot be observed. The seed is idempotent, and it
+refuses to run with `NODE_ENV=production`.
+
+### Schema commands
+
+| Command | What it does |
+|---|---|
+| `pnpm db:migrate` | Apply pending migrations and ClickHouse DDL |
+| `pnpm db:seed` | Load the two-tenant development fixtures |
+| `pnpm db:validate` | Assert every tenant-scoped table has a non-null `tenant_id` |
+| `pnpm db:check` | Migrate a throwaway database from empty; assert the seed is idempotent |
+| `pnpm db:docs` | Regenerate `docs/architecture/data-model.md` from the live schema |
+| `pnpm db:docs:check` | Fail if that document is out of date |
+| `pnpm db:pull` | Regenerate the typed Drizzle schema in `packages/db` |
+
+Two of those deserve a note. `pnpm db:check` builds a scratch database and
+migrates it from nothing, because your development database was migrated
+incrementally and therefore proves nothing about the path production will take
+exactly once. And `pnpm db:pull` runs one way only: the SQL migrations are the
+source of truth, and the generated TypeScript is a reading of the result. Never
+run `drizzle-kit generate` or `push` here — both would treat the generated file
+as authoritative and drop every policy, trigger and grant they cannot express.
 
 Finally, confirm the environment is not merely running but *enforcing* the
 product guarantees:

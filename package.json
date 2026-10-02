@@ -23,12 +23,19 @@
     "dev:stack": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
     "dev:stack:down": "docker compose -f infra/docker/docker-compose.dev.yml down -v",
     "db:migrate": "bash scripts/migrate.sh",
+    "db:seed": "bash scripts/seed.sh",
+    "db:docs": "pnpm --filter @sentinel/db docs",
+    "db:docs:check": "pnpm --filter @sentinel/db docs:check",
+    "db:pull": "pnpm --filter @sentinel/db pull",
+    "db:validate": "pnpm --filter @sentinel/db validate",
+    "db:check": "bash scripts/check-migrations.sh",
     "detections:validate": "bash scripts/validate-detections.sh",
     "progress:build": "node tools/progress/build.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml}\"",
     "prepare": "husky || true",
     "lint:fix": "eslint . --fix",
-    "verify": "bash scripts/verify-setup.sh"
+    "verify": "bash scripts/verify-setup.sh",
+    "workspace:validate": "node scripts/validate-workspace.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
