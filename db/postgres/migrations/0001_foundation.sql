@@ -16,6 +16,9 @@
 BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- citext: email comparison must be case-insensitive. "Priya@x.com" and
+-- "priya@x.com" are one person, and treating them as two is an auth bug.
+CREATE EXTENSION IF NOT EXISTS "citext";
 
 -- ── Roles ───────────────────────────────────────────────────────────────────
 -- The application role deliberately lacks BYPASSRLS. A role that can bypass

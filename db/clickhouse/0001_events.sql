@@ -77,15 +77,17 @@ CREATE TABLE IF NOT EXISTS sentinel.events
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMMDD(time)
 ORDER BY (tenant_id, time, event_id)
-TTL toDateTime(time) + INTERVAL 90 DAY TO VOLUME 'cold',
-    toDateTime(time) + INTERVAL 365 DAY DELETE
-SETTINGS
-    storage_policy = 'hot_cold',
-    index_granularity = 8192,
-    -- Batched inserts only; async mode protects against merge pressure when a
-    -- consumer misbehaves and sends small batches.
-    async_insert = 1,
-    wait_for_async_insert = 1;
+-- Dev runs a single-disk ClickHouse, so this is a plain retention TTL.
+-- Production adds the hot/cold tier; see "Production tiering" at the end of
+-- this file. Keeping the dev DDL stock-compatible means a developer can bring
+-- the stack up without a custom storage config.
+TTL toDateTime(time) + INTERVAL 365 DAY DELETE
+SETTINGS index_granularity = 8192;
+
+-- async_insert and wait_for_async_insert are QUERY settings, not table
+-- settings — ClickHouse rejects them in a table's SETTINGS clause. The ingest
+-- writer sets them per INSERT (see services/ingest), which is also the only
+-- place that should decide batching behaviour.
 
 -- idx_event_id exists specifically for the grounding validator (ADR-0006),
 -- which resolves claims by event_id. That lookup is on the critical path of
@@ -165,3 +167,27 @@ ORDER BY (tenant_id, day);
 --   CREATE ROW POLICY tenant_isolation ON sentinel.events
 --     FOR SELECT USING tenant_id = toUUID(getSetting('SQL_app_tenant_id'))
 --     TO sentinel_query;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Production tiering (NOT applied in dev)
+--
+-- Requires a storage policy declared in the server config, which stock
+-- ClickHouse does not ship. Applied by Terraform in P7-05, not by this file.
+--
+--   <storage_configuration>
+--     <disks>
+--       <cold><type>s3</type>
+--         <endpoint>https://s3.ap-south-1.amazonaws.com/sentinel-cold/</endpoint>
+--       </cold>
+--     </disks>
+--     <policies><hot_cold><volumes>
+--       <hot><disk>default</disk></hot>
+--       <cold><disk>cold</disk></cold>
+--     </volumes></hot_cold></policies>
+--   </storage_configuration>
+--
+-- Then:
+--   ALTER TABLE sentinel.events MODIFY SETTING storage_policy = 'hot_cold';
+--   ALTER TABLE sentinel.events MODIFY TTL
+--     toDateTime(time) + INTERVAL 90 DAY TO VOLUME 'cold',
+--     toDateTime(time) + INTERVAL 365 DAY DELETE;

@@ -11,7 +11,7 @@ in this document — open an issue.
 |---|---|---|---|
 | **Node.js** | 22 LTS or newer | Dashboard, API, AI analyst, tooling | [nodejs.org](https://nodejs.org) or `nvm install 22` |
 | **pnpm** | 10+ | Workspace package manager | `corepack enable && corepack prepare pnpm@10 --activate` |
-| **Go** | 1.23+ | Ingest, detection and correlation services | [go.dev/dl](https://go.dev/dl/) |
+| **Go** | 1.23+ | Ingest, detection and correlation services | [go.dev/dl](https://go.dev/dl/). On Windows without admin rights, `winget install GoLang.Go` fails (no user-scope installer) — download the `.zip`, extract to `%LOCALAPPDATA%\Programs\go`, and add its `bin` to PATH. |
 | **Docker** | 24+ with Compose v2 | The whole local data stack | [docker.com](https://docs.docker.com/get-docker/) |
 | **Git** | 2.40+ | — | [git-scm.com](https://git-scm.com) |
 
@@ -81,12 +81,12 @@ Brings up, with health checks gating startup order:
 
 | Service | URL | Purpose |
 |---|---|---|
-| Postgres | `localhost:5432` | Control plane |
+| Postgres | `localhost:5434` | Control plane (5432/5433 are commonly taken) |
 | ClickHouse | `localhost:8123` | Event store |
 | Redpanda | `localhost:19092` | Stream |
 | Redpanda Console | <http://localhost:8080> | Topic and message inspection |
 | Valkey | `localhost:6379` | Cache, locks, rate limits |
-| MinIO | <http://localhost:9001> | Raw archive (`minioadmin` / `minioadmin`) |
+| SeaweedFS (S3) | `localhost:8333` | Raw archive (`sentineldev` / `sentineldev`) |
 | Jaeger | <http://localhost:16686> | Distributed traces |
 
 Everything should be healthy within 90 seconds:
@@ -100,6 +100,22 @@ Then apply schemas:
 ```bash
 pnpm db:migrate
 ```
+
+Migrations are tracked in a `schema_migrations` ledger, so `db:migrate` is safe
+to re-run. Editing a migration that has already been applied is detected by
+checksum and refused, rather than silently diverging your schema from production.
+
+Finally, confirm the environment is not merely running but *enforcing* the
+product guarantees:
+
+```bash
+pnpm verify
+```
+
+This provisions two tenants, runs a query with no `tenant_id` filter, and asserts
+you get back only your own rows; attempts an `UPDATE` and a `DELETE` on the audit
+log and asserts both are refused; and checks that a duplicate `event_id` collapses
+in ClickHouse. 19 checks, all of them evidence rather than assertion.
 
 ---
 
@@ -187,9 +203,36 @@ is safe to repeat.
 **ClickHouse exits immediately.** Almost always memory. Raise Docker's limit to
 8 GB. Check with `docker compose -f infra/docker/docker-compose.dev.yml logs clickhouse`.
 
-**Port already in use.** MinIO is deliberately on `9100` because ClickHouse's
-native protocol owns `9000`. If something else collides, change the host-side
-port in `infra/docker/docker-compose.dev.yml` — never the container-side one.
+**Port already in use.** Postgres is on host port **5434**, not 5432: a natively
+installed Postgres usually owns 5432, and other local project stacks frequently
+take 5433. If something else collides, change the host-side port in
+`infra/docker/docker-compose.dev.yml` — never the container-side one.
+
+To find the culprit on Windows:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5434 -State Listen |
+  ForEach-Object { Get-Process -Id $_.OwningProcess }
+```
+
+**A service is `unhealthy` but its logs look fine.** Check whether its
+healthcheck uses `localhost`. Inside containers on Docker Desktop/WSL2,
+`localhost` resolves to `::1` only, and most of these images bind IPv4 — so the
+check fails permanently against a service that is up. Every healthcheck in the
+compose file uses `127.0.0.1` for this reason.
+
+**Object storage is SeaweedFS, not MinIO.** MinIO restricted their Docker Hub
+images, so `docker pull minio/minio` now fails with `unauthorized` on a clean
+machine. SeaweedFS speaks the same S3 API and is freely pullable. S3 endpoint is
+`http://localhost:8333`, credentials `sentineldev` / `sentineldev`.
+
+**`go build ./...` fails from the repo root.** Expected: with a `go.work` the
+root is not itself a module. Use `pnpm go:build` / `pnpm go:test`, which enter
+each module explicitly.
+
+**`-race requires cgo`.** The race detector needs a C compiler, which Windows
+lacks by default. `scripts/go-test.sh` skips it with a note and CI still runs
+with `-race`, so races are caught before merge.
 
 **Redpanda unhealthy.** It needs a moment longer than the others on first start
 while it initialises its data directory. If it persists:

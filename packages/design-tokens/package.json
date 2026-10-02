@@ -11,8 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run",
-    "lint": "eslint src"
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "vitest": "^2.1.8"
