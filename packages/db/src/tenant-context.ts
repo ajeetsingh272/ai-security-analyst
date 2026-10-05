@@ -102,15 +102,40 @@ function assertTenantIdLooksReal(tenantId: string, caller: string): void {
  * `enterWith` sidesteps the problem by mutating the ambient context for the
  * remainder of the CURRENT async execution directly, rather than scoping it
  * to a callback's dynamic extent — so it is available to whatever runs next,
- * regardless of whose promise drives that continuation. There is no matching
- * "exit" call; the context is scoped to this request's AsyncLocalStorage
- * frame already created by Node for the current I/O callback and is released
- * when that frame ends, the same way `run()`'s context is released when its
- * callback returns.
+ * regardless of whose promise drives that continuation.
+ *
+ * That same property is exactly why this MUST be paired with
+ * `exitTenantContext()` at the end of every request, not left to revert on
+ * its own. The original version of this comment claimed the context "is
+ * released when that frame ends" — true for a genuinely new async resource
+ * (a fresh incoming connection with no prior context), but false for HTTP
+ * keep-alive: several sequential requests on the same socket can share one
+ * continuation chain, so request N's `enterWith` can still be ambient when
+ * request N+1 starts if nothing explicitly cleared it. Found via a CI
+ * failure that never reproduced locally (Linux's libuv scheduling exposed
+ * the shared-chain timing; Windows' did not in 10/10 local runs) on exactly
+ * the test this threatens: a public, unauthenticated route must never see a
+ * previous request's tenant context. `apps/api`'s tenant-context plugin
+ * calls `exitTenantContext()` from an `onResponse` hook so every request
+ * cleans up after itself regardless of what the next one's scheduling looks
+ * like, instead of trusting an assumption that only held on one platform.
  */
 export function enterTenantContext(tenantId: string): void {
   assertTenantIdLooksReal(tenantId, 'enterTenantContext');
   storage.enterWith({ tenantId });
+}
+
+/**
+ * Ends whatever context `enterTenantContext` established, so the NEXT
+ * execution on this scheduling chain — which may or may not be a genuinely
+ * fresh async resource, see the warning above — starts with no tenant
+ * context rather than inheriting a stale one. Idempotent: calling it when no
+ * context is active is a no-op, not an error, since a public route's
+ * `onResponse` hook calls this unconditionally whether or not this request
+ * ever established a context in the first place.
+ */
+export function exitTenantContext(): void {
+  storage.enterWith(undefined as unknown as TenantContext);
 }
 
 /**

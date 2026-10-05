@@ -54,7 +54,7 @@
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { enterTenantContext } from '@sentinel/db';
+import { enterTenantContext, exitTenantContext } from '@sentinel/db';
 // Importing this for its side-effecting `declare module 'fastify'` block —
 // session.ts is the one place that type is declared (P0-09). Populated by
 // the auth plugin before this plugin's hook runs.
@@ -100,6 +100,19 @@ function tenantContextPluginImpl(
       await reply.code(500).send({ error: 'invalid_tenant_context' });
       void err;
     }
+  });
+
+  // `enterTenantContext` mutates the ambient AsyncLocalStorage context going
+  // forward rather than scoping itself to this request (see that function's
+  // own comment) — on a real server with HTTP keep-alive, several requests
+  // can share one continuation chain, so nothing guarantees this context is
+  // gone by the time the NEXT request on that chain starts unless something
+  // explicitly clears it. `onResponse` runs after every response — the 200
+  // path, the 401/500 short-circuits above, and (per Fastify's lifecycle)
+  // errors too — so every request cleans up after itself unconditionally,
+  // regardless of whether it ever established a context in the first place.
+  fastify.addHook('onResponse', async () => {
+    exitTenantContext();
   });
 
   done();

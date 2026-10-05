@@ -21,6 +21,7 @@ export { bytea, citext } from './types.js';
 export {
   withTenantContext,
   enterTenantContext,
+  exitTenantContext,
   getTenantContext,
   hasTenantContext,
   TenantScopedRepository,

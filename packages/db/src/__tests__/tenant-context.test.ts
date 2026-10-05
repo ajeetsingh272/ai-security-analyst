@@ -12,6 +12,8 @@ import { describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import {
   withTenantContext,
+  enterTenantContext,
+  exitTenantContext,
   getTenantContext,
   hasTenantContext,
   TenantScopedRepository,
@@ -96,5 +98,50 @@ describe('TenantScopedRepository construction', () => {
       // intentionally not awaited inside — scheduling outside the run() callback
     });
     expect(() => new ProbeRepository(fakePool)).toThrow(TenantContextError);
+  });
+});
+
+describe('enterTenantContext / exitTenantContext', () => {
+  it('enterTenantContext establishes a context that persists past the call that made it — unlike withTenantContext, there is no callback scoping it', () => {
+    expect(hasTenantContext()).toBe(false);
+    enterTenantContext(TENANT_A);
+    expect(hasTenantContext()).toBe(true);
+    expect(getTenantContext().tenantId).toBe(TENANT_A);
+    exitTenantContext();
+  });
+
+  it('exitTenantContext clears it — this is the fix for the real bug the HTTP plugin hit: enterWith has no built-in "undo"', () => {
+    enterTenantContext(TENANT_A);
+    expect(hasTenantContext()).toBe(true);
+    exitTenantContext();
+    expect(hasTenantContext()).toBe(false);
+    expect(() => getTenantContext()).toThrow(TenantContextError);
+  });
+
+  it('exitTenantContext is a no-op, not an error, when nothing is active — the HTTP plugin calls it unconditionally from onResponse on every request, including ones that never authenticated', () => {
+    expect(hasTenantContext()).toBe(false);
+    expect(() => exitTenantContext()).not.toThrow();
+    expect(hasTenantContext()).toBe(false);
+  });
+
+  it('refuses to establish a context with a value that is not a UUID, same guard as withTenantContext', () => {
+    expect(() => enterTenantContext('not-a-uuid')).toThrow(TenantContextError);
+    expect(hasTenantContext()).toBe(false);
+  });
+
+  it('demonstrates the exact production gap this closes: without exitTenantContext, a context set by one "request" is still ambient for whatever runs next on the same continuation', async () => {
+    // This is the HTTP keep-alive scenario from tenant-context.ts's own
+    // comment, reproduced directly against AsyncLocalStorage rather than
+    // through Fastify's inject() — which is what let the real bug pass
+    // locally on Windows 10/10 times and still fail in CI on Linux. Two
+    // `await`ed steps in the SAME async function, simulating two
+    // sequentially handled requests sharing one continuation.
+    enterTenantContext(TENANT_A);
+    await Promise.resolve(); // yield, same as awaiting between two requests
+    expect(hasTenantContext()).toBe(true); // confirms the leak is real without a fix
+
+    exitTenantContext(); // the fix: apps/api's onResponse hook does exactly this
+    await Promise.resolve();
+    expect(hasTenantContext()).toBe(false); // the next "request" sees a clean slate
   });
 });
