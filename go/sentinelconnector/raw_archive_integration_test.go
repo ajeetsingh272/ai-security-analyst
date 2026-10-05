@@ -104,7 +104,7 @@ func TestRawArchiveWriterArchivesEveryFetchedEventToRealS3(t *testing.T) {
 
 	// AC1: the raw payloads themselves, intact — every event this test
 	// fetched has a corresponding archived raw payload.
-	var obj rawArchiveObject
+	var obj RawArchiveObject
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		t.Fatalf("unmarshalling archived object: %v", err)
 	}
@@ -118,5 +118,62 @@ func TestRawArchiveWriterArchivesEveryFetchedEventToRealS3(t *testing.T) {
 		if string(ev.Payload) != string(events[i].Payload) {
 			t.Fatalf("archived event %d payload = %s, want %s", i, ev.Payload, events[i].Payload)
 		}
+	}
+}
+
+// P1-09's own replay tooling depends on this reader round-tripping
+// exactly what S3RawArchiveWriter wrote — proven here directly, against
+// the real store, before go/sentinelreplay builds anything on top of it.
+func TestRawArchiveReaderListsAndReadsBackWhatTheWriterWrote(t *testing.T) {
+	client := newTestS3Client(t)
+	ctx := context.Background()
+
+	writer := NewS3RawArchiveWriter(client, "sentinel-archive")
+	reader := NewS3RawArchiveReader(client, "sentinel-archive")
+
+	tenantID := fmt.Sprintf("tenant-raw-reader-%d", time.Now().UnixNano())
+	connectorRowID := "conn-raw-reader-it"
+	day1 := time.Now().UTC().Add(-48 * time.Hour)
+	day2 := time.Now().UTC()
+
+	if err := writer.ArchiveRaw(ctx, tenantID, connectorRowID, day1, []RawEvent{{TenantID: tenantID, Payload: []byte(`{"n":"day1"}`)}}); err != nil {
+		t.Fatalf("ArchiveRaw (day1): %v", err)
+	}
+	if err := writer.ArchiveRaw(ctx, tenantID, connectorRowID, day2, []RawEvent{{TenantID: tenantID, Payload: []byte(`{"n":"day2-a"}`)}, {TenantID: tenantID, Payload: []byte(`{"n":"day2-b"}`)}}); err != nil {
+		t.Fatalf("ArchiveRaw (day2): %v", err)
+	}
+
+	// Both days, inclusive range.
+	keys, err := reader.ListObjectKeys(ctx, tenantID, day1.Add(-time.Hour), day2.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListObjectKeys: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 archived objects across both days, got %d: %v", len(keys), keys)
+	}
+
+	var totalEvents int
+	for _, key := range keys {
+		obj, err := reader.GetObject(ctx, key)
+		if err != nil {
+			t.Fatalf("GetObject(%s): %v", key, err)
+		}
+		if obj.TenantID != tenantID {
+			t.Fatalf("GetObject(%s) returned tenant_id=%q, want %q", key, obj.TenantID, tenantID)
+		}
+		totalEvents += len(obj.Events)
+	}
+	if totalEvents != 3 {
+		t.Fatalf("expected 3 total archived events across both objects, got %d", totalEvents)
+	}
+
+	// day1-only range must not see day2's object (AC1-adjacent: a replay
+	// scoped to a range must only see what's actually in that range).
+	day1OnlyKeys, err := reader.ListObjectKeys(ctx, tenantID, day1.Add(-time.Hour), day1.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListObjectKeys (day1 only): %v", err)
+	}
+	if len(day1OnlyKeys) != 1 {
+		t.Fatalf("expected exactly 1 object for day1-only range, got %d: %v", len(day1OnlyKeys), day1OnlyKeys)
 	}
 }

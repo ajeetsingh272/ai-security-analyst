@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -108,11 +109,11 @@ func NewS3RawArchiveWriter(client *s3.Client, bucket string) *S3RawArchiveWriter
 	return &S3RawArchiveWriter{client: client, bucket: bucket}
 }
 
-// rawArchiveObject mirrors archiveObject deliberately: both are "raw
+// RawArchiveObject mirrors archiveObject deliberately: both are "raw
 // RawEvents plus who/when", and P1-09's replay tooling reads this same
 // shape regardless of whether a given object came from the overflow path
 // or this one.
-type rawArchiveObject struct {
+type RawArchiveObject struct {
 	TenantID       string     `json:"tenant_id"`
 	ConnectorRowID string     `json:"connector_row_id"`
 	ArchivedAt     time.Time  `json:"archived_at"`
@@ -124,7 +125,7 @@ func (w *S3RawArchiveWriter) ArchiveRaw(ctx context.Context, tenantID, connector
 		return nil
 	}
 
-	obj := rawArchiveObject{TenantID: tenantID, ConnectorRowID: connectorRowID, ArchivedAt: archivedAt, Events: events}
+	obj := RawArchiveObject{TenantID: tenantID, ConnectorRowID: connectorRowID, ArchivedAt: archivedAt, Events: events}
 	payload, err := json.Marshal(obj)
 	if err != nil {
 		return fmt.Errorf("sentinelconnector: marshalling raw archive object: %w", err)
@@ -173,4 +174,85 @@ func (w *S3RawArchiveWriter) ArchiveRaw(ctx context.Context, tenantID, connector
 		return fmt.Errorf("sentinelconnector: archiving %d raw events to s3://%s/%s: %w", len(events), w.bucket, key, err)
 	}
 	return nil
+}
+
+// RawArchiveReader is the read side of RawArchiveWriter — P1-09's replay
+// tooling (go/sentinelreplay) lists and reads archived raw batches back,
+// scoped to one tenant and date range at a time, never another tenant's
+// prefix (P1-09 AC1).
+type RawArchiveReader interface {
+	// ListObjectKeys returns every archived object's key for tenantID
+	// whose date partition falls within [from, to] (inclusive, UTC
+	// calendar days) — one ListObjectsV2 call per day in range, under
+	// raw/{tenantID}/{date}/, never a scan of the whole bucket or another
+	// tenant's prefix.
+	ListObjectKeys(ctx context.Context, tenantID string, from, to time.Time) ([]string, error)
+	// GetObject reads one archived object (by the key ListObjectKeys
+	// returned) back into its original RawEvents.
+	GetObject(ctx context.Context, key string) (RawArchiveObject, error)
+}
+
+// S3RawArchiveReader is S3RawArchiveWriter's read-side counterpart,
+// against the same bucket and key scheme.
+type S3RawArchiveReader struct {
+	client *s3.Client
+	bucket string
+}
+
+func NewS3RawArchiveReader(client *s3.Client, bucket string) *S3RawArchiveReader {
+	return &S3RawArchiveReader{client: client, bucket: bucket}
+}
+
+func (r *S3RawArchiveReader) ListObjectKeys(ctx context.Context, tenantID string, from, to time.Time) ([]string, error) {
+	var keys []string
+	// One prefix list per calendar day in [from, to] — matching exactly
+	// how S3RawArchiveWriter partitions keys, so a multi-day replay never
+	// has to list the tenant's ENTIRE history to find the days it wants.
+	for d := from.Truncate(24 * time.Hour); !d.After(to); d = d.Add(24 * time.Hour) {
+		prefix := fmt.Sprintf("raw/%s/%s/", tenantID, d.Format("2006-01-02"))
+		var continuationToken *string
+		for {
+			out, err := r.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+				Bucket:            aws.String(r.bucket),
+				Prefix:            aws.String(prefix),
+				ContinuationToken: continuationToken,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("sentinelconnector: listing %s: %w", prefix, err)
+			}
+			for _, obj := range out.Contents {
+				keys = append(keys, aws.ToString(obj.Key))
+			}
+			if out.IsTruncated == nil || !*out.IsTruncated {
+				break
+			}
+			continuationToken = out.NextContinuationToken
+		}
+	}
+	return keys, nil
+}
+
+func (r *S3RawArchiveReader) GetObject(ctx context.Context, key string) (RawArchiveObject, error) {
+	out, err := r.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(r.bucket), Key: aws.String(key)})
+	if err != nil {
+		return RawArchiveObject{}, fmt.Errorf("sentinelconnector: fetching s3://%s/%s: %w", r.bucket, key, err)
+	}
+	defer out.Body.Close()
+
+	gz, err := gzip.NewReader(out.Body)
+	if err != nil {
+		return RawArchiveObject{}, fmt.Errorf("sentinelconnector: decompressing s3://%s/%s: %w", r.bucket, key, err)
+	}
+	defer gz.Close()
+
+	raw, err := io.ReadAll(gz)
+	if err != nil {
+		return RawArchiveObject{}, fmt.Errorf("sentinelconnector: reading s3://%s/%s: %w", r.bucket, key, err)
+	}
+
+	var obj RawArchiveObject
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return RawArchiveObject{}, fmt.Errorf("sentinelconnector: unmarshalling s3://%s/%s: %w", r.bucket, key, err)
+	}
+	return obj, nil
 }
