@@ -85,6 +85,12 @@ jobs:
       - name: Validate workflow path filters
         run: node scripts/validate-workflows.mjs
 
+      # tokens.generated.css and tailwind.generated.css are built from
+      # tokens.ts. If a value changed without regenerating, this document is a
+      # confident description of a theme that no longer exists (P0-07 AC1).
+      - name: Design tokens are current
+        run: pnpm --filter @sentinel/design-tokens build:check
+
       # Each gate reports its own real exit code. Nothing is piped to tail or
       # grep — a swallowed failure here is a failure that ships.
       - name: Lint
