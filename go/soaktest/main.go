@@ -233,17 +233,30 @@ func runSoak(ctx context.Context, stop context.CancelFunc, cfg Config, log *slog
 		log.Info("interrupted early")
 	}
 
-	produced := conn.produced.Load()
-	log.Info("run window finished, stopping the scheduler and draining", "produced", produced)
+	log.Info("run window finished, stopping the scheduler and draining")
 
 	// Stop the connector FIRST — no point draining against a producer that
 	// is still adding more work — then let the bridge/consumer catch up to
 	// what was already produced before tearing them down too.
+	//
+	// produced is read AFTER Shutdown returns, never before: Shutdown's
+	// own contract is to block until any cycle ALREADY IN FLIGHT at the
+	// moment duration elapsed finishes naturally (Scheduler.Shutdown's own
+	// doc comment — "drain, not abort"). Reading conn.produced.Load()
+	// before that drain completes can under-count by exactly one
+	// in-flight batch's worth of events — found the direct way: a real
+	// run failed reconciliation with stored EXCEEDING produced by exactly
+	// one batch, and every one of those "extra" stored rows turned out to
+	// have a genuinely unique event_id (confirmed via ClickHouse directly)
+	// — not a duplicate from a retry, just this counter read too early.
 	schedShutdownCtx, cancelSchedShutdown := context.WithTimeout(context.Background(), 30*time.Second)
 	if err := scheduler.Shutdown(schedShutdownCtx); err != nil {
 		log.Error("scheduler shutdown", "err", err)
 	}
 	cancelSchedShutdown()
+
+	produced := conn.produced.Load()
+	log.Info("scheduler drained", "produced", produced)
 
 	drainDeadline := time.Now().Add(2 * time.Minute)
 	for written.Load() < produced && time.Now().Before(drainDeadline) {
