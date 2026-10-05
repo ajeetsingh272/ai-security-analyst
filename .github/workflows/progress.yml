@@ -31,6 +31,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The page build calls the GitHub API for issue state; a timeout keeps a
+    # hanging request from holding the Pages concurrency group indefinitely.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +57,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

@@ -1,0 +1,31 @@
+{
+  "name": "@sentinel/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed Postgres access for the control plane — schema introspected from migrations, never hand-written",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests",
+    "pull": "drizzle-kit pull && node scripts/postprocess.mjs",
+    "docs": "node scripts/data-model-doc.mjs",
+    "docs:check": "node scripts/data-model-doc.mjs --check",
+    "validate": "node scripts/validate-schema.mjs"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

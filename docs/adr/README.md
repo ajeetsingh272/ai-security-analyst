@@ -28,6 +28,7 @@ no downsides has not been thought through.
 | [0006](./0006-llm-tiering-and-grounding.md) | Tiered LLM routing with a deterministic grounding validator | Accepted | P4 |
 | [0007](./0007-approval-tokens-and-audit.md) | Signed single-use approval tokens and a hash-chained audit log | Accepted | P5 |
 | [0008](./0008-tenant-isolation.md) | Shared infrastructure with row-level security isolation | Accepted | P0 |
+| [0009](./0009-sql-owns-schema-drizzle-generated.md) | Hand-written SQL owns the schema; the typed layer is generated from it | Accepted | P0 |
 
 ## Writing a new ADR
 

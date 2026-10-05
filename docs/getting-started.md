@@ -79,15 +79,28 @@ pnpm dev:stack
 
 Brings up, with health checks gating startup order:
 
-| Service | URL | Purpose |
-|---|---|---|
-| Postgres | `localhost:5434` | Control plane (5432/5433 are commonly taken) |
-| ClickHouse | `localhost:8123` | Event store |
-| Redpanda | `localhost:19092` | Stream |
-| Redpanda Console | <http://localhost:8080> | Topic and message inspection |
-| Valkey | `localhost:6379` | Cache, locks, rate limits |
-| SeaweedFS (S3) | `localhost:8333` | Raw archive (`sentineldev` / `sentineldev`) |
-| Jaeger | <http://localhost:16686> | Distributed traces |
+| Service | Port | URL | Purpose |
+|---|---|---|---|
+| Postgres | 5434 | `localhost:5434` | Control plane. 5432 is usually a natively installed Postgres and 5433 is often another project's stack, so this is offset twice. Container-side stays 5432. |
+| ClickHouse HTTP | 8123 | <http://localhost:8123/play> | Event store, and the **play UI** for ad-hoc queries |
+| ClickHouse native | 9000 | `localhost:9000` | Native protocol, used by the Go data plane |
+| Redpanda Kafka | 19092 | `localhost:19092` | Stream. Offset from 9092 so a local Kafka does not collide |
+| Redpanda admin | 9644 | <http://localhost:9644> | Cluster health and metrics |
+| Redpanda Console | 8080 | <http://localhost:8080> | Topic and message inspection |
+| Valkey | 6379 | `localhost:6379` | Cache, locks, rate limits. Durable: started with `--appendonly yes` |
+| SeaweedFS S3 | 8333 | `localhost:8333` | Raw archive and cold tier (`sentineldev` / `sentineldev`) |
+| SeaweedFS master | 9333 | <http://localhost:9333> | Cluster status UI |
+| SeaweedFS filer | 8888 | <http://localhost:8888> | Browsing stored objects |
+| Jaeger UI | 16686 | <http://localhost:16686> | Distributed traces |
+| OTLP gRPC | 4317 | `localhost:4317` | Trace and metric ingest from the services |
+| OTLP HTTP | 4318 | `localhost:4318` | Same, over HTTP |
+
+Every published port is listed here, and `pnpm stack:check` fails if one is missing —
+an undocumented port is one somebody discovers by having something else break.
+
+Two ports are deliberately **not** published: Redpanda's internal broker listener
+(9092) and Jaeger's admin port (14269). Both are reachable inside the Docker network,
+which is where the healthchecks run, and neither is useful from the host.
 
 Everything should be healthy within 90 seconds:
 
@@ -104,6 +117,48 @@ pnpm db:migrate
 Migrations are tracked in a `schema_migrations` ledger, so `db:migrate` is safe
 to re-run. Editing a migration that has already been applied is detected by
 checksum and refused, rather than silently diverging your schema from production.
+To change the schema, add a migration — never edit one that has run.
+
+Then load the development fixtures:
+
+```bash
+pnpm db:seed
+```
+
+This provisions two tenants — a direct small-business customer and an MSP that
+manages it — with deliberately different connectors, case counts and severities.
+The difference is the point: with one tenant, every query returns the right rows
+by accident, and isolation cannot be observed. The seed is idempotent, and it
+refuses to run with `NODE_ENV=production`.
+
+### Schema commands
+
+| Command | What it does |
+|---|---|
+| `pnpm db:migrate` | Apply pending migrations and ClickHouse DDL |
+| `pnpm db:seed` | Load the two-tenant development fixtures |
+| `pnpm db:validate` | Assert every tenant-scoped table has a non-null `tenant_id` |
+| `pnpm db:check` | Migrate a throwaway database from empty; assert the seed is idempotent |
+| `pnpm db:docs` | Regenerate `docs/architecture/data-model.md` from the live schema |
+| `pnpm db:docs:check` | Fail if that document is out of date |
+| `pnpm db:pull` | Regenerate the typed Drizzle schema in `packages/db` |
+
+### Stack and CI commands
+
+| Command | What it does |
+|---|---|
+| `pnpm stack:check` | Assert every service is healthy, the debug UIs answer, ports are documented, and named volumes survive a restart |
+| `pnpm stack:check:cold` | The above, plus remove the volumes and time a genuine cold start against the 90-second budget. **Destructive** — re-run `db:migrate` and `db:seed` afterwards |
+| `pnpm workflows:validate` | Assert the CI path filters route correctly, e.g. a docs-only change runs no jobs |
+| `pnpm ci:protect` | Apply required status checks to `main`. Currently exits 2 — branch protection needs GitHub Pro on a private repo (see [`ci.md`](ci.md)) |
+
+Two of those deserve a note. `pnpm db:check` builds a scratch database and
+migrates it from nothing, because your development database was migrated
+incrementally and therefore proves nothing about the path production will take
+exactly once. And `pnpm db:pull` runs one way only: the SQL migrations are the
+source of truth, and the generated TypeScript is a reading of the result. Never
+run `drizzle-kit generate` or `push` here — both would treat the generated file
+as authoritative and drop every policy, trigger and grant they cannot express.
 
 Finally, confirm the environment is not merely running but *enforcing* the
 product guarantees:

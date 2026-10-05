@@ -12,7 +12,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${POSTGRES_URL:=postgres://sentinel:sentinel@localhost:5434/sentinel}"
+# Connection parts are individually overridable so that a throwaway database can
+# be migrated from empty without editing anything (scripts/check-migrations.sh).
+# The composed default is unchanged: postgres://sentinel:sentinel@localhost:5434/sentinel
+: "${POSTGRES_USER:=sentinel}"
+: "${POSTGRES_PASSWORD:=sentinel}"
+: "${POSTGRES_HOST:=localhost}"
+: "${POSTGRES_PORT:=5434}"
+: "${POSTGRES_DB:=sentinel}"
+: "${POSTGRES_URL:=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}}"
 : "${CLICKHOUSE_URL:=http://localhost:8123}"
 : "${COMPOSE_FILE:=infra/docker/docker-compose.dev.yml}"
 
@@ -36,7 +44,7 @@ run_pg() {
     # -T because there is no TTY in CI. ON_ERROR_STOP makes a failed statement
     # a failed migration rather than a partially applied schema.
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
-      psql -U sentinel -d sentinel -v ON_ERROR_STOP=1 -q < "$file"
+      psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -q < "$file"
   fi
 }
 
@@ -45,7 +53,7 @@ pg_sql() {
     psql "$POSTGRES_URL" -v ON_ERROR_STOP=1 -q -t -A -c "$1"
   else
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
-      psql -U sentinel -d sentinel -v ON_ERROR_STOP=1 -q -t -A -c "$1"
+      psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -q -t -A -c "$1"
   fi
 }
 
@@ -91,6 +99,12 @@ else
     applied_any=1
   done
   [ "$applied_any" -eq 0 ] && echo "  database already up to date"
+fi
+
+if [ "${MIGRATE_SKIP_CLICKHOUSE:-0}" = "1" ]; then
+  echo "── ClickHouse ── skipped (MIGRATE_SKIP_CLICKHOUSE=1)"
+  echo "migrations ok"
+  exit 0
 fi
 
 echo "── ClickHouse ──"
