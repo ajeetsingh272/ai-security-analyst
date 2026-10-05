@@ -163,6 +163,25 @@ for (const { file, doc } of ci) {
   );
 }
 
+// A paths-filter step reads the pull request's changed files through the GitHub
+// API, which needs `pull-requests: read`. Without it the step errors with
+// "Resource not accessible by integration", every dependent job is skipped, and
+// the run presents as a green pipeline that tested nothing. Learned the hard way
+// on PR #96, where all four workflows failed this way.
+for (const { file, doc } of ci) {
+  const usesFilter = Object.values(doc.jobs ?? {}).some((job) =>
+    (job.steps ?? []).some((s) => String(s.uses ?? '').startsWith('dorny/paths-filter')),
+  );
+  if (!usesFilter) continue;
+  const on = doc.on ?? doc.true;
+  if (!on?.pull_request) continue;
+  const perm = doc.permissions?.['pull-requests'];
+  check(
+    `${file}: declares pull-requests: read for paths-filter on pull_request`,
+    perm === 'read' || perm === 'write',
+  );
+}
+
 // ── Routing ─────────────────────────────────────────────────────────────────
 
 const allFilters = {};

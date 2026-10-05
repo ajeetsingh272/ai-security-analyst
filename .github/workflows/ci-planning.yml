@@ -19,6 +19,11 @@ concurrency:
 
 permissions:
   contents: read
+  # dorny/paths-filter calls the GitHub API (listFiles) to get a pull request's
+  # changed files. Without this it fails with "Resource not accessible by
+  # integration" and every downstream job is skipped — which reads as a passing
+  # pipeline that quietly tested nothing.
+  pull-requests: read
 
 jobs:
   changes:
