@@ -103,8 +103,40 @@ fi
 echo
 echo "══ TG6 · Audit log is tamper-evident (ADR-0007) ═════════════════════════"
 
-pg "INSERT INTO audit_log (tenant_id, actor_type, actor_id, action, subject_type, subject_id, prev_hash, entry_hash)
-    VALUES ('11111111-1111-1111-1111-111111111111','system','verify','verify.probe','test','1','\\\\x00','\\\\x01');" > /dev/null
+# This probe's row is permanent — audit_log forbids DELETE even for its own
+# rows (that is the point), and every run of this script adds one more. The
+# hash below has to be a REAL one, computed with the same algorithm P0-06's
+# AuditLogWriter uses (packages/db/scripts/chain-verifier.mjs), chained off
+# whatever this tenant's actual last hash currently is. An earlier version of
+# this script inserted a single placeholder byte for each hash — harmless for
+# testing UPDATE/DELETE rejection in isolation, but it permanently poisons
+# that tenant's chain for scripts/verify-audit-chain.mjs, which has no way to
+# know "that one is just a grants probe" from "that one is a real break."
+prev_hex=$(pg "SELECT encode(entry_hash, 'hex') FROM audit_log
+                WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+                ORDER BY id DESC LIMIT 1;" | tr -d '[:space:]')
+[ -z "$prev_hex" ] && prev_hex=$(printf '0%.0s' $(seq 1 64))
+
+hashes=$(cd "$(dirname "$0")/../packages/db/scripts" && node --input-type=module -e "
+  import { auditEntryContent, computeEntryHash } from './chain-verifier.mjs';
+  const prevHash = Buffer.from('$prev_hex', 'hex');
+  const occurredAt = new Date().toISOString();
+  const content = auditEntryContent({
+    tenantId: '11111111-1111-1111-1111-111111111111',
+    occurredAt, actorType: 'system', actorId: 'verify',
+    action: 'verify.probe', subjectType: 'test', subjectId: '1', payload: {},
+  });
+  const entryHash = computeEntryHash(prevHash, content);
+  console.log(occurredAt);
+  console.log(prevHash.toString('hex'));
+  console.log(entryHash.toString('hex'));
+")
+occurred_at=$(echo "$hashes" | sed -n '1p')
+prev_hash_hex=$(echo "$hashes" | sed -n '2p')
+entry_hash_hex=$(echo "$hashes" | sed -n '3p')
+
+pg "INSERT INTO audit_log (tenant_id, occurred_at, actor_type, actor_id, action, subject_type, subject_id, payload, prev_hash, entry_hash)
+    VALUES ('11111111-1111-1111-1111-111111111111', '$occurred_at', 'system', 'verify', 'verify.probe', 'test', '1', '{}', '\\x$prev_hash_hex', '\\x$entry_hash_hex');" > /dev/null
 
 upd=$(pg "UPDATE audit_log SET action = 'tampered' WHERE actor_id = 'verify';")
 if echo "$upd" | grep -qi "append-only"; then

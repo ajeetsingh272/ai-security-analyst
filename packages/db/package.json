@@ -17,7 +17,8 @@
     "pull": "drizzle-kit pull && node scripts/postprocess.mjs",
     "docs": "node scripts/data-model-doc.mjs",
     "docs:check": "node scripts/data-model-doc.mjs --check",
-    "validate": "node scripts/validate-schema.mjs"
+    "validate": "node scripts/validate-schema.mjs",
+    "verify:audit-chain": "node scripts/verify-audit-chain.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",

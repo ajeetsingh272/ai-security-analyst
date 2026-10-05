@@ -28,6 +28,22 @@ export {
   type TenantContext,
 } from './tenant-context.js';
 export { CasesRepository, type CaseRow } from './repositories/cases-repository.js';
+export {
+  AuditLogWriter,
+  type ActorType,
+  type AuditEntryInput,
+  type WrittenAuditEntry,
+} from './audit/audit-log-writer.js';
+export {
+  GENESIS_HASH,
+  auditEntryContent,
+  computeEntryHash,
+  verifyChain,
+  type AuditEntryContent,
+  type AuditEntryRow,
+  type VerifyChainResult,
+} from '../scripts/chain-verifier.mjs';
+export { canonicalJSON } from '../scripts/canonical-json.mjs';
 
 /** Where the control plane lives, when nothing says otherwise. */
 const DEFAULT_URL = 'postgres://sentinel:sentinel@localhost:5434/sentinel';
