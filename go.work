@@ -1,11 +1,12 @@
 go 1.23
 
 use (
-	./services/ingest
-	./services/detect
-	./services/correlate
-	./go/sentinelschema
-	./go/sentinelobs
-	./go/sentineldb
 	./go/sentinelconnector
+	./go/sentineldb
+	./go/sentinelobs
+	./go/sentinelschema
+	./go/sentinelstream
+	./services/correlate
+	./services/detect
+	./services/ingest
 )

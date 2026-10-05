@@ -23,6 +23,8 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
@@ -115,15 +117,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	// No real Publisher exists yet — P1-05 is what wires a real Redpanda
-	// producer in. InMemoryPublisher is an explicit, visible placeholder,
-	// not a silent stand-in: with zero connectors registered below (P1-02/03
-	// land the first real one, M365), it is never actually exercised by
-	// production traffic. What this proves today is that the scheduler
-	// itself starts, runs, and shuts down cleanly as part of this real
-	// service — the framework, ahead of anything to run through it.
+	kafkaClient, err := kgo.NewClient(kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")))
+	if err != nil {
+		log.Error("creating kafka client", "err", err)
+		os.Exit(1)
+	}
+	defer kafkaClient.Close()
+
+	// Declarative, idempotent to re-apply (P1-05 AC1) — safe to run on
+	// every boot rather than needing a separate migration step.
+	if err := sentinelstream.NewProvisioner(kafkaClient).Apply(ctx); err != nil {
+		log.Error("provisioning stream topics", "err", err)
+		os.Exit(1)
+	}
+
+	// With zero connectors registered below (P1-02/03 land the first real
+	// one, M365), this publisher is not yet exercised by production
+	// traffic — but it is the REAL producer (P1-05), not a placeholder:
+	// the scheduler is wired exactly as it will run once a connector exists
+	// to publish through it.
 	scheduler := sentinelconnector.NewScheduler(
-		sentinelconnector.NewInMemoryPublisher(),
+		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRaw),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
 			Interval:   time.Minute,
