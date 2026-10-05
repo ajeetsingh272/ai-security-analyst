@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run -c vitest.integration.config.ts --passWithNoTests",
     "pull": "drizzle-kit pull && node scripts/postprocess.mjs",
     "docs": "node scripts/data-model-doc.mjs",
     "docs:check": "node scripts/data-model-doc.mjs --check",

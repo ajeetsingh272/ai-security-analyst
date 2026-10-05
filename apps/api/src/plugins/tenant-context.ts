@@ -1,0 +1,115 @@
+/**
+ * The HTTP half of the tenant context boundary (P0-05 AC3, ADR-0008).
+ *
+ * The database half (`SET LOCAL app.tenant_id`, construction-time guard) is
+ * @sentinel/db's TenantScopedRepository. This plugin is what connects an
+ * incoming request to that mechanism: it reads `request.session.tenantId`
+ * and establishes it as the active tenant context for every hook and handler
+ * that runs after this one, for the remainder of the request.
+ *
+ * `request.session` is a CONTRACT, not something this plugin populates.
+ * P0-09 (authentication, sessions, RBAC) is what sets it, by decorating the
+ * request earlier in the chain — most likely in its own `onRequest` hook
+ * registered before this one. This plugin does not know or care how a
+ * session was established; it only enforces that one exists before any route
+ * handler runs; a request with no session gets 401 here and never reaches a
+ * handler, a repository, or a database connection at all.
+ *
+ * Two things had to be true before context set in `onRequest` reliably
+ * reached the route handler, and diagnosing them cost more effort than
+ * everything else in this file combined:
+ *
+ *   1. Use `enterTenantContext`, not `withTenantContext`. The latter wraps a
+ *      callback in `AsyncLocalStorage.run()`, and `onRequest(request, reply,
+ *      done)`'s `done` typically resolves a promise Fastify already created
+ *      before calling the hook — so calling `done()` from inside `run()`'s
+ *      callback does not make that PRE-EXISTING promise's continuation
+ *      inherit the context. `enterTenantContext` mutates the ambient context
+ *      for the rest of the current execution directly, sidestepping that.
+ *
+ *   2. Wrap the plugin with `fastify-plugin` (`fp`). This was the one that
+ *      actually mattered: `fastify.register(plugin)` creates an encapsulated
+ *      child context, and a hook added inside one — even an `async` hook
+ *      with `enterWith` called synchronously inline, no callback involved —
+ *      still lost the context by the time the route handler ran. The exact
+ *      same hook added directly on the root instance (no `register()`)
+ *      worked correctly; isolating that difference is what pointed at
+ *      encapsulation rather than anything about AsyncLocalStorage itself.
+ *      `fastify-plugin` is the Fastify ecosystem's standard way to opt a
+ *      plugin out of encapsulation — the same mechanism official plugins
+ *      like `@fastify/cors` use — not a workaround invented for this file.
+ *
+ * Confirmed empirically, not from documentation: three isolated reproductions
+ * (plain AsyncLocalStorage across setImmediate/nextTick/a pre-created
+ * promise; a bare `addHook` on the root instance; the same hook through
+ * `register()`) narrowed the cause to encapsulation specifically before this
+ * was written. If a future Fastify version changes this behaviour, that
+ * narrowing is the place to re-run, not just this comment.
+ */
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import fp from 'fastify-plugin';
+import { enterTenantContext } from '@sentinel/db';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /**
+     * Populated by the authentication layer (P0-09) before this plugin's
+     * hook runs. `tenantId` must be the UUID of the tenant the caller is
+     * acting as right now — for an MSP user that spans multiple client
+     * tenants, whichever one the current request is scoped to, not a list.
+     */
+    session?: {
+      tenantId: string;
+      userId: string;
+    };
+  }
+}
+
+export interface TenantContextPluginOptions {
+  /**
+   * Paths that run without a tenant context — health checks, the OAuth
+   * callback that CREATES a session in the first place. An allowlist by
+   * exact path rather than a pattern, so a new unauthenticated route is a
+   * deliberate addition here, not something a prefix match accidentally
+   * widens to cover.
+   */
+  publicPaths?: string[];
+}
+
+const DEFAULT_PUBLIC_PATHS = ['/health', '/ready'];
+
+function tenantContextPluginImpl(
+  fastify: FastifyInstance,
+  options: TenantContextPluginOptions = {},
+  done: (err?: Error) => void,
+): void {
+  const publicPaths = new Set(options.publicPaths ?? DEFAULT_PUBLIC_PATHS);
+
+  fastify.addHook('onRequest', async (request: FastifyRequest, reply) => {
+    if (publicPaths.has(request.url)) return;
+
+    const tenantId = request.session?.tenantId;
+    if (!tenantId) {
+      // Fails closed. No session, no tenant context, no route handler runs —
+      // never "proceed and let RLS return zero rows," which would turn a
+      // missing-auth bug into a confusing empty-result bug three layers away.
+      await reply.code(401).send({ error: 'unauthenticated', message: 'No active session.' });
+      return;
+    }
+
+    try {
+      enterTenantContext(tenantId);
+    } catch (err) {
+      // Throws synchronously on a malformed tenantId (not a UUID) — a
+      // session bug, not a client bug, so 500 rather than 401.
+      await reply.code(500).send({ error: 'invalid_tenant_context' });
+      void err;
+    }
+  });
+
+  done();
+}
+
+export const tenantContextPlugin = fp(tenantContextPluginImpl, {
+  name: 'sentinel-tenant-context',
+});

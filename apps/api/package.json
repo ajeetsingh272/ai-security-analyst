@@ -10,6 +10,11 @@
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "@sentinel/db": "workspace:*",
+    "fastify": "^5.12.5",
+    "fastify-plugin": "^6.0.0"
+  },
   "devDependencies": {
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
