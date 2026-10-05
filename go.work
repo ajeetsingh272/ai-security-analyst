@@ -4,4 +4,5 @@ use (
 	./services/ingest
 	./services/detect
 	./services/correlate
+	./go/sentinelschema
 )

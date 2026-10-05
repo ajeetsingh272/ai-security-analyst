@@ -1,0 +1,126 @@
+{
+  "version": "0.1.0",
+  "unions": {
+    "Severity": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "info"
+    ],
+    "CaseState": [
+      "open",
+      "triaging",
+      "investigating",
+      "awaiting_approval",
+      "actioned",
+      "closed",
+      "dismissed"
+    ],
+    "Urgency": [
+      "now",
+      "today",
+      "later"
+    ]
+  },
+  "interfaces": {
+    "Claim": {
+      "fields": [
+        {
+          "name": "text",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "evidenceRef",
+          "optional": false,
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        }
+      ]
+    },
+    "Verdict": {
+      "fields": [
+        {
+          "name": "severity",
+          "optional": false,
+          "type": {
+            "kind": "ref",
+            "name": "Severity"
+          }
+        },
+        {
+          "name": "title",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "claims",
+          "optional": false,
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "ref",
+              "name": "Claim"
+            }
+          }
+        },
+        {
+          "name": "attackChain",
+          "optional": false,
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "recommendedActions",
+          "optional": false,
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "ref",
+              "name": "RecommendedAction"
+            }
+          }
+        }
+      ]
+    },
+    "RecommendedAction": {
+      "fields": [
+        {
+          "name": "playbook",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "urgency",
+          "optional": false,
+          "type": {
+            "kind": "ref",
+            "name": "Urgency"
+          }
+        },
+        {
+          "name": "blastRadius",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    }
+  }
+}

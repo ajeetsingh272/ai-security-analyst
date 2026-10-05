@@ -30,6 +30,7 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       detections: ${{ steps.filter.outputs.detections }}
+      schema: ${{ steps.filter.outputs.schema }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -38,6 +39,7 @@ jobs:
           filters: |
             go:
               - 'services/**'
+              - 'go/**'
               - 'go.work'
               - 'go.work.sum'
               - 'scripts/go-*.sh'
@@ -48,6 +50,13 @@ jobs:
               - 'detections/**'
               - 'services/detect/**'
               - 'scripts/validate-detections.sh'
+              - '.github/workflows/ci-go.yml'
+            # P0-11: the Go structs under go/sentinelschema are generated FROM
+            # packages/schema/src/index.ts, so a change on either side can make
+            # the committed output stale and needs both toolchains to check.
+            schema:
+              - 'packages/schema/**'
+              - 'go/sentinelschema/**'
               - '.github/workflows/ci-go.yml'
 
   go:
@@ -94,3 +103,45 @@ jobs:
           go-version: '1.23'
       - name: Validate detection rules
         run: bash scripts/validate-detections.sh
+
+  # P0-11: packages/schema/src/index.ts is the one source of truth; everything
+  # here checks that what is committed actually follows from it. Needs both
+  # toolchains — generate-go.mjs pipes its output through gofmt, and
+  # roundtrip-check.mjs shells out to `go run` — so it is its own job rather
+  # than folded into either `go` (no Node there) or ci-typescript.yml (no Go).
+  schema:
+    needs: changes
+    if: needs.changes.outputs.schema == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # AC3, T1 — fails if go/sentinelschema/schema.gen.go does not match
+      # what regenerating from src/index.ts right now would produce.
+      - name: Generated Go structs are current
+        run: pnpm --filter @sentinel/schema generate:check
+
+      # AC4, T3 — fails on a breaking shape change with no MAJOR version bump,
+      # and separately on schema.snapshot.json simply being stale.
+      - name: Schema compatibility baseline is current
+        run: pnpm --filter @sentinel/schema check-compat:check
+
+      # T2 — the only genuinely cross-language proof here: a real object,
+      # constructed in TypeScript, actually survives TS -> Go -> TS with
+      # every field intact.
+      - name: Round-trip TS -> Go -> TS
+        run: pnpm --filter @sentinel/schema roundtrip-check
+
+      - name: Build go/sentinelschema
+        run: cd go/sentinelschema && go build ./... && go vet ./...

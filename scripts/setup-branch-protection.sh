@@ -42,6 +42,7 @@ CONTEXTS=(
   "clean-clone"
   "go"
   "detections"
+  "schema"
   "integration"
   "planning"
 )

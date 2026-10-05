@@ -58,34 +58,36 @@ split across files:
   makes each push cancel its siblings, which presents as an intermittently flaky
   pipeline and is miserable to diagnose.
 
-## Required status checks — currently blocked
+## Required status checks
 
 `pnpm ci:protect` applies branch protection to `main`, requiring these checks:
 
 ```
-typescript   clean-clone   go   detections   integration   planning
+typescript   clean-clone   go   detections   schema   integration   planning
 ```
 
 The `changes · …` filter jobs are deliberately not required: they decide whether work
 runs and add no signal of their own.
 
-**This cannot be applied today.** Branch protection and rulesets both require GitHub
+**Applied, as of P0-02's closure.** Branch protection and rulesets both require GitHub
 Pro, Team or Enterprise on a **private** repository; on the Free plan the API returns:
 
 ```
 403  Upgrade to GitHub Pro or make this repository public to enable this feature.
 ```
 
-`pnpm ci:protect` detects exactly this and exits **2** with that message, rather than
-appearing to succeed. This is the same plan limitation that blocks the Pages deploy for
-the progress dashboard — see [`progress-dashboard.md`](progress-dashboard.md). Either
-make the repository public or upgrade the account, then re-run the command; nothing else
-has to change, because the workflows already emit check names matching the list above.
+`pnpm ci:protect` detects exactly this and exits **2** with that message rather than
+appearing to succeed, which is how this was caught the first time it was tried. The
+repository was made public specifically to unblock this (and the Pages deploy for the
+progress dashboard — see [`progress-dashboard.md`](progress-dashboard.md)); `pnpm ci:protect`
+was then re-run and succeeded. Re-run it again whenever a new job's check name is added
+to `CONTEXTS` in `scripts/setup-branch-protection.sh` (as `schema` was for P0-11) — applying
+is idempotent, so running it with an already-current list changes nothing.
 
-Until then, **P0-02 cannot be closed**: acceptance criterion 5 and tests T1 and T2
-("a PR with a deliberately failing test is blocked from merging") all depend on
-required checks existing. The pipeline itself is complete and working; the enforcement
-layer is the part the plan withholds.
+T1 and T2 ("a PR with a deliberately failing test is blocked from merging") were proven
+with a real throwaway PR, not just by confirming the configuration: `mergeStateStatus`
+came back `BLOCKED`, and `gh pr merge` was refused outright with "the base branch policy
+prohibits the merge."
 
 Reviewer requirements are deliberately left off even once protection is available. A
 solo maintainer cannot approve their own pull request, so turning on mandatory reviews
