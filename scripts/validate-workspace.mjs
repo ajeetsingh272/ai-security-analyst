@@ -111,16 +111,26 @@ for (const glob of workspaceGlobs()) {
       }
     }
 
-    const tsconfigPath = join(ROOT, dir, 'tsconfig.json');
-    if (!existsSync(tsconfigPath)) {
-      fail('no tsconfig.json');
-    } else {
-      const text = readFileSync(tsconfigPath, 'utf8');
-      const expected = `${relative(join(ROOT, dir), join(ROOT, 'tsconfig.base.json')).replaceAll('\\', '/')}`;
-      if (!text.includes('"extends"')) {
-        fail('tsconfig.json does not extend the shared base config');
-      } else if (!text.includes(expected)) {
-        fail(`tsconfig.json extends something other than ${expected}`);
+    // The shared-tsconfig requirement (P0-01 AC4) only means something for a
+    // package that actually compiles TypeScript. A plain-JS package (its
+    // own "typecheck" script never invokes tsc — tools/progress is the one
+    // example today, checked with `node --check` instead, since there is no
+    // TypeScript here to typecheck) has nothing to extend the base config
+    // INTO, and requiring a tsconfig.json for it would be a file with
+    // nothing real for it to configure.
+    const usesTsc = /\btsc\b/.test(scripts.typecheck ?? '');
+    if (usesTsc) {
+      const tsconfigPath = join(ROOT, dir, 'tsconfig.json');
+      if (!existsSync(tsconfigPath)) {
+        fail('no tsconfig.json');
+      } else {
+        const text = readFileSync(tsconfigPath, 'utf8');
+        const expected = `${relative(join(ROOT, dir), join(ROOT, 'tsconfig.base.json')).replaceAll('\\', '/')}`;
+        if (!text.includes('"extends"')) {
+          fail('tsconfig.json does not extend the shared base config');
+        } else if (!text.includes(expected)) {
+          fail(`tsconfig.json extends something other than ${expected}`);
+        }
       }
     }
   }

@@ -2,6 +2,28 @@ name: Progress Dashboard
 
 # Rebuilds the live progress page whenever the board changes, so the page is
 # never a stale snapshot someone has to remember to refresh.
+#
+# P0-12 AC2 ("rebuilds on issue open/close/label/board move") is honestly
+# only PARTLY achievable with GitHub Actions' native trigger set, found while
+# verifying it rather than assumed: this workflow originally also triggered
+# on `project_card`, but that event belongs to Projects (classic) — a
+# different, legacy feature. "Sentinel Delivery" is a Projects v2 board
+# (ProjectV2 in the GraphQL API; see `gh project` usage throughout this
+# repo's tooling), and GitHub Actions has NO native workflow trigger for a
+# Projects v2 item change at all as of this writing — not a different event
+# name, an actual gap, the kind people file feature requests for. The
+# `project_card` trigger here never fired for this board even once.
+#
+# What this means in practice: `issues:` already catches the dominant real
+# case for this repo, since closing/reopening an issue drives the board's
+# own built-in Status automation (confirmed earlier this session — closing
+# an issue moved its Status to Done with no separate action needed). The
+# remaining gap is a PURE drag-and-drop move with no issue state change
+# alongside it — that is not caught by any trigger here, and the `schedule`
+# cron below is the backstop for it, at up to a 24-hour lag. Closing that gap
+# for real needs a GitHub App receiving the `projects_v2_item` webhook and
+# forwarding it via `repository_dispatch` — real infrastructure, out of this
+# ticket's scope, not something to fake a trigger name for.
 on:
   push:
     branches: [main]
@@ -11,10 +33,9 @@ on:
       - '.github/workflows/progress.yml'
   issues:
     types: [opened, closed, reopened, edited, labeled, unlabeled, assigned, unassigned]
-  project_card:
-    types: [created, moved, deleted]
   schedule:
-    # Daily floor, so the page stays current even if no event fires.
+    # Daily floor, so the page stays current even if no event fires — this is
+    # also the backstop for a board move with no issue event, see above.
     - cron: '0 3 * * *'
   workflow_dispatch:
 
@@ -34,6 +55,8 @@ jobs:
     # The page build calls the GitHub API for issue state; a timeout keeps a
     # hanging request from holding the Pages concurrency group indefinitely.
     timeout-minutes: 10
+    outputs:
+      degraded: ${{ steps.build.outputs.degraded }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,8 +67,29 @@ jobs:
       - name: Validate backlog
         run: node scripts/validate-backlog.mjs
 
+      # Exit code 2 from build.mjs means "the GitHub API was unavailable;
+      # this page is a degraded plan-only fallback." AC4 is "serves the last
+      # good build" — publishing this fallback over a working previous
+      # deployment would not be that, it would be replacing a good build
+      # with a worse one. So exit 2 is captured as an output and the step
+      # still SUCCEEDS (the artifact upload below still runs harmlessly),
+      # but `deploy` reads that output and skips entirely, leaving whatever
+      # Pages is currently serving untouched. Any OTHER non-zero exit is a
+      # real failure and is left to fail this step normally — only the
+      # specific "known degraded" signal is swallowed.
       - name: Build dashboard
-        run: node tools/progress/build.mjs
+        id: build
+        run: |
+          set +e
+          node tools/progress/build.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "degraded=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub API unavailable; built a degraded plan-only page. Deploy will be skipped so the last good build keeps serving."
+          elif [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -56,6 +100,7 @@ jobs:
 
   deploy:
     needs: build
+    if: needs.build.outputs.degraded != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
