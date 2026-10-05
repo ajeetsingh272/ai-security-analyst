@@ -6,4 +6,6 @@ use (
 	./services/correlate
 	./go/sentinelschema
 	./go/sentinelobs
+	./go/sentineldb
+	./go/sentinelconnector
 )

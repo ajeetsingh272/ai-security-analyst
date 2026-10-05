@@ -2,7 +2,7 @@
 // configured sources, normalises their records to OCSF, and publishes them to
 // the stream.
 //
-// Checkpointing contract (ADR-0002): a cursor advances only after the batch is
+// Checkpointing contract (ADR-0010): a cursor advances only after the batch is
 // durably acknowledged by Kafka. Delivery is therefore at-least-once, and the
 // duplicates that produces are collapsed downstream by ClickHouse rather than
 // prevented here — exactly-once across a vendor API boundary is not achievable,
@@ -20,9 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const serviceName = "sentinel-ingest"
@@ -98,7 +101,40 @@ func main() {
 		}
 	}()
 
-	// TODO(P1-01): start the connector scheduler here.
+	pool, err := sentineldb.NewPool(ctx)
+	if err != nil {
+		log.Error("opening database pool", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	cycleCount, err := otel.Meter(serviceName).Int64Counter("connector.cycle_count",
+		metric.WithDescription("Connector scheduler cycles, by outcome (AC4: per-connector health as a metric)"))
+	if err != nil {
+		log.Error("creating connector.cycle_count counter", "err", err)
+		os.Exit(1)
+	}
+
+	// No real Publisher exists yet — P1-05 is what wires a real Redpanda
+	// producer in. InMemoryPublisher is an explicit, visible placeholder,
+	// not a silent stand-in: with zero connectors registered below (P1-02/03
+	// land the first real one, M365), it is never actually exercised by
+	// production traffic. What this proves today is that the scheduler
+	// itself starts, runs, and shuts down cleanly as part of this real
+	// service — the framework, ahead of anything to run through it.
+	scheduler := sentinelconnector.NewScheduler(
+		sentinelconnector.NewInMemoryPublisher(),
+		sentinelconnector.NewPostgresCursorStore(pool),
+		sentinelconnector.SchedulerOptions{
+			Interval:   time.Minute,
+			Log:        log,
+			CycleCount: cycleCount,
+			Health:     sentinelconnector.NewPostgresHealthRecorder(pool),
+		},
+	)
+	// TODO(P1-02/P1-03): scheduler.Register(...) each tenant's configured
+	// connector here, once a real Connector implementation (M365) exists.
+	scheduler.Start(ctx)
 
 	<-ctx.Done()
 	log.Info("draining in-flight batches before exit")
@@ -107,6 +143,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
 		log.Error("shutdown", "err", err)
+	}
+	if err := scheduler.Shutdown(shutdown); err != nil {
+		log.Error("connector scheduler shutdown", "err", err)
 	}
 	log.Info("ingest stopped")
 }

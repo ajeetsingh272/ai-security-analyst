@@ -85,7 +85,7 @@ type Connector interface {
 written to Kafka. The contract is at-least-once delivery; duplicates are collapsed
 downstream by ClickHouse `ReplacingMergeTree` keyed on `(tenant_id, event_id)`. Exactly-once
 across a vendor API boundary is not achievable, so we make duplicates harmless instead of
-pretending to prevent them.
+pretending to prevent them. See [ADR-0010](../adr/0010-checkpoint-after-kafka-ack.md).
 
 **Back-pressure.** A tenant that suddenly emits 50× its normal volume — usually a
 misconfiguration, occasionally an attack — must not starve other tenants. Per-tenant token
