@@ -21,6 +21,7 @@ vendor/
 services/ingest/ingest
 services/detect/detect
 services/correlate/correlate
+services/eventwriter/eventwriter
 
 # Env & secrets
 .env

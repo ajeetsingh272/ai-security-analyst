@@ -6,7 +6,9 @@ use (
 	./go/sentinelobs
 	./go/sentinelschema
 	./go/sentinelstream
+	./go/sentinelevents
 	./services/correlate
 	./services/detect
+	./services/eventwriter
 	./services/ingest
 )
