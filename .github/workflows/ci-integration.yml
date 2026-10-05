@@ -108,11 +108,20 @@ jobs:
       - name: Data model doc is current
         run: pnpm db:docs:check
 
+      # No package defines test:integration yet — Phase 0 has no business logic to
+      # integration-test, so this is a 0-tasks no-op (exit 0) until one exists. Kept
+      # in the pipeline now so that the step, and the `--` separator below, are
+      # already correct on the day a real test lands rather than being debugged then.
       - name: Integration tests
         run: pnpm test:integration
 
+      # `--` is required: without it, turbo treats --project as ITS OWN flag, not
+      # as an argument of the underlying test command, and errors with "unexpected
+      # argument '--project' found" — which is exactly how this failed on its first
+      # real CI run. With `--`, turbo passes everything after it straight to the
+      # task's script, same as `npm run x -- --flag`.
       - name: Tenant isolation suite
-        run: pnpm test:integration --project=isolation
+        run: pnpm test:integration -- --project=isolation
 
       - name: Stack logs on failure
         if: failure()
