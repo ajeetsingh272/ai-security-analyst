@@ -8,12 +8,18 @@
  * that runs after this one, for the remainder of the request.
  *
  * `request.session` is a CONTRACT, not something this plugin populates.
- * P0-09 (authentication, sessions, RBAC) is what sets it, by decorating the
- * request earlier in the chain — most likely in its own `onRequest` hook
- * registered before this one. This plugin does not know or care how a
- * session was established; it only enforces that one exists before any route
- * handler runs; a request with no session gets 401 here and never reaches a
- * handler, a repository, or a database connection at all.
+ * P0-09's `authPlugin` is what sets it. This plugin does not know or care
+ * how a session was established; it only enforces that one exists before
+ * any route handler runs; a request with no session gets 401 here and
+ * never reaches a handler, a repository, or a database connection at all.
+ *
+ * MUST be registered AFTER `authPlugin`, not before — both are registered
+ * top-level (`fastify-plugin`), so Fastify runs their `onRequest` hooks in
+ * REGISTRATION order. Register this one first and its check runs before
+ * authPlugin has populated anything, so every request looks unauthenticated
+ * even with a valid session cookie attached. Caught by this exact mistake in
+ * apps/api/src/__tests__/auth.integration.test.ts the first time the two
+ * were wired together.
  *
  * Two things had to be true before context set in `onRequest` reliably
  * reached the route handler, and diagnosing them cost more effort than
@@ -49,21 +55,10 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { enterTenantContext } from '@sentinel/db';
-
-declare module 'fastify' {
-  interface FastifyRequest {
-    /**
-     * Populated by the authentication layer (P0-09) before this plugin's
-     * hook runs. `tenantId` must be the UUID of the tenant the caller is
-     * acting as right now — for an MSP user that spans multiple client
-     * tenants, whichever one the current request is scoped to, not a list.
-     */
-    session?: {
-      tenantId: string;
-      userId: string;
-    };
-  }
-}
+// Importing this for its side-effecting `declare module 'fastify'` block —
+// session.ts is the one place that type is declared (P0-09). Populated by
+// the auth plugin before this plugin's hook runs.
+import '../auth/session.js';
 
 export interface TenantContextPluginOptions {
   /**

@@ -17,13 +17,14 @@ import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import { getTenantContext, hasTenantContext } from '@sentinel/db';
 import { tenantContextPlugin } from '../plugins/tenant-context.js';
+import type { Session } from '../auth/session.js';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
 
 /** A fresh app per test, with a decorator hook standing in for P0-09's auth
  * plugin, wired to whatever session the caller wants to simulate. */
-function buildApp(sessionFor: (url: string) => { tenantId: string; userId: string } | undefined) {
+function buildApp(sessionFor: (url: string) => Session | undefined) {
   const app = Fastify();
   app.addHook('onRequest', (request, _reply, done) => {
     // Assigned only when truthy: under exactOptionalPropertyTypes, an
@@ -59,14 +60,14 @@ describe('tenantContextPlugin', () => {
   });
 
   it('establishes the tenant context from request.session for a protected route', async () => {
-    const app = buildApp(() => ({ tenantId: TENANT_A, userId: 'u1' }));
+    const app = buildApp(() => ({ tenantId: TENANT_A, userId: 'u1', role: 'owner' }));
     const res = await app.inject({ method: 'GET', url: '/cases' });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ tenantId: TENANT_A });
   });
 
   it('does not leak context between an authenticated request and a later unauthenticated one', async () => {
-    const app = buildApp((url) => (url === '/cases' ? { tenantId: TENANT_A, userId: 'u1' } : undefined));
+    const app = buildApp((url) => (url === '/cases' ? { tenantId: TENANT_A, userId: 'u1', role: 'owner' } : undefined));
     const first = await app.inject({ method: 'GET', url: '/cases' });
     expect(first.statusCode).toBe(200);
 
@@ -76,8 +77,8 @@ describe('tenantContextPlugin', () => {
 
   it('isolates concurrent requests for different tenants from each other', async () => {
     const app = buildApp((url) => {
-      if (url === '/as-a') return { tenantId: TENANT_A, userId: 'u1' };
-      if (url === '/as-b') return { tenantId: TENANT_B, userId: 'u2' };
+      if (url === '/as-a') return { tenantId: TENANT_A, userId: 'u1', role: 'owner' };
+      if (url === '/as-b') return { tenantId: TENANT_B, userId: 'u2', role: 'owner' };
       return undefined;
     });
     app.get('/as-a', async () => ({ tenantId: getTenantContext().tenantId }));
@@ -96,7 +97,7 @@ describe('tenantContextPlugin', () => {
     // A non-UUID tenantId is a bug in whatever issued the session, not a
     // missing-credentials problem — the distinct status code is so an
     // operator reading logs can tell which system to look at.
-    const app = buildApp(() => ({ tenantId: 'not-a-uuid', userId: 'u1' }));
+    const app = buildApp(() => ({ tenantId: 'not-a-uuid', userId: 'u1', role: 'owner' }));
     const res = await app.inject({ method: 'GET', url: '/cases' });
     expect(res.statusCode).toBe(500);
   });
