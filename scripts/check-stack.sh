@@ -65,20 +65,31 @@ for svc in $HEALTH_SERVICES; do
   fi
 done
 
-# s3-init is a one-shot bucket creator, so it has no healthcheck by design. What
-# matters is that it finished successfully — without it the archive buckets do not
-# exist and every later upload fails for a reason that looks like a code bug.
+# s3-init is a one-shot bucket creator, so it has no healthcheck by design — and
+# that is exactly the gap: `up --wait` only waits for services THAT HAVE a
+# healthcheck to go healthy, not for a one-shot container to finish. s3-init
+# starts the moment `s3` is healthy and can still be mid-run (pulling the aws-cli
+# image, creating buckets) when `--wait` returns successfully. A single
+# point-in-time check here races that window and fails spuriously on a slower
+# runner — caught on GitHub Actions, not reproducible on the faster local
+# machine. So this polls for a terminal state instead of reading it once.
 init_cid=$(dc ps -aq s3-init 2>/dev/null | tr -d '[:space:]')
-if [ -n "$init_cid" ]; then
+if [ -z "$init_cid" ]; then
+  bad "s3-init container not found"
+else
+  init_state=running
+  for _ in $(seq 1 30); do
+    init_state=$(docker inspect --format '{{.State.Status}}' "$init_cid" 2>/dev/null)
+    [ "$init_state" = exited ] && break
+    sleep 1
+  done
   init_exit=$(docker inspect --format '{{.State.ExitCode}}' "$init_cid" 2>/dev/null)
-  init_state=$(docker inspect --format '{{.State.Status}}' "$init_cid" 2>/dev/null)
   if [ "$init_state" = exited ] && [ "$init_exit" = 0 ]; then
     ok "s3-init completed (exit 0) — buckets provisioned"
   else
-    bad "s3-init state=$init_state exit=$init_exit"
+    bad "s3-init state=$init_state exit=$init_exit after 30s"
+    note "$(docker logs "$init_cid" 2>&1 | tail -5 | tr '\n' ' ')"
   fi
-else
-  bad "s3-init container not found"
 fi
 
 echo
