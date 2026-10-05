@@ -19,6 +19,16 @@ type TenantConnector struct {
 	ConnectorRowID string // connectors.id (UUID) — the tenant's specific connector instance row, NOT Connector.ID()'s kind string
 	Stream         string
 	Connector      Connector
+	// Quota is this tenant's rate limit (P1-10 AC1) — resolved from the
+	// tenant's plan tier ONCE, at registration time by whoever composes the
+	// scheduler (e.g. main.go, which has Postgres access to look up
+	// tenants.plan), not looked up per-cycle. Keeps the scheduler's hot
+	// path decoupled from the control-plane database entirely. Zero value
+	// (both fields 0) means unlimited — RateLimiter.Allow with Burst=0,
+	// EPS=0 would always grant 0, so the Scheduler treats an explicitly
+	// zero Quota as "no limiter configured for this registration" rather
+	// than "allow nothing", via the nil check on s.rateLimiter instead.
+	Quota Quota
 }
 
 // Scheduler runs every registered (tenant, connector, stream) on its own
@@ -40,6 +50,21 @@ type Scheduler struct {
 	// feeds.
 	cycleCount metric.Int64Counter
 
+	// rateLimiter and archive are P1-10's addition. Both are nil-safe and
+	// optional, same pattern as health/cycleCount above: a Scheduler built
+	// without them (e.g. an existing test that predates this ticket)
+	// behaves exactly as before — no limiting, no archiving. Only when
+	// BOTH are set does runCycle apply AC1/AC3; a RateLimiter with no
+	// ArchiveWriter would silently drop overflow, which AC3 forbids, so
+	// NewScheduler requires them together (see below).
+	rateLimiter RateLimiter
+	archive     ArchiveWriter
+	// quotaBreaches, if non-nil, counts cycles where a tenant's requested
+	// volume exceeded what the limiter granted — AC4's "quota breaches
+	// surfaced to tenant and ops" metric half; the tenant-facing half is
+	// P1-11's dashboard, same deferral as cycleCount's own comment.
+	quotaBreaches metric.Int64Counter
+
 	mu           sync.Mutex
 	registered   []TenantConnector
 	cancelLoops  context.CancelFunc
@@ -47,10 +72,13 @@ type Scheduler struct {
 }
 
 type SchedulerOptions struct {
-	Interval   time.Duration
-	Log        *slog.Logger
-	CycleCount metric.Int64Counter // optional
-	Health     HealthRecorder      // optional — AC4's "surfaced" half; nil-safe, same as CycleCount
+	Interval      time.Duration
+	Log           *slog.Logger
+	CycleCount    metric.Int64Counter // optional
+	Health        HealthRecorder      // optional — AC4's "surfaced" half; nil-safe, same as CycleCount
+	RateLimiter   RateLimiter         // optional — P1-10 AC1/AC2; nil disables limiting entirely
+	Archive       ArchiveWriter       // optional, but required alongside RateLimiter — see Scheduler's own doc comment
+	QuotaBreaches metric.Int64Counter // optional
 }
 
 func NewScheduler(publisher Publisher, cursors CursorStorer, opts SchedulerOptions) *Scheduler {
@@ -60,13 +88,24 @@ func NewScheduler(publisher Publisher, cursors CursorStorer, opts SchedulerOptio
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
+	// A RateLimiter without an ArchiveWriter would mean overflow is simply
+	// never published anywhere — silently violating AC3 ("never discarded")
+	// the moment anyone sets one without the other. Failing fast here, at
+	// construction, is cheaper than discovering it from a missing archive
+	// object in production.
+	if (opts.RateLimiter != nil) != (opts.Archive != nil) {
+		panic("sentinelconnector: SchedulerOptions.RateLimiter and Archive must be set together or not at all")
+	}
 	return &Scheduler{
-		publisher:  publisher,
-		cursors:    cursors,
-		health:     opts.Health,
-		interval:   opts.Interval,
-		log:        opts.Log,
-		cycleCount: opts.CycleCount,
+		publisher:     publisher,
+		cursors:       cursors,
+		health:        opts.Health,
+		interval:      opts.Interval,
+		log:           opts.Log,
+		cycleCount:    opts.CycleCount,
+		rateLimiter:   opts.RateLimiter,
+		archive:       opts.Archive,
+		quotaBreaches: opts.QuotaBreaches,
 	}
 }
 
@@ -203,8 +242,54 @@ func (s *Scheduler) runCycle(ctx context.Context, tc TenantConnector) string {
 		return "fetch_error"
 	}
 
-	envelopes := make([]EventEnvelope, 0, len(batch.Events))
-	for _, raw := range batch.Events {
+	// P1-10 AC1/AC2/AC3: rate-limit this tenant's batch before any of it is
+	// normalised or published. allowedEvents is what proceeds through the
+	// rest of this cycle exactly as before; the remainder (overflow) is
+	// archived, never dropped and never published either — publishing a
+	// RawEvent isn't possible, only a normalised one, so the split happens
+	// here, on batch.Events, before Normalise even runs.
+	allowedEvents := batch.Events
+	if s.rateLimiter != nil && len(batch.Events) > 0 {
+		granted, err := s.rateLimiter.Allow(ctx, tc.TenantID, tc.Quota, len(batch.Events))
+		if err != nil {
+			// RateLimiter implementations used in production wrap FailOpenLimiter,
+			// which already falls back internally and does not return an error
+			// for a down Redis — reaching here means something else is wrong
+			// (e.g. a context deadline). Treat the whole batch as overflow rather
+			// than either silently granting everything or dropping it.
+			s.log.Error("rate limiter error, treating batch as overflow", "tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "err", err)
+			granted = 0
+		}
+		if granted < len(batch.Events) {
+			overflow := batch.Events[granted:]
+			allowedEvents = batch.Events[:granted]
+			s.log.Warn("tenant exceeded quota, archiving overflow",
+				"tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "stream", tc.Stream,
+				"quota_eps", tc.Quota.EPS, "quota_burst", tc.Quota.Burst,
+				"requested", len(batch.Events), "granted", granted, "overflow", len(overflow))
+			if s.quotaBreaches != nil {
+				s.quotaBreaches.Add(ctx, 1, metric.WithAttributes(
+					attribute.String("tenant_id", tc.TenantID),
+					attribute.String("connector_id", tc.ConnectorRowID),
+					attribute.String("stream", tc.Stream),
+				))
+			}
+			if s.archive != nil {
+				if err := s.archive.Archive(ctx, tc.TenantID, tc.ConnectorRowID, overflow); err != nil {
+					// AC3 ("never discarded") is violated if this archive write is
+					// lost — failing the whole cycle (no cursor commit, no partial
+					// publish of the allowed portion either) means next tick retries
+					// the identical Fetch and gets another chance to archive it,
+					// rather than quietly losing the overflow forever.
+					s.log.Error("archiving overflow failed", "tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "err", err)
+					return "archive_error"
+				}
+			}
+		}
+	}
+
+	envelopes := make([]EventEnvelope, 0, len(allowedEvents))
+	for _, raw := range allowedEvents {
 		events, err := tc.Connector.Normalise(raw)
 		if err != nil {
 			s.log.Error("normalise failed", "tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "err", err)
