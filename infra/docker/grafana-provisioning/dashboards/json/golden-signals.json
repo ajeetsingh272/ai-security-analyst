@@ -1,0 +1,70 @@
+{
+  "title": "Sentinel — Golden Signals",
+  "uid": "sentinel-golden-signals",
+  "description": "P0-10 AC4: request rate, error rate and latency for every instrumented service, fed by go/sentinelobs and packages/observability via otel-collector. Panels query the exact metric names the otel-collector's Prometheus exporter produces (verified live, not assumed from the OTel spec) — http_server_request_count_total, http_server_error_count_total and the http_server_duration_milliseconds histogram.",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate",
+      "description": "sum(rate(http_server_request_count_total[1m])) by service and route",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_server_request_count_total[1m])) by (exported_job, http_route)",
+          "legendFormat": "{{exported_job}} {{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error rate",
+      "description": "sum(rate(http_server_error_count_total[1m])) by service and route — a 5xx response, counted at the same point request_count is",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(http_server_error_count_total[1m])) by (exported_job, http_route)",
+          "legendFormat": "{{exported_job}} {{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Request duration (p50 / p95 / p99)",
+      "description": "histogram_quantile over http_server_duration_milliseconds — the panel AC5 means when it says a developer should be able to answer 'why did this take 4 minutes' from a single trace; this is the aggregate view that tells them WHERE to go looking for that trace.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_duration_milliseconds_bucket[5m])) by (le, exported_job, http_route))",
+          "legendFormat": "p50 {{exported_job}} {{http_route}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket[5m])) by (le, exported_job, http_route))",
+          "legendFormat": "p95 {{exported_job}} {{http_route}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_duration_milliseconds_bucket[5m])) by (le, exported_job, http_route))",
+          "legendFormat": "p99 {{exported_job}} {{http_route}}"
+        }
+      ]
+    }
+  ]
+}

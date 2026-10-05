@@ -92,8 +92,12 @@ Brings up, with health checks gating startup order:
 | SeaweedFS master | 9333 | <http://localhost:9333> | Cluster status UI |
 | SeaweedFS filer | 8888 | <http://localhost:8888> | Browsing stored objects |
 | Jaeger UI | 16686 | <http://localhost:16686> | Distributed traces |
-| OTLP gRPC | 4317 | `localhost:4317` | Trace and metric ingest from the services |
+| OTLP gRPC | 4317 | `localhost:4317` | otel-collector's trace/metric ingest — every service points here, never at Jaeger or Prometheus directly |
 | OTLP HTTP | 4318 | `localhost:4318` | Same, over HTTP |
+| otel-collector metrics | 8889 | <http://localhost:8889/metrics> | Prometheus-scrapable output, published for ad-hoc debugging (Prometheus itself scrapes this over the Docker network) |
+| otel-collector health | 13133 | <http://localhost:13133> | `health_check` extension — the collector's image has no shell, so this is the only way to probe it from outside the container |
+| Prometheus | 9090 | <http://localhost:9090> | Metrics storage and ad-hoc PromQL |
+| Grafana | 3001 | <http://localhost:3001> | Golden-signal dashboards (`admin` / `sentineldev`). 3000 is the dashboard app's own port (offset here) |
 
 Every published port is listed here, and `pnpm stack:check` fails if one is missing —
 an undocumented port is one somebody discovers by having something else break.

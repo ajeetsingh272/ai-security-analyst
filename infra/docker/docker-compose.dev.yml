@@ -155,20 +155,96 @@ services:
       aws --endpoint-url http://s3:8333 s3 ls
       "
 
-  # ── Observability ─────────────────────────────────────────────────────────
+  # ── Observability (P0-10) ──────────────────────────────────────────────────
+  #
+  # Every service exports OTLP to otel-collector (4317/4318), never to Jaeger
+  # or Prometheus directly — otel-collector-config.yaml is the one place that
+  # knows traces go to Jaeger and metrics go to Prometheus, so a service's own
+  # code never has to care about that split. Jaeger's 4317/4318 therefore
+  # moved from "published to the host, apps connect here" to
+  # "container-network-only, the collector connects here" — nothing on the
+  # host should point at Jaeger's OTLP ports any more.
   jaeger:
     image: jaegertracing/all-in-one:1.64.0
     environment:
       COLLECTOR_OTLP_ENABLED: 'true'
     ports:
       - '16686:16686' # UI
-      - '4317:4317' # OTLP gRPC
-      - '4318:4318' # OTLP HTTP
-    # 14269 is Jaeger's admin port. It is deliberately not published to the host:
-    # the healthcheck runs inside the container, and exposing an admin endpoint to
-    # the host buys nothing a developer needs.
+    # 4317/4318 (OTLP) and 14269 (admin, used by the healthcheck) stay
+    # internal — only otel-collector and this container's own healthcheck
+    # reach them, over the docker network.
     healthcheck:
       test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:14269/']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    command: ['--config=/etc/otel-collector-config.yaml']
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - '4317:4317' # OTLP gRPC — every service points here now
+      - '4318:4318' # OTLP HTTP
+      - '8889:8889' # Prometheus-scrapable metrics, published for ad-hoc debugging
+      - '13133:13133' # health_check extension — see the note below
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    # No Docker healthcheck on THIS service, by necessity rather than choice:
+    # otel-collector-contrib's image is fully distroless — no shell, no
+    # wget/curl, no `ls`, nothing executable but the collector binary itself
+    # (confirmed by trying each of those and getting "executable file not
+    # found" every time). A CMD-based healthcheck needs an executable to run
+    # INSIDE the container, and there is none. The health_check extension
+    # still runs and answers real GET requests on 13133 — just not from
+    # Docker's own probe mechanism. scripts/check-stack.sh accordingly treats
+    # this service the same way it already treats s3-init: no healthcheck
+    # to poll, not a gap in coverage.
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=24h'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090'
+    # service_started, not service_healthy — otel-collector has no healthcheck
+    # (see its own comment above for why). Prometheus will retry its scrape
+    # on the usual interval regardless, so starting slightly before the
+    # collector's extensions finish initializing costs one missed scrape
+    # cycle at most, not a failure.
+    depends_on:
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:9090/-/healthy']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Viewer'
+      # No real secret guarded by this — a throwaway local dev instance with
+      # nothing but Prometheus metrics behind it. Never reused for anything
+      # that is actually deployed.
+      GF_SECURITY_ADMIN_PASSWORD: 'sentineldev'
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - '3001:3000' # 3000 is the dashboard app's port (README) — offset here
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:3000/api/health']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -179,3 +255,4 @@ volumes:
   rpdata:
   redisdata:
   s3data:
+  grafanadata:

@@ -5,4 +5,5 @@ use (
 	./services/detect
 	./services/correlate
 	./go/sentinelschema
+	./go/sentinelobs
 )

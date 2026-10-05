@@ -98,12 +98,23 @@ echo "══ AC2 · Health checks gate dependent services ═══════�
 
 # A depends_on without a condition waits only for the container to start, which is
 # the difference between deterministic startup and a race that usually wins.
+#
+# Exception: a dependency target with NO healthcheck at all (otel-collector —
+# its image is fully distroless, no shell/wget/curl to run a CMD healthcheck
+# against, see docker-compose.dev.yml's own comment on that service) has no
+# service_healthy state to gate on in the first place, so service_started is
+# the only condition that could ever be correct there — requiring
+# service_healthy would demand something the service structurally cannot
+# provide, not catch a real startup-ordering bug.
 dep_report=$(jq_node "
   const bad=[]; let total=0;
   for(const [name,svc] of Object.entries(c.services)){
     for(const [dep,spec] of Object.entries(svc.depends_on||{})){
       total++;
-      if((spec.condition||'')!=='service_healthy') bad.push(name+' -> '+dep+' ('+(spec.condition||'none')+')');
+      const depHasHealthcheck = !!(c.services[dep]||{}).healthcheck;
+      const condition = spec.condition||'';
+      const okCondition = depHasHealthcheck ? condition==='service_healthy' : condition==='service_started';
+      if(!okCondition) bad.push(name+' -> '+dep+' ('+(condition||'none')+')');
     }
   }
   console.log(JSON.stringify({total, bad}));
@@ -114,7 +125,7 @@ dep_bad=$(printf '%s' "$dep_report" | node -e "let s='';process.stdin.on('data',
 if [ "$dep_total" = "0" ]; then
   bad "no depends_on relationships found — startup order is not gated at all"
 elif [ -z "$dep_bad" ]; then
-  ok "all $dep_total dependencies use condition: service_healthy"
+  ok "all $dep_total dependencies are correctly gated (service_healthy, or service_started where the target has no healthcheck to gate on)"
 else
   bad "dependencies not gated on health: $dep_bad"
 fi

@@ -1,0 +1,51 @@
+# P0-10: every service exports OTLP to THIS collector (4317 grpc / 4318 http),
+# not directly to Jaeger. One export target for an app to know about; this file
+# is the only place that knows traces go to Jaeger and metrics go to
+# Prometheus, which means a service's own code never has to care about that
+# split, or about which observability backend is deployed behind it.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+extensions:
+  # The OTLP receiver only accepts POST to specific protobuf paths
+  # (/v1/traces, /v1/metrics) — it has no GET handler at all, so a plain
+  # `wget /` against 4318 is not a usable healthcheck target (confirmed by
+  # trying exactly that: the collector was fully up, the healthcheck still
+  # failed). This extension exists specifically to give a healthcheck a real
+  # 200-on-GET endpoint to hit.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+exporters:
+  # Jaeger's all-in-one image speaks OTLP internally too (its own
+  # COLLECTOR_OTLP_ENABLED receiver) — reached over the docker network, never
+  # published to the host, since every app now talks to this collector instead.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # Prometheus cannot be pushed to; it scrapes. This exporter is what turns
+  # OTLP metrics into a Prometheus-scrapable endpoint — prometheus.yml points
+  # a scrape job at this collector on the port below.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
