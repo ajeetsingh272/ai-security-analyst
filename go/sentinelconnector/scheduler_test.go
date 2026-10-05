@@ -3,6 +3,7 @@ package sentinelconnector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
@@ -55,7 +56,7 @@ func TestCursorAdvancesOnlyAfterPublishSucceeds(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "success" {
 		t.Fatalf("expected outcome=success, got %q", outcome)
 	}
@@ -84,7 +85,7 @@ func TestFetchErrorDoesNotAdvanceCursor(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "fetch_error" {
 		t.Fatalf("expected outcome=fetch_error, got %q", outcome)
 	}
@@ -116,7 +117,7 @@ func TestPublishFailureDoesNotAdvanceCursor(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "publish_error" {
 		t.Fatalf("expected outcome=publish_error, got %q", outcome)
 	}
@@ -141,7 +142,7 @@ func TestNormaliseErrorDoesNotAdvanceCursor(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "normalise_error" {
 		t.Fatalf("expected outcome=normalise_error, got %q", outcome)
 	}
@@ -162,24 +163,45 @@ func TestHealthRecorderReflectsCycleOutcome(t *testing.T) {
 	// recorder) is runOnce's job, not runCycle's own.
 	s.runOnce(context.Background(), okTC)
 
-	success, errMsg, ok := health.Get(probeTenant, "conn-ok")
+	status, errMsg, ok := health.Get(probeTenant, "conn-ok")
 	if !ok {
 		t.Fatal("expected a health record for the successful cycle")
 	}
-	if !success || errMsg != "" {
-		t.Fatalf("expected success=true errMsg=\"\", got success=%v errMsg=%q", success, errMsg)
+	if status != "healthy" || errMsg != "" {
+		t.Fatalf("expected status=healthy errMsg=\"\", got status=%q errMsg=%q", status, errMsg)
 	}
 
 	failConn := &fakeConnector{id: "fake", fetchErr: errors.New("vendor down")}
 	failTC := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-fail", Stream: "main", Connector: failConn}
 	s.runOnce(context.Background(), failTC)
 
-	success, errMsg, ok = health.Get(probeTenant, "conn-fail")
+	status, errMsg, ok = health.Get(probeTenant, "conn-fail")
 	if !ok {
 		t.Fatal("expected a health record for the failed cycle")
 	}
-	if success || errMsg == "" {
-		t.Fatalf("expected success=false with a non-empty errMsg, got success=%v errMsg=%q", success, errMsg)
+	if status != "degraded" || errMsg == "" {
+		t.Fatalf("expected status=degraded with a non-empty errMsg, got status=%q errMsg=%q", status, errMsg)
+	}
+}
+
+// T3 (P1-11): a connector whose Fetch fails with ErrConsentRevoked must be
+// recorded as "revoked", not the generic "degraded" every other failure
+// gets — the health endpoint's whole point is telling these apart.
+func TestHealthRecorderReflectsRevokedConsentDistinctFromGenericFailure(t *testing.T) {
+	cursors := NewInMemoryCursorStore()
+	health := NewInMemoryHealthRecorder()
+	s := NewScheduler(NewInMemoryPublisher(), cursors, SchedulerOptions{Health: health})
+
+	revokedConn := &fakeConnector{id: "fake", fetchErr: fmt.Errorf("vendor rejected the token: %w", ErrConsentRevoked)}
+	revokedTC := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-revoked", Stream: "main", Connector: revokedConn}
+	s.runOnce(context.Background(), revokedTC)
+
+	status, errMsg, ok := health.Get(probeTenant, "conn-revoked")
+	if !ok {
+		t.Fatal("expected a health record for the revoked-consent cycle")
+	}
+	if status != "revoked" || errMsg == "" {
+		t.Fatalf("expected status=revoked with a non-empty errMsg, got status=%q errMsg=%q", status, errMsg)
 	}
 }
 
@@ -194,7 +216,7 @@ func TestEmptyBatchStillAdvancesCursor(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "success" {
 		t.Fatalf("expected outcome=success for an empty batch, got %q", outcome)
 	}

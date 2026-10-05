@@ -1,0 +1,83 @@
+{
+  "title": "Sentinel — Ingest Observability",
+  "uid": "sentinel-ingest-observability",
+  "description": "P1-11 AC1/AC2/AC5: per-tenant/connector ingest lag, EPS, batch size and error rate, fed by go/sentinelconnector's Scheduler via otel-collector. connector_cycle_count_total's outcome label already carries error rate (rate(outcome!=\"success\") / rate(total)), so no separate error-rate metric exists — this dashboard queries the same counter P1-01 introduced. Metric names verified live against the running collector (P1-11's own integration test), not assumed from the OTel spec.",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Top 20 most-lagging tenants",
+      "description": "AC5: topk(20, max by (tenant_id) (connector_ingest_lag_seconds)) — the dashboard panel this ticket's acceptance criteria literally names.",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "topk(20, max by (tenant_id, connector_id) (connector_ingest_lag_seconds))",
+          "legendFormat": "{{tenant_id}} / {{connector_id}}",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "EPS per connector",
+      "description": "AC2: rate(connector_events_published_total[5m]) by connector — events per second actually published, not just fetched.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (tenant_id, connector_id) (rate(connector_events_published_total[5m]))",
+          "legendFormat": "{{tenant_id}} / {{connector_id}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Batch size per cycle (p50 / p95)",
+      "description": "AC2: histogram_quantile over connector_batch_size — events fetched per cycle, before any downstream filtering.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(connector_batch_size_bucket[5m])) by (le, tenant_id, connector_id))",
+          "legendFormat": "p50 {{tenant_id}} / {{connector_id}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(connector_batch_size_bucket[5m])) by (le, tenant_id, connector_id))",
+          "legendFormat": "p95 {{tenant_id}} / {{connector_id}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Cycle error rate by outcome",
+      "description": "AC2's error rate: rate(connector_cycle_count_total{outcome!=\"success\"}[5m]) by outcome and connector — reuses P1-01's existing counter rather than adding a redundant one.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "cps" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (tenant_id, connector_id, outcome) (rate(connector_cycle_count_total{outcome!=\"success\"}[5m]))",
+          "legendFormat": "{{tenant_id}} / {{connector_id}} ({{outcome}})"
+        }
+      ]
+    }
+  ]
+}

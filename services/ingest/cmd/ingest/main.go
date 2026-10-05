@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
@@ -117,6 +118,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// P1-11: per-tenant/connector ingest lag, EPS (via rate() over
+	// eventsPublished) and batch size. Error rate reuses connector.cycle_count
+	// above (its outcome attribute already distinguishes success from every
+	// failure kind) rather than adding a redundant metric for it.
+	ingestLag, err := otel.Meter(serviceName).Int64Gauge("connector.ingest_lag_seconds",
+		metric.WithDescription("Seconds since this connector's last successful cycle, or since registration if it has never had one (P1-11 AC1)"))
+	if err != nil {
+		log.Error("creating connector.ingest_lag_seconds gauge", "err", err)
+		os.Exit(1)
+	}
+	eventsPublished, err := otel.Meter(serviceName).Int64Counter("connector.events_published",
+		metric.WithDescription("Events published per cycle — rate() over this is EPS per connector (P1-11 AC2)"))
+	if err != nil {
+		log.Error("creating connector.events_published counter", "err", err)
+		os.Exit(1)
+	}
+	batchSize, err := otel.Meter(serviceName).Int64Histogram("connector.batch_size",
+		metric.WithDescription("Events fetched per cycle, before any downstream filtering (P1-11 AC2)"))
+	if err != nil {
+		log.Error("creating connector.batch_size histogram", "err", err)
+		os.Exit(1)
+	}
+
 	kafkaClient, err := kgo.NewClient(kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")))
 	if err != nil {
 		log.Error("creating kafka client", "err", err)
@@ -140,14 +164,35 @@ func main() {
 		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRaw),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
-			Interval:   time.Minute,
-			Log:        log,
-			CycleCount: cycleCount,
-			Health:     sentinelconnector.NewPostgresHealthRecorder(pool),
+			Interval:        time.Minute,
+			Log:             log,
+			CycleCount:      cycleCount,
+			Health:          sentinelconnector.NewPostgresHealthRecorder(pool),
+			IngestLag:       ingestLag,
+			EventsPublished: eventsPublished,
+			BatchSize:       batchSize,
 		},
 	)
 	// TODO(P1-02/P1-03): scheduler.Register(...) each tenant's configured
 	// connector here, once a real Connector implementation (M365) exists.
+	//
+	// P1-11 T1 needs a REAL stalled connector running inside this REAL
+	// service to prove connector.ingest_lag_seconds genuinely rises through
+	// the live OTel pipeline (not a mock) — same reasoning as P0-10's
+	// synthetic-event/synthetic-error HTTP handlers above. It cannot be
+	// registered at runtime through an HTTP trigger the way those are:
+	// Scheduler.Register after Start has no effect (see its own doc
+	// comment), since Start only launches a loop for whatever was already
+	// registered. Gated by an env var so production boot is unaffected by
+	// default; the integration test sets it when spawning this binary.
+	if os.Getenv("INGEST_SYNTHETIC_STALLED_CONNECTOR") == "1" {
+		scheduler.Register(sentinelconnector.TenantConnector{
+			TenantID:       "00000000-0000-4000-8000-000000000000",
+			ConnectorRowID: "synthetic-stalled",
+			Stream:         "main",
+			Connector:      &syntheticStalledConnector{},
+		})
+	}
 	scheduler.Start(ctx)
 
 	<-ctx.Done()
@@ -191,3 +236,23 @@ func envOr(key, fallback string) string {
 	}
 	return fallback
 }
+
+// syntheticStalledConnector never completes a Fetch on its own — only when
+// ctx is cancelled (service shutdown) — so its registration never records a
+// success and connector.ingest_lag_seconds keeps rising for as long as this
+// process runs with INGEST_SYNTHETIC_STALLED_CONNECTOR=1 set. P1-11 T1's own
+// induced stall.
+type syntheticStalledConnector struct{}
+
+func (syntheticStalledConnector) ID() sentinelconnector.ConnectorID { return "synthetic-stalled" }
+
+func (syntheticStalledConnector) Fetch(ctx context.Context, _ sentinelconnector.Cursor) (sentinelconnector.Batch, sentinelconnector.Cursor, error) {
+	<-ctx.Done()
+	return sentinelconnector.Batch{}, nil, ctx.Err()
+}
+
+func (syntheticStalledConnector) Normalise(sentinelconnector.RawEvent) ([]ocsf.Event, error) {
+	return nil, nil
+}
+
+func (syntheticStalledConnector) HealthCheck(context.Context) error { return nil }

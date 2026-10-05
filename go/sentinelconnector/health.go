@@ -13,13 +13,18 @@ import (
 // HealthRecorder persists the outcome of a cycle onto the connectors table's
 // own status/last_error/last_sync_at columns (AC4: "per-connector health is
 // exposed... and surfaced through the API"). This is the mechanism and the
-// data layer; the actual HTTP endpoint that reads it for a dashboard is
-// P1-11's ticket ("Ingest observability — lag, EPS and connector health"),
-// which depends on P1-07 landing first — apps/api has no running server to
-// put such an endpoint on yet either (P0-09's own closing notes). P1-01
-// makes the data correct and queryable; it does not build the query surface.
+// data layer; P1-11 is what adds the HTTP endpoint that reads it back for a
+// dashboard, now that P1-07 has landed and apps/api has a real server to put
+// it on.
+//
+// status must be one of the connectors table's own check-constraint values
+// this package ever writes: "healthy" (success), "degraded" (a transient
+// failure — matches docs/architecture/overview.md's own framing, "Connector
+// API down ... connector health degraded in UI"), or "revoked" (the
+// connector's own Fetch/HealthCheck identified ErrConsentRevoked
+// specifically, not just any error).
 type HealthRecorder interface {
-	RecordOutcome(ctx context.Context, tenantID, connectorRowID string, success bool, errMsg string) error
+	RecordOutcome(ctx context.Context, tenantID, connectorRowID, status, errMsg string) error
 }
 
 // PostgresHealthRecorder writes through sentineldb.WithTenantContext, same
@@ -32,18 +37,24 @@ func NewPostgresHealthRecorder(pool *pgxpool.Pool) *PostgresHealthRecorder {
 	return &PostgresHealthRecorder{pool: pool}
 }
 
-func (r *PostgresHealthRecorder) RecordOutcome(ctx context.Context, tenantID, connectorRowID string, success bool, errMsg string) error {
-	status := "healthy"
+func (r *PostgresHealthRecorder) RecordOutcome(ctx context.Context, tenantID, connectorRowID, status, errMsg string) error {
 	var lastErr any
-	if !success {
-		status = "error"
+	if status != "healthy" {
 		lastErr = errMsg
 	}
+	// last_sync_at only advances on an actual success — P1-11's whole lag
+	// metric depends on this column meaning "the last time this connector
+	// genuinely completed a cycle," not "the last time we checked," which
+	// is what unconditionally bumping it to now() on every call (including
+	// failures) would have meant. A connector failing every cycle for an
+	// hour must show an hour of lag, not zero.
+	query := `UPDATE connectors SET status = $1, last_error = $2 WHERE id = $3`
+	args := []any{status, lastErr, connectorRowID}
+	if status == "healthy" {
+		query = `UPDATE connectors SET status = $1, last_error = $2, last_sync_at = now() WHERE id = $3`
+	}
 	_, err := sentineldb.WithTenantContext(ctx, r.pool, tenantID, func(ctx context.Context, tx pgx.Tx) (struct{}, error) {
-		_, execErr := tx.Exec(ctx,
-			`UPDATE connectors SET status = $1, last_error = $2, last_sync_at = now() WHERE id = $3`,
-			status, lastErr, connectorRowID,
-		)
+		_, execErr := tx.Exec(ctx, query, args...)
 		return struct{}{}, execErr
 	})
 	if err != nil {
@@ -61,24 +72,24 @@ type InMemoryHealthRecorder struct {
 }
 
 type healthRecord struct {
-	Success bool
-	ErrMsg  string
+	Status string
+	ErrMsg string
 }
 
 func NewInMemoryHealthRecorder() *InMemoryHealthRecorder {
 	return &InMemoryHealthRecorder{records: make(map[string]healthRecord)}
 }
 
-func (r *InMemoryHealthRecorder) RecordOutcome(_ context.Context, tenantID, connectorRowID string, success bool, errMsg string) error {
+func (r *InMemoryHealthRecorder) RecordOutcome(_ context.Context, tenantID, connectorRowID, status, errMsg string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.records[tenantID+"/"+connectorRowID] = healthRecord{Success: success, ErrMsg: errMsg}
+	r.records[tenantID+"/"+connectorRowID] = healthRecord{Status: status, ErrMsg: errMsg}
 	return nil
 }
 
-func (r *InMemoryHealthRecorder) Get(tenantID, connectorRowID string) (success bool, errMsg string, ok bool) {
+func (r *InMemoryHealthRecorder) Get(tenantID, connectorRowID string) (status, errMsg string, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rec, ok := r.records[tenantID+"/"+connectorRowID]
-	return rec.Success, rec.ErrMsg, ok
+	return rec.Status, rec.ErrMsg, ok
 }

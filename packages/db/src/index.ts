@@ -30,6 +30,12 @@ export {
 } from './tenant-context.js';
 export { CasesRepository, type CaseRow } from './repositories/cases-repository.js';
 export {
+  ConnectorsRepository,
+  type ConnectorHealth,
+  type ConnectorApiStatus,
+  type ConnectorDbStatus,
+} from './repositories/connectors-repository.js';
+export {
   AuditLogWriter,
   type ActorType,
   type AuditEntryInput,
