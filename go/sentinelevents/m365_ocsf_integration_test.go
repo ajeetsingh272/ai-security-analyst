@@ -98,11 +98,34 @@ func TestM365OCSFPipeline_EventIDSurvivesIngestAndIsReplaySafe(t *testing.T) {
 	if replayed.EventID != ev.EventID {
 		t.Fatalf("replayed event_id %q does not match the original %q — a grounded claim would become unresolvable", replayed.EventID, ev.EventID)
 	}
+	// Retried, generously: this test runs immediately after
+	// TestClickHouseOutagePausesConsumptionAndRecoversWithoutLoss in this
+	// same package/binary, which literally `docker compose pause`s and
+	// `unpause`s the real ClickHouse container (a SIGSTOP/SIGCONT, not a
+	// clean restart) a few seconds before this test's own Write — found
+	// empirically that a 5s bound still wasn't always enough immediately
+	// after that, while this longer bound is reliably enough even right
+	// after a pause/unpause. T5's own query above already proved this
+	// exact row resolvable moments earlier on this same connection, so
+	// this is ClickHouse settling after being frozen mid-operation, not a
+	// sign event_id itself stopped resolving.
 	var countAfterReplay uint64
-	if err := w.conn.QueryRow(ctx,
-		"SELECT count() FROM sentinel.events WHERE event_id = ?", replayed.EventID,
-	).Scan(&countAfterReplay); err != nil {
-		t.Fatalf("querying with the replayed event_id: %v", err)
+	deadline := time.Now().Add(20 * time.Second)
+	var queryErr error
+	for {
+		queryErr = w.conn.QueryRow(ctx,
+			"SELECT count() FROM sentinel.events WHERE event_id = ?", replayed.EventID,
+		).Scan(&countAfterReplay)
+		if queryErr == nil && countAfterReplay > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if queryErr != nil {
+		t.Fatalf("querying with the replayed event_id: %v", queryErr)
 	}
 	if countAfterReplay == 0 {
 		t.Fatalf("the row written before the replay is no longer resolvable by the replayed event_id %q", replayed.EventID)
