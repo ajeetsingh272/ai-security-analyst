@@ -124,6 +124,13 @@ jobs:
       - name: Tenant isolation suite
         run: pnpm test:integration -- --project=isolation
 
+      # P1-01: go/sentineldb's own RLS-through-Go proof (mirrors the
+      # TypeScript tenant-isolation suite above). Separate from go-test.sh's
+      # `go test ./...` via the `integration` build tag, since that step runs
+      # in ci-go.yml's job, which has no Postgres available at all.
+      - name: Go integration tests
+        run: pnpm go:test:integration
+
       - name: Stack logs on failure
         if: failure()
         run: docker compose -f infra/docker/docker-compose.dev.yml logs --tail=200

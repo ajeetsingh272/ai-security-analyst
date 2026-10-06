@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "raw-archive-to-cheaper-tier",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "raw/" },
+      "Transitions": [
+        { "Days": 90, "StorageClass": "GLACIER" }
+      ]
+    }
+  ]
+}

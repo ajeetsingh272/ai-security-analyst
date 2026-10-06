@@ -20,6 +20,7 @@
     "test:e2e": "playwright test",
     "go:build": "bash scripts/go-build.sh",
     "go:test": "bash scripts/go-test.sh",
+    "go:test:integration": "bash scripts/go-test-integration.sh",
     "dev:stack": "docker compose -f infra/docker/docker-compose.dev.yml up -d",
     "dev:stack:down": "docker compose -f infra/docker/docker-compose.dev.yml down -v",
     "stack:check": "bash scripts/check-stack.sh",
