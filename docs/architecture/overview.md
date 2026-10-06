@@ -171,6 +171,27 @@ Every rule, in either engine, carries a mandatory MITRE ATT&CK technique ID. CI 
 unmapped rule. This is not bureaucracy — the technique ID is what the customer-facing report
 cites, and it is what makes the output defensible to the customer's auditor.
 
+**Load testing (services/detect/internal/loadtest, P2-11).** A Go harness — not k6, following
+this repo's own established Go-based load/soak convention (go/soaktest, go/sentinelevents/loadtest)
+rather than a new JS toolchain — drives real `Worker` instances at a configurable EPS for a
+configurable duration, measuring real end-to-end latency (produce time -> `Signal.DetectedAt`,
+with no change needed to the hot path itself) and tracking goroutine/heap samples throughout
+(`go run ./services/detect/cmd/loadtest -eps=30000 -duration=1h`). A CI-feasible, reduced-scale
+profile runs automatically on every PR (its own `loadtest` build tag, run sequentially rather
+than alongside the rest of the integration suite — concurrent production at this volume was
+proven, directly, to make unrelated tests on the same shared Redpanda intermittently see
+duplicate/delayed signals), comparing P50 latency and achieved EPS against a committed baseline
+and failing the build on a >10% regression.
+
+Only the in-stream engine is measured — "p99 under 100ms" cannot describe the windowed engine
+by construction (its own schedule interval IS 30s-15min). On real infrastructure, sustained 30k
+EPS measured p99 around 115-120ms, above the ticket's own 100ms target; P50 (the gate's own
+metric) stayed in the tens of milliseconds. This is a genuine finding, not a gap this ticket
+silently closed — see the P2-11 PR/issue for the full numbers and the open question of whether
+ADR-0010's per-poll-batch commit discipline (traded latency for the crash-safety guarantee
+P2-04 established) is itself the tail's dominant cost, which would make this a deliberate,
+already-reviewed trade-off showing up for the first time in a real measurement, not a bug.
+
 **The critical bypass.** Rules with `level: critical` publish to `alerts.critical` *directly*
 (go/sentinelstream.CriticalAlerts), in parallel with the same signal entering `signals` for
 correlation — the same producer client, two independent publishes, neither one gated on the

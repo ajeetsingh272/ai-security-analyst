@@ -1,0 +1,5 @@
+{
+  "p50_ms": 65,
+  "eps": 1900,
+  "note": "CI-feasible reduced-scale profile (target 2000 EPS, 2 workers, 20s duration, match-every-n=20), measured against real Redpanda on a shared dev machine with the full infra stack (and unrelated other projects' containers) also running. Gates on p50, not p99 — four repeated real runs of this identical profile measured p99 at 109, 114, 124 and 143ms (too noisy on this host at this sample size to be a reliable regression signal) but p50 consistently at 54-59ms, so 65ms is the honest ceiling that range supports. This baseline protects against FUTURE regression relative to today's real, measured numbers — it does not itself assert the ticket's own absolute AC (p99 < 100ms). See docs/architecture/overview.md's P2-11 note and the PR description for the full-scale (30k EPS, sustained) finding: on this same real infrastructure, p99 measured ~115-120ms, above the 100ms target. CheckAbsoluteThresholds remains available for a dedicated-infrastructure acceptance run via cmd/loadtest, but is not run in the automated CI gate."
+}
