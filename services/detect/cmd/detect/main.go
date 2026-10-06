@@ -21,11 +21,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/windowed"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/worker"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel"
@@ -149,6 +151,57 @@ func main() {
 		}
 	}()
 
+	chConn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
+		Auth: clickhouse.Auth{
+			Database: envOr("CLICKHOUSE_DATABASE", "sentinel"),
+			Username: envOr("CLICKHOUSE_USER", "default"),
+			Password: envOr("CLICKHOUSE_PASSWORD", ""),
+		},
+	})
+	if err != nil {
+		log.Error("connecting to ClickHouse for windowed rules", "err", err)
+		os.Exit(1)
+	}
+	defer chConn.Close()
+
+	windowedSignalsEmitted, err := otel.Meter(serviceName).Int64Counter("detect.windowed_signals_emitted",
+		metric.WithDescription("Signals published by a windowed (ClickHouse-scheduled) rule"))
+	if err != nil {
+		log.Error("creating detect.windowed_signals_emitted counter", "err", err)
+		os.Exit(1)
+	}
+	windowedQueryErrors, err := otel.Meter(serviceName).Int64Counter("detect.windowed_query_errors",
+		metric.WithDescription("A windowed rule's query failed for a reason other than exceeding its budget"))
+	if err != nil {
+		log.Error("creating detect.windowed_query_errors counter", "err", err)
+		os.Exit(1)
+	}
+	windowedQueryKilled, err := otel.Meter(serviceName).Int64Counter("detect.windowed_query_killed",
+		metric.WithDescription("A windowed rule's query exceeded its time budget and was killed (AC4)"))
+	if err != nil {
+		log.Error("creating detect.windowed_query_killed counter", "err", err)
+		os.Exit(1)
+	}
+
+	windowedScheduler, err := windowed.New(rules, chConn, producerClient, windowed.Options{
+		Log: log,
+		Metrics: windowed.Metrics{
+			SignalsEmitted: windowedSignalsEmitted,
+			QueryErrors:    windowedQueryErrors,
+			QueryKilled:    windowedQueryKilled,
+		},
+	})
+	if err != nil {
+		log.Error("compiling windowed rules", "err", err)
+		os.Exit(1)
+	}
+	windowedDone := make(chan struct{})
+	go func() {
+		defer close(windowedDone)
+		windowedScheduler.Run(ctx)
+	}()
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", metrics.InstrumentHandler("/healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -187,6 +240,11 @@ func main() {
 	case <-workerDone:
 	case <-shutdown.Done():
 		log.Error("worker did not stop within the shutdown deadline")
+	}
+	select {
+	case <-windowedDone:
+	case <-shutdown.Done():
+		log.Error("windowed scheduler did not stop within the shutdown deadline")
 	}
 	log.Info("detect stopped")
 }

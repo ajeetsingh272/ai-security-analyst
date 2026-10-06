@@ -24,20 +24,26 @@ type EventRow struct {
 	// history." Was never populated before P1-04 because nothing published
 	// real content through this path yet (see writer.go's insertSQL and
 	// services/ingest/cmd/ingest/main.go's own P1-04 fix comment).
-	SchemaVersion  string            `json:"schema_version"`
-	ClassUID       uint32            `json:"class_uid"`
-	CategoryUID    uint16            `json:"category_uid"`
-	ActivityID     uint16            `json:"activity_id"`
-	TypeUID        uint32            `json:"type_uid"`
-	SeverityID     uint8             `json:"severity_id"`
-	ActorUserUID   string            `json:"actor_user_uid"`
-	ActorUserName  string            `json:"actor_user_name"`
-	ActorUserEmail string            `json:"actor_user_email"`
-	StatusID       uint8             `json:"status_id"`
-	Message        string            `json:"message"`
-	Unmapped       map[string]string `json:"unmapped,omitempty"`
-	RawRef         string            `json:"raw_ref"`
-	TraceID        string            `json:"trace_id"`
+	SchemaVersion  string `json:"schema_version"`
+	ClassUID       uint32 `json:"class_uid"`
+	CategoryUID    uint16 `json:"category_uid"`
+	ActivityID     uint16 `json:"activity_id"`
+	TypeUID        uint32 `json:"type_uid"`
+	SeverityID     uint8  `json:"severity_id"`
+	ActorUserUID   string `json:"actor_user_uid"`
+	ActorUserName  string `json:"actor_user_name"`
+	ActorUserEmail string `json:"actor_user_email"`
+	StatusID       uint8  `json:"status_id"`
+	// Metadata is P2-05's addition — db/clickhouse/0003_events_metadata_column.sql.
+	// Mirrors ocsf.Event.Metadata exactly, the storage-side half of the gap
+	// P2-04 closed on the wire side: a windowed rule querying history needs
+	// metadata.product/metadata.operation to actually be a column it can
+	// read, not just a field that passed through Kafka.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Message  string            `json:"message"`
+	Unmapped map[string]string `json:"unmapped,omitempty"`
+	RawRef   string            `json:"raw_ref"`
+	TraceID  string            `json:"trace_id"`
 }
 
 // BatchTrigger decides when an accumulating batch should flush — the AC4

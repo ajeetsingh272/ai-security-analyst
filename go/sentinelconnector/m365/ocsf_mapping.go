@@ -172,7 +172,14 @@ func MapEvent(tenantID, contentType string, raw []byte, fetchedAtUnix int64) ocs
 		// declares logsource.product unconditionally) — without it here, no
 		// M365 event would ever carry the one field the detection engine
 		// uses to find candidate rules at all.
-		Metadata: map[string]string{"source": "m365", "content_type": contentType, "product": "m365"},
+		//
+		// "operation" closes the gap fieldmap.go's own doc comment used to
+		// disclose (Operation -> metadata.operation, "P1-04's M365 mapping
+		// does not yet populate" it): every rule's base selection in this
+		// corpus filters on Operation, in-stream AND windowed alike, so
+		// leaving it unpopulated left the whole detection engine unable to
+		// match a single real M365 event, mapped or not.
+		Metadata: map[string]string{"source": "m365", "content_type": contentType, "product": "m365", "operation": rec.Operation},
 		RawData:  raw,
 	}
 

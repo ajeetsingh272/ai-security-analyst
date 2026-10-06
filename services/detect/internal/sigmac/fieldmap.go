@@ -19,17 +19,6 @@ package sigmac
 // any other code change — never an implicit fallback, which is exactly
 // what AC4/T4 exist to rule out ("field mapping failure... is an error,
 // not a silent no-match").
-//
-// Known gap, disclosed rather than silently worked around: several
-// entries below (Operation, Workload) describe where that data SHOULD
-// live per this table's own convention, but P1-04's M365 mapping
-// (ocsf_mapping.go) does not yet populate "metadata.operation" — it
-// consumes the raw Operation string into ClassUID/ActivityID and drops
-// it once successfully classified, rather than also preserving it under
-// Metadata. A rule referencing "Operation" parses and compiles cleanly
-// against this table; it will not usefully match anything until that
-// follow-up lands. Filed as friction for P1-04's own backlog, not fixed
-// here — this ticket is the parser, not the M365 mapping.
 var fieldMap = map[string]string{
 	"EventID":   "metadata.event_id",
 	"Operation": "metadata.operation",
@@ -59,4 +48,14 @@ var fieldMap = map[string]string{
 func mapField(sigmaField string) (ocsfPath string, ok bool) {
 	path, ok := fieldMap[sigmaField]
 	return path, ok
+}
+
+// MapField is mapField, exported for P2-05's windowed query compiler
+// (services/detect/internal/windowed) — a windowed rule's own Aggregation
+// still names group-by fields by their raw Sigma field name (condition.go's
+// parseAggregation never runs them through this table, only validates them
+// against it), so the query compiler needs this same translation itself
+// rather than inventing a second one.
+func MapField(sigmaField string) (ocsfPath string, ok bool) {
+	return mapField(sigmaField)
 }

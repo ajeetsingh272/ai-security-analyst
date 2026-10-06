@@ -176,8 +176,8 @@ func TestWorker_KnownMaliciousSequenceProducesExpectedSignals(t *testing.T) {
 	if sig.RuleID != "8f1a2b3c-0001-4a00-9000-000000000001" {
 		t.Errorf("RuleID = %q, want the new-inbox-forwarding-rule id", sig.RuleID)
 	}
-	if sig.EventID != eventID {
-		t.Errorf("EventID = %q, want %q", sig.EventID, eventID)
+	if len(sig.EventIDs) != 1 || sig.EventIDs[0] != eventID {
+		t.Errorf("EventIDs = %v, want [%q]", sig.EventIDs, eventID)
 	}
 	if sig.Severity != "medium" {
 		t.Errorf("Severity = %q, want medium", sig.Severity)
@@ -244,7 +244,7 @@ func TestWorker_CrashMidBatchReplaysWithoutLosingSignals(t *testing.T) {
 	if len(got) < 1 {
 		t.Fatalf("got %d signals for tenant %s after restart, want at least 1 (no loss)", len(got), tenantID)
 	}
-	if got[0].EventID != eventID {
-		t.Errorf("EventID = %q, want %q", got[0].EventID, eventID)
+	if len(got[0].EventIDs) != 1 || got[0].EventIDs[0] != eventID {
+		t.Errorf("EventIDs = %v, want [%q]", got[0].EventIDs, eventID)
 	}
 }
