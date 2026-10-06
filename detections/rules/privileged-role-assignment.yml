@@ -1,0 +1,22 @@
+title: Privileged directory role assignment
+id: 8f1a2b3c-0001-4a00-9000-000000000003
+status: stable
+description: >
+  Detects a user being added to a privileged Azure AD / Entra directory
+  role — expected during normal admin operations, but worth surfacing for
+  review given the blast radius of a mistaken or malicious grant.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add member to role.'
+  condition: selection
+falsepositives:
+  - Routine administrative role assignment
+level: medium

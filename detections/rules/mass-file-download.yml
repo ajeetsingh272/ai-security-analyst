@@ -1,0 +1,25 @@
+title: Mass file download or deletion within a short window
+id: 8f1a2b3c-0001-4a00-9000-000000000007
+status: stable
+description: >
+  Detects an unusually high volume of file downloads or deletions by a
+  single user in a short window — consistent with bulk exfiltration or
+  destructive activity following account compromise. Routed to the
+  windowed engine for the same reason as mass-mailbox-download.yml.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1530
+logsource:
+  category: application
+  product: m365
+  service: sharepoint
+detection:
+  selection1:
+    Operation: 'FileDownloaded'
+  selection2:
+    Operation: 'FileDeleted'
+  condition: (selection1 or selection2) | count() by UserId > 200 within 10m
+falsepositives:
+  - A legitimate bulk export or site migration
+level: high
