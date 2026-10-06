@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, connectorCursors } from "./schema";
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, tenantDeks, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -25,6 +25,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	mspLinks_clientTenantId: many(mspLinks, {
 		relationName: "mspLinks_clientTenantId_tenants_id"
 	}),
+	tenantDeks: many(tenantDeks),
 }));
 
 export const usersRelations = relations(users, ({many}) => ({
@@ -92,6 +93,13 @@ export const mspLinksRelations = relations(mspLinks, ({one}) => ({
 		fields: [mspLinks.clientTenantId],
 		references: [tenants.id],
 		relationName: "mspLinks_clientTenantId_tenants_id"
+	}),
+}));
+
+export const tenantDeksRelations = relations(tenantDeks, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tenantDeks.tenantId],
+		references: [tenants.id]
 	}),
 }));
 

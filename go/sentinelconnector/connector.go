@@ -15,9 +15,20 @@ package sentinelconnector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
 )
+
+// ErrConsentRevoked is the sentinel error a Connector's Fetch or HealthCheck
+// should wrap (via fmt.Errorf("...: %w", ErrConsentRevoked)) when a vendor
+// API signals that the tenant has revoked this connector's access (e.g.
+// M365 returning 401/invalid_grant after an admin removes consent) — the
+// scheduler (P1-11) maps this to the connectors table's 'revoked' status
+// distinctly from a merely transient failure, so the health endpoint can
+// tell "needs the tenant to re-authorise" apart from "vendor API is having
+// a bad day."
+var ErrConsentRevoked = errors.New("sentinelconnector: connector consent revoked")
 
 // ConnectorID identifies a connector implementation — "m365",
 // "google_workspace", etc. — matching the `kind` check constraint on the

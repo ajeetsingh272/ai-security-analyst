@@ -1,11 +1,16 @@
 go 1.23
 
 use (
-	./services/ingest
-	./services/detect
-	./services/correlate
-	./go/sentinelschema
-	./go/sentinelobs
-	./go/sentineldb
 	./go/sentinelconnector
+	./go/sentineldb
+	./go/sentinelevents
+	./go/sentinelobs
+	./go/sentinelreplay
+	./go/sentinelschema
+	./go/sentinelstream
+	./go/soaktest
+	./services/correlate
+	./services/detect
+	./services/eventwriter
+	./services/ingest
 )

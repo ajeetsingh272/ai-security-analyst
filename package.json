@@ -32,6 +32,7 @@
     "db:pull": "pnpm --filter @sentinel/db pull",
     "db:validate": "pnpm --filter @sentinel/db validate",
     "db:check": "bash scripts/check-migrations.sh",
+    "db:bench:clickhouse": "bash scripts/bench-clickhouse.sh",
     "detections:validate": "bash scripts/validate-detections.sh",
     "workflows:validate": "node scripts/validate-workflows.mjs",
     "ci:protect": "bash scripts/setup-branch-protection.sh",
