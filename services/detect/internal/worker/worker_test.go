@@ -177,7 +177,7 @@ func TestEvaluate_RecoversPanicAndContinues(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
 
-	signals, failures := evaluate(context.Background(), tree, wev, nil)
+	signals, failures := evaluate(context.Background(), tree, wev, nil, nil)
 
 	if len(failures) != 1 || failures[0].RuleID != "panic-rule" {
 		t.Fatalf("failures = %v, want exactly one failure for panic-rule", failures)
@@ -195,7 +195,7 @@ func TestEvaluate_SignalCarriesEventRuleAndTenant(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-42", EventID: "evt-99", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
 
-	signals, _ := evaluate(context.Background(), tree, wev, nil)
+	signals, _ := evaluate(context.Background(), tree, wev, nil, nil)
 
 	if len(signals) != 1 {
 		t.Fatalf("got %d signals, want 1", len(signals))
@@ -249,7 +249,7 @@ func TestEvaluate_SkipsWindowedEngineRules(t *testing.T) {
 	}
 
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
-	signals, failures := evaluate(context.Background(), tree, wev, nil)
+	signals, failures := evaluate(context.Background(), tree, wev, nil, nil)
 
 	if len(signals) != 0 || len(failures) != 0 {
 		t.Fatalf("signals=%v failures=%v, want both empty — windowed rule must be skipped by the in-stream worker", signals, failures)
@@ -260,9 +260,85 @@ func TestEvaluate_NoCandidateProducesNoSignalsOrFailures(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-2", ClassUID: 9999, Metadata: map[string]string{"product": "m365"}}
 
-	signals, failures := evaluate(context.Background(), tree, wev, nil)
+	signals, failures := evaluate(context.Background(), tree, wev, nil, nil)
 
 	if len(signals) != 0 || len(failures) != 0 {
 		t.Fatalf("signals=%v failures=%v, want both empty for a non-matching class_uid", signals, failures)
+	}
+}
+
+// P2-12/ADR-0004: fakeHotfixRules is a HotfixRules test double — no
+// Postgres, no real hotfix.Loader, just a fixed slice, the same
+// "interface at the consumer" pattern fakeEnricher above already uses.
+type fakeHotfixRules struct{ rules []*sigmac.Rule }
+
+func (f fakeHotfixRules) Active() []*sigmac.Rule { return f.rules }
+
+func TestEvaluate_HotfixRuleMatchEmitsSignal(t *testing.T) {
+	tree := buildTestTree(t) // no candidates will match; proves the hotfix path is independent of dispatch
+	hotfix := fakeHotfixRules{rules: []*sigmac.Rule{{
+		ID: "hotfix-1", Title: "Hotfix probe", Level: "high", MitreIDs: []string{"attack.t1078"},
+		OwnerDescription: "A probe hotfix rule.",
+		Selections: map[string]sigmac.Selection{
+			"selection": {Name: "selection", Fields: []sigmac.FieldMatch{
+				{SigmaField: "Operation", OCSFPath: "metadata.operation", Modifier: sigmac.ModEquals, Values: []string{"UrgentOp"}},
+			}},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+	}}}
+
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 9999, Metadata: map[string]string{"product": "m365", "operation": "UrgentOp"}}
+	signals, failures := evaluate(context.Background(), tree, wev, nil, hotfix)
+
+	if len(failures) != 0 {
+		t.Fatalf("failures = %v, want none", failures)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1: %+v", len(signals), signals)
+	}
+	if signals[0].RuleID != "hotfix-1" || signals[0].Engine != engineHotfix {
+		t.Errorf("signal = %+v, want RuleID=hotfix-1 Engine=%s", signals[0], engineHotfix)
+	}
+}
+
+func TestEvaluate_NilHotfixRulesEmitsNothingExtra(t *testing.T) {
+	tree := buildTestTree(t)
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 9999, Metadata: map[string]string{"product": "m365"}}
+
+	signals, failures := evaluate(context.Background(), tree, wev, nil, nil)
+
+	if len(signals) != 0 || len(failures) != 0 {
+		t.Fatalf("signals=%v failures=%v, want both empty with a nil HotfixRules", signals, failures)
+	}
+}
+
+// Compiled-corpus candidates and hotfix rules are independent sources
+// feeding the SAME signals slice — a hotfix match for one rule must not
+// crowd out or interfere with a genuine compiled match for a different
+// rule against the same event.
+func TestEvaluate_HotfixAndCompiledBothMatchSameEvent(t *testing.T) {
+	tree := buildTestTree(t) // has ok-rule, matches class_uid "3001"
+	hotfix := fakeHotfixRules{rules: []*sigmac.Rule{{
+		ID: "hotfix-1", Title: "Hotfix probe", Level: "high",
+		Selections: map[string]sigmac.Selection{
+			"selection": {Name: "selection", Fields: []sigmac.FieldMatch{
+				{SigmaField: "class_uid", OCSFPath: "class_uid", Modifier: sigmac.ModEquals, Values: []string{"3001"}},
+			}},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+	}}}
+
+	// buildTestTree's own candidates for class_uid 3001 are ok-rule
+	// (matches) and panic-rule (always panics, by construction) — the
+	// panic is expected here and unrelated to the hotfix path; this
+	// test only cares that the hotfix match ADDS a signal alongside it.
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
+	signals, failures := evaluate(context.Background(), tree, wev, nil, hotfix)
+
+	if len(failures) != 1 || failures[0].RuleID != "panic-rule" {
+		t.Fatalf("failures = %v, want exactly one, from panic-rule", failures)
+	}
+	if len(signals) != 2 {
+		t.Fatalf("got %d signals, want 2 (one compiled from ok-rule, one hotfix): %+v", len(signals), signals)
 	}
 }

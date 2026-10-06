@@ -16,6 +16,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/hotfix"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -589,5 +590,114 @@ func TestWorker_SuppressionDoesNotCrossTenants(t *testing.T) {
 	alertsB := collectCriticalAlerts(t, tenantB, 1, 15*time.Second)
 	if len(alertsB) != 1 {
 		t.Fatalf("got %d critical alerts for tenant B, want exactly 1 — tenant A's suppression must not leak", len(alertsB))
+	}
+}
+
+// ── P2-12/ADR-0004 ───────────────────────────────────────────────────────
+//
+// The end-to-end proof: a hotfix rule inserted directly into real
+// Postgres (the same way apps/api's own route would, minus the HTTP
+// layer) is picked up by a real hotfix.Loader backed by a real
+// hotfix.PostgresSource, and a real event matching it produces a real
+// Signal through the real worker — not a unit test of any one layer in
+// isolation.
+
+func insertWorkerHotfixRule(t *testing.T, pool *pgxpool.Pool, ruleID, createdBy string) string {
+	t.Helper()
+	ruleYAML := "id: " + ruleID + `
+title: Worker hotfix end-to-end probe
+owner_description: A probe rule for the worker package's own P2-12 integration test.
+tags:
+  - attack.t1078
+logsource:
+  product: m365
+detection:
+  selection:
+    Operation: 'EmergencyHotfixProbeOperation'
+  condition: selection
+level: high
+`
+	var id string
+	err := pool.QueryRow(context.Background(),
+		`INSERT INTO hotfix_rules (rule_id, rule_title, rule_yaml, reason, created_by)
+		 VALUES ($1, $1, $2, 'P2-12 worker integration test probe', $3)
+		 RETURNING id`,
+		ruleID, ruleYAML, createdBy,
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("inserting hotfix rule fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM hotfix_rules WHERE id = $1`, id)
+	})
+	return id
+}
+
+func TestWorker_HotfixRuleEvaluatesAgainstRealEvent(t *testing.T) {
+	pool := newSuppressionPool(t) // reuses P2-10's own real-Postgres pool helper; no suppression used here
+	tenantID, userID := createTenantAndUser(t, pool)
+	hotfixRuleID := "p2-12-worker-e2e-" + tenantID
+	insertWorkerHotfixRule(t, pool, hotfixRuleID, userID)
+
+	loader := hotfix.NewLoader(hotfix.NewPostgresSource(pool), nil)
+	loaderCtx, cancelLoader := context.WithCancel(context.Background())
+	defer cancelLoader()
+	go loader.Run(loaderCtx, 50*time.Millisecond)
+
+	// Wait for the loader's own background refresh to actually pick up
+	// the fixture before starting the worker — otherwise the first
+	// event could race a loader that hasn't loaded anything yet.
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) && len(loader.Active()) == 0 {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(loader.Active()) == 0 {
+		t.Fatalf("hotfix loader never loaded the fixture rule within the deadline")
+	}
+
+	group := "test-detect-p212-" + tenantID
+	consumer, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		t.Fatalf("creating consumer: %v", err)
+	}
+	defer consumer.Close()
+	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("creating producer: %v", err)
+	}
+	defer producer.Close()
+
+	w := New(buildRealTree(t), consumer, producer, Options{Group: group, HotfixRules: loader})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	go func() { _ = w.Run(ctx) }()
+
+	eventID := "evt-" + tenantID
+	produceWireEvent(t, wireEvent{
+		TenantID: tenantID,
+		EventID:  eventID,
+		ClassUID: 3005, ActivityID: 1, SeverityID: 1,
+		Metadata: map[string]string{"product": "m365", "operation": "EmergencyHotfixProbeOperation"},
+	})
+
+	got := collectSignals(t, tenantID, 1, 15*time.Second)
+	if len(got) != 1 {
+		t.Fatalf("got %d signals for tenant %s, want exactly 1: %+v", len(got), tenantID, got)
+	}
+	sig := got[0]
+	if sig.RuleID != hotfixRuleID {
+		t.Errorf("RuleID = %q, want %q", sig.RuleID, hotfixRuleID)
+	}
+	if sig.Engine != engineHotfix {
+		t.Errorf("Engine = %q, want %q", sig.Engine, engineHotfix)
+	}
+	if len(sig.EventIDs) != 1 || sig.EventIDs[0] != eventID {
+		t.Errorf("EventIDs = %v, want [%q]", sig.EventIDs, eventID)
 	}
 }

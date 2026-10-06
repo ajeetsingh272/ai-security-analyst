@@ -43,6 +43,7 @@ table without a tenant and without a reason is an isolation gap.
 
 | Table | Why it has no `tenant_id` |
 |---|---|
+| `hotfix_rules` | P2-12/ADR-0004's emergency hotfix rule path: the cap AC1 requires ("maximum 10 active hotfix rules") is a single global count across every tenant combined, not a per-tenant limit, so this table is deliberately not tenant-scoped — the same reasoning tenants/users themselves already use above. |
 | `msp_links` | Relates two tenants, so it holds msp_tenant_id and client_tenant_id instead of one tenant_id — this check only looks for the latter. RLS is still enforced (0003_msp_links_rls.sql): a row is visible to either the MSP tenant or the client tenant named in it, never to anyone else. |
 | `schema_migrations` | The migration runner ledger. Infrastructure, not application data, and deliberately untyped in @sentinel/db. |
 | `tenants` | The tenant registry itself. A tenant_id column would be its primary key twice. |
@@ -330,6 +331,47 @@ part of the control and not merely a description of it.
 - enabled: yes · forced: yes
 - policy `tenant_isolation` (permissive, ALL, to public)
   - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `hotfix_rules`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `rule_id` | `text` | no | — |
+| `rule_title` | `text` | no | — |
+| `rule_yaml` | `text` | no | — |
+| `reason` | `text` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `expires_at` | `timestamptz` | no | `now()` |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+
+**Primary key**
+
+- `hotfix_rules_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `hotfix_rules_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `hotfix_rules_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+
+**Checks**
+
+- `hotfix_rules_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_hotfix_rules_active` — `CREATE INDEX idx_hotfix_rules_active ON public.hotfix_rules USING btree (expires_at) WHERE (revoked_at IS NULL)`
+
+**Triggers**
+
+- `hotfix_rules_force_expiry_trigger` — `CREATE TRIGGER hotfix_rules_force_expiry_trigger BEFORE INSERT OR UPDATE ON public.hotfix_rules FOR EACH ROW EXECUTE FUNCTION hotfix_rules_force_expiry()`
 
 **Grants**
 

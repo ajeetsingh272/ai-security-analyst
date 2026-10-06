@@ -43,6 +43,13 @@ export {
   type RenewSuppressionInput,
 } from './repositories/suppressions-repository.js';
 export {
+  HotfixRulesRepository,
+  HotfixRuleEmptyReasonError,
+  HotfixRuleCapExceededError,
+  type HotfixRuleRow,
+  type CreateHotfixRuleInput,
+} from './repositories/hotfix-rules-repository.js';
+export {
   AuditLogWriter,
   type ActorType,
   type AuditEntryInput,

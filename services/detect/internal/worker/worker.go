@@ -20,6 +20,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -34,6 +35,13 @@ import (
 // "compiled output is the contract, not the IR" boundary P2-02 already
 // draws between sigmac and detectgen.
 const engineInStream = "in-stream"
+
+// engineHotfix marks a Signal as sourced from P2-12's own interpreted
+// hotfix-rule path rather than the compiled corpus — informational only
+// (sentinelsignal.Signal.Engine has no other reader that branches on
+// this string), so a dashboard or correlation consumer can tell the two
+// apart without needing a separate topic or field.
+const engineHotfix = "hotfix"
 
 // levelCritical is the one rule Level value that triggers the direct
 // alert bypass (P2-08, SECURITY.md guarantee #4: "Critical alerts
@@ -69,6 +77,16 @@ type wireEvent struct {
 // never required.
 type Enricher interface {
 	Lookup(ip string) sentinelenrich.Classification
+}
+
+// HotfixRules is the one method worker needs from
+// services/detect/internal/hotfix.Loader — narrowed to an interface at
+// this, the consumer, so a unit test can inject a trivial fake instead
+// of a real Loader with a real Postgres-backed source. A nil
+// HotfixRules (the default — see Options) simply means no hotfix rules
+// ever evaluate; it is never required.
+type HotfixRules interface {
+	Active() []*sigmac.Rule
 }
 
 // flatten turns a wire event into the flat map[string]string every
@@ -172,6 +190,12 @@ type Options struct {
 	// simply never suppresses anything, the same as every other optional
 	// capability here.
 	SuppressionChecker suppression.Checker
+	// HotfixRules, if set, is evaluated against every event alongside
+	// the compiled corpus (P2-12/ADR-0004's own emergency escape
+	// hatch). Optional and nil-safe like every other capability here;
+	// a deployment with no Postgres wiring for it simply never has any
+	// hotfix rules to evaluate.
+	HotfixRules HotfixRules
 }
 
 // Worker evaluates events.normalized against tree and publishes matches to
@@ -181,14 +205,15 @@ type Options struct {
 // client for publishing, separate from the grouped consumer" split
 // services/eventwriter's own DLQ client already uses.
 type Worker struct {
-	tree       *dispatch.Tree
-	consumer   *kgo.Client
-	producer   *kgo.Client
-	group      string
-	log        *slog.Logger
-	metrics    Metrics
-	enricher   Enricher
-	suppressor suppression.Checker
+	tree        *dispatch.Tree
+	consumer    *kgo.Client
+	producer    *kgo.Client
+	group       string
+	log         *slog.Logger
+	metrics     Metrics
+	enricher    Enricher
+	suppressor  suppression.Checker
+	hotfixRules HotfixRules
 }
 
 func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Worker {
@@ -197,14 +222,15 @@ func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Wor
 		log = slog.Default()
 	}
 	return &Worker{
-		tree:       tree,
-		consumer:   consumer,
-		producer:   producer,
-		group:      opts.Group,
-		log:        log,
-		metrics:    opts.Metrics,
-		enricher:   opts.Enricher,
-		suppressor: opts.SuppressionChecker,
+		tree:        tree,
+		consumer:    consumer,
+		producer:    producer,
+		group:       opts.Group,
+		log:         log,
+		metrics:     opts.Metrics,
+		enricher:    opts.Enricher,
+		suppressor:  opts.SuppressionChecker,
+		hotfixRules: opts.HotfixRules,
 	}
 }
 
@@ -257,7 +283,7 @@ func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
 		return
 	}
 
-	signals, failures := evaluate(ctx, w.tree, wev, w.enricher)
+	signals, failures := evaluate(ctx, w.tree, wev, w.enricher, w.hotfixRules)
 
 	for _, f := range failures {
 		w.log.Error("rule evaluation failed, routing to DLQ", "rule_id", f.RuleID, "event_id", wev.EventID, "err", f.Err)
@@ -331,7 +357,7 @@ type ruleFailure struct {
 // continues") can be proven directly against a tree and an event, with no
 // broker involved — handleRecord is the thin, integration-tested layer
 // that turns this function's output into wire effects.
-func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher Enricher) (signals []sentinelsignal.Signal, failures []ruleFailure) {
+func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher Enricher, hotfixRules HotfixRules) (signals []sentinelsignal.Signal, failures []ruleFailure) {
 	flat := flatten(wev, enricher)
 	for _, c := range tree.Candidates(ctx, flat) {
 		// This is the IN-STREAM worker (P2-04's own title) — a "windowed"
@@ -369,7 +395,56 @@ func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher 
 			DetectedAt:       time.Now().UTC(),
 		})
 	}
+
+	// P2-12/ADR-0004: the emergency hotfix path. Every active hotfix
+	// rule is checked against every event, the same as the compiled
+	// corpus — there are at most 10 of these at once (AC1), so no
+	// dispatch-tree-style narrowing is worth the complexity for this
+	// path specifically. Dispatch narrowing stays the compiled corpus's
+	// own optimization, not something this small, deliberately-
+	// constrained escape hatch needs to share.
+	if hotfixRules != nil {
+		for _, r := range hotfixRules.Active() {
+			matched, err := safeEvaluateHotfix(r, flat)
+			if err != nil {
+				failures = append(failures, ruleFailure{RuleID: r.ID, Err: err})
+				continue
+			}
+			if !matched {
+				continue
+			}
+			eventIDs := []string{wev.EventID}
+			signals = append(signals, sentinelsignal.Signal{
+				SignalID:         uuid.NewString(),
+				EventIDs:         eventIDs,
+				TenantID:         wev.TenantID,
+				RuleID:           r.ID,
+				RuleTitle:        r.Title,
+				MitreIDs:         r.MitreIDs,
+				Severity:         r.Level,
+				Engine:           engineHotfix,
+				OwnerDescription: r.OwnerDescription,
+				DedupeKey:        sentinelsignal.NewDedupeKey(wev.TenantID, r.ID, "", eventIDs),
+				DetectedAt:       time.Now().UTC(),
+			})
+		}
+	}
+
 	return signals, failures
+}
+
+// safeEvaluateHotfix mirrors safeMatch's own panic recovery (T4's own
+// doctrine, applied here too): a hotfix rule is operator-submitted YAML
+// that reached production without the normal PR review a compiled rule
+// gets, so a bug in one must not be able to take down evaluation for
+// every other candidate — compiled OR hotfix — against the same event.
+func safeEvaluateHotfix(r *sigmac.Rule, ev sigmac.Event) (matched bool, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("hotfix rule %s panicked: %v", r.ID, p)
+		}
+	}()
+	return sigmac.Evaluate(r, ev), nil
 }
 
 // safeMatch recovers a panicking predicate (T4) at the single-rule

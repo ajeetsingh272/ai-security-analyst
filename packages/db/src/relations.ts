@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectorCursors } from "./schema";
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -36,6 +36,12 @@ export const usersRelations = relations(users, ({many}) => ({
 	}),
 	suppressions_revokedBy: many(suppressions, {
 		relationName: "suppressions_revokedBy_users_id"
+	}),
+	hotfixRules_createdBy: many(hotfixRules, {
+		relationName: "hotfixRules_createdBy_users_id"
+	}),
+	hotfixRules_revokedBy: many(hotfixRules, {
+		relationName: "hotfixRules_revokedBy_users_id"
 	}),
 }));
 
@@ -124,6 +130,19 @@ export const tenantDeksRelations = relations(tenantDeks, ({one}) => ({
 	tenant: one(tenants, {
 		fields: [tenantDeks.tenantId],
 		references: [tenants.id]
+	}),
+}));
+
+export const hotfixRulesRelations = relations(hotfixRules, ({one}) => ({
+	user_createdBy: one(users, {
+		fields: [hotfixRules.createdBy],
+		references: [users.id],
+		relationName: "hotfixRules_createdBy_users_id"
+	}),
+	user_revokedBy: one(users, {
+		fields: [hotfixRules.revokedBy],
+		references: [users.id],
+		relationName: "hotfixRules_revokedBy_users_id"
 	}),
 }));
 
