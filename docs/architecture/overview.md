@@ -171,6 +171,10 @@ Every rule, in either engine, carries a mandatory MITRE ATT&CK technique ID. CI 
 unmapped rule. This is not bureaucracy — the technique ID is what the customer-facing report
 cites, and it is what makes the output defensible to the customer's auditor.
 
+See [`docs/detection-engineering-guide.md`](../detection-engineering-guide.md) for how to write,
+map, fixture and tune a rule — written for a new detection engineer, not this document's own
+architectural level of detail.
+
 **Emergency hotfix rules (services/detect/internal/hotfix, P2-12).** ADR-0004's own named
 escape hatch: a small interpreted rule path for urgent detections, capped at 10 active rules
 platform-wide and expiring automatically after 7 days with no option to extend in place (the

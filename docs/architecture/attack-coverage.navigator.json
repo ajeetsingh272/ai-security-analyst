@@ -2768,7 +2768,7 @@
     {
       "techniqueID": "T1685.002",
       "color": "#4caf50",
-      "comment": "Covered by: Mailbox audit bypass enabled for an account, Mailbox audit logging disabled"
+      "comment": "Covered by: Mailbox audit bypass enabled for an account, Mailbox audit logging disabled, Tenant-wide unified audit logging disabled"
     },
     {
       "techniqueID": "T1685.003",

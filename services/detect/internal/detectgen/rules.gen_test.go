@@ -346,6 +346,15 @@ func TestRule_sharepoint_site_permission_broadened(t *testing.T) {
 	}
 }
 
+func TestRule_tenant_audit_log_disabled(t *testing.T) {
+	if !ruleMatch_tenant_audit_log_disabled(map[string]string{"metadata.operation": "Set-AdminAuditLogConfig", "metadata.product": "m365", "unmapped.UnifiedAuditLogIngestionEnabled": "False"}) {
+		t.Fatalf("positive fixture for rule tenant-audit-log-disabled (Tenant-wide unified audit logging disabled) did not match")
+	}
+	if ruleMatch_tenant_audit_log_disabled(map[string]string{"metadata.operation": "Set-AdminAuditLogConfig", "metadata.product": "m365", "unmapped.UnifiedAuditLogIngestionEnabled": "True"}) {
+		t.Fatalf("negative fixture for rule tenant-audit-log-disabled (Tenant-wide unified audit logging disabled) matched, but should not have")
+	}
+}
+
 func TestRule_transport_rule_forwards_externally(t *testing.T) {
 	if !ruleMatch_transport_rule_forwards_externally(map[string]string{"metadata.operation": "New-TransportRule", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule transport-rule-forwards-externally (Mail flow rule created to forward mail externally) did not match")

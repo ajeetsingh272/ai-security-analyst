@@ -51,6 +51,10 @@ var fieldMap = map[string]string{
 	"EnableSafeAttachments":   "unmapped.EnableSafeAttachments",
 	"RemotePowerShellEnabled": "unmapped.RemotePowerShellEnabled",
 
+	// P2-13 addition — docs/detection-engineering-guide.md's own worked
+	// example (adding tenant-audit-log-disabled.yml).
+	"UnifiedAuditLogIngestionEnabled": "unmapped.UnifiedAuditLogIngestionEnabled",
+
 	// P2-09 additions — not a raw M365 field at all, but the local
 	// threat-intel enrichment (go/sentinelenrich) attaches at dispatch
 	// time, keyed by the event's own ClientIP. Landing in the
