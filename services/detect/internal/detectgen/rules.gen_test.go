@@ -5,73 +5,73 @@ package detectgen
 import "testing"
 
 func TestRule_anonymous_proxy_signin(t *testing.T) {
-	if !ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "unmapped.ResultStatus": "Success"}) {
+	if !ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("positive fixture for rule anonymous-proxy-signin (Sign-in through a known anonymiser or proxy) did not match")
 	}
-	if ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "unmapped.ResultStatus": "Failed"}) {
+	if ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Failed"}) {
 		t.Fatalf("negative fixture for rule anonymous-proxy-signin (Sign-in through a known anonymiser or proxy) matched, but should not have")
 	}
 }
 
 func TestRule_impossible_travel(t *testing.T) {
-	if !ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "unmapped.ResultStatus": "Success"}) {
+	if !ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("positive fixture for rule impossible-travel (Impossible travel between sign-ins) did not match")
 	}
-	if ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "unmapped.ResultStatus": "Failed"}) {
+	if ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Failed"}) {
 		t.Fatalf("negative fixture for rule impossible-travel (Impossible travel between sign-ins) matched, but should not have")
 	}
 }
 
 func TestRule_mass_file_download(t *testing.T) {
-	if !ruleMatch_mass_file_download(map[string]string{"metadata.operation": "FileDownloaded"}) {
+	if !ruleMatch_mass_file_download(map[string]string{"metadata.operation": "FileDownloaded", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule mass-file-download (Mass file download or deletion within a short window) did not match")
 	}
-	if ruleMatch_mass_file_download(map[string]string{"metadata.operation": "UserLoggedIn"}) {
+	if ruleMatch_mass_file_download(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule mass-file-download (Mass file download or deletion within a short window) matched, but should not have")
 	}
 }
 
 func TestRule_mass_mailbox_download(t *testing.T) {
-	if !ruleMatch_mass_mailbox_download(map[string]string{"metadata.operation": "MailItemsAccessed"}) {
+	if !ruleMatch_mass_mailbox_download(map[string]string{"metadata.operation": "MailItemsAccessed", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule mass-mailbox-download (Mass mailbox item access within a short window) did not match")
 	}
-	if ruleMatch_mass_mailbox_download(map[string]string{"metadata.operation": "Send"}) {
+	if ruleMatch_mass_mailbox_download(map[string]string{"metadata.operation": "Send", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule mass-mailbox-download (Mass mailbox item access within a short window) matched, but should not have")
 	}
 }
 
 func TestRule_mfa_method_registration(t *testing.T) {
-	if !ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "Register security info (MFA)"}) {
+	if !ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "Register security info (MFA)", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule mfa-method-registration (MFA method registration outside business hours) did not match")
 	}
-	if ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "UserLoggedIn"}) {
+	if ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule mfa-method-registration (MFA method registration outside business hours) matched, but should not have")
 	}
 }
 
 func TestRule_new_inbox_forwarding_rule(t *testing.T) {
-	if !ruleMatch_new_inbox_forwarding_rule(map[string]string{"metadata.operation": "New-InboxRule"}) {
+	if !ruleMatch_new_inbox_forwarding_rule(map[string]string{"metadata.operation": "New-InboxRule", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule new-inbox-forwarding-rule (New inbox forwarding rule to an external address) did not match")
 	}
-	if ruleMatch_new_inbox_forwarding_rule(map[string]string{"metadata.operation": "Send"}) {
+	if ruleMatch_new_inbox_forwarding_rule(map[string]string{"metadata.operation": "Send", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule new-inbox-forwarding-rule (New inbox forwarding rule to an external address) matched, but should not have")
 	}
 }
 
 func TestRule_oauth_consent_unverified_app(t *testing.T) {
-	if !ruleMatch_oauth_consent_unverified_app(map[string]string{"metadata.operation": "Consent to application."}) {
+	if !ruleMatch_oauth_consent_unverified_app(map[string]string{"metadata.operation": "Consent to application.", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule oauth-consent-unverified-app (OAuth consent grant to an unverified application) did not match")
 	}
-	if ruleMatch_oauth_consent_unverified_app(map[string]string{"metadata.operation": "UserLoggedIn"}) {
+	if ruleMatch_oauth_consent_unverified_app(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule oauth-consent-unverified-app (OAuth consent grant to an unverified application) matched, but should not have")
 	}
 }
 
 func TestRule_privileged_role_assignment(t *testing.T) {
-	if !ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "Add member to role."}) {
+	if !ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "Add member to role.", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule privileged-role-assignment (Privileged directory role assignment) did not match")
 	}
-	if ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "UserLoggedIn"}) {
+	if ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule privileged-role-assignment (Privileged directory role assignment) matched, but should not have")
 	}
 }
