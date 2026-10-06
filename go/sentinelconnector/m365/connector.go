@@ -1,16 +1,10 @@
-// Package m365 is P1-03: the M365 Management Activity API collector —
+// Package m365 is P1-03 (the M365 Management Activity API collector —
 // subscribe, enumerate content blobs, fetch and parse them, checkpoint by
-// blob id. It implements sentinelconnector.Connector (P1-01's framework)
-// and plugs into the scheduler exactly the way that package's own doc
-// comment describes, at the TODO(P1-02/P1-03) spot in
+// blob id) plus P1-04 (OCSF normalisation — see ocsf_mapping.go). It
+// implements sentinelconnector.Connector (P1-01's framework) and plugs
+// into the scheduler exactly the way that package's own doc comment
+// describes, at the TODO(P1-02/P1-03) spot in
 // services/ingest/cmd/ingest/main.go.
-//
-// Normalise below is deliberately minimal: mapping M365's actual audit
-// event shapes onto specific OCSF classes (Authentication, File Activity,
-// etc.) is P1-04's ticket, not this one, and P1-04 is sequenced to land
-// AFTER this ticket. Every event this package produces uses OCSF's
-// class_uid 0 ("uncategorized") — an honest "not yet classified" rather
-// than a guess at a specific class this ticket has no basis for making.
 package m365
 
 import (
@@ -265,39 +259,14 @@ func filterAndSortNewItems(items []contentItem, state cursorState) []contentItem
 	return out
 }
 
-// Normalise wraps a raw M365 audit record in OCSF's base envelope without
-// classifying it — see this file's own package doc comment for why. The
-// vendor's own CreationTime is parsed for TimeUnixMillis (never FetchedAt —
-// go/sentinelconnector/connector.go's own Connector doc comment is explicit
-// that a connector must preserve the vendor's own timestamp); a record
-// without a parseable CreationTime still produces an event, just with
-// TimeUnixMillis falling back to FetchedAt, since AC/T coverage for this
-// ticket is about blob-level parsing, not per-field validation (P1-04's
-// job).
+// Normalise is P1-04's deliverable, wired here as the one line that
+// connects this connector to that pure function — see ocsf_mapping.go's
+// MapEvent for the actual mapping logic, AC1's "no I/O, no clock, no
+// network" is enforced by this method having nothing to pass it besides
+// raw.Payload/raw.TenantID/raw.FetchedAt and c.contentType (a plain
+// string, not a client).
 func (c *Connector) Normalise(raw sentinelconnector.RawEvent) ([]ocsf.Event, error) {
-	var fields struct {
-		CreationTime string `json:"CreationTime"`
-	}
-	_ = json.Unmarshal(raw.Payload, &fields) // best-effort; malformed per-record JSON still produces an event below, RawData preserves the truth either way
-
-	timestampMillis := raw.FetchedAt * 1000
-	if fields.CreationTime != "" {
-		if t, err := time.Parse(time.RFC3339, fields.CreationTime); err == nil {
-			timestampMillis = t.UnixMilli()
-		}
-	}
-
-	return []ocsf.Event{{
-		ClassUID:       0,
-		CategoryUID:    0,
-		ActivityID:     0,
-		TypeUID:        0,
-		SeverityID:     0,
-		TimeUnixMillis: timestampMillis,
-		TenantID:       raw.TenantID,
-		Metadata:       map[string]string{"source": "m365", "content_type": c.contentType},
-		RawData:        raw.Payload,
-	}}, nil
+	return []ocsf.Event{MapEvent(raw.TenantID, c.contentType, raw.Payload, raw.FetchedAt)}, nil
 }
 
 // HealthCheck proves the connector can still authenticate — the same

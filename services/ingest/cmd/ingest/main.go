@@ -158,13 +158,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// With zero connectors registered below (P1-02/03 land the first real
-	// one, M365), this publisher is not yet exercised by production
-	// traffic — but it is the REAL producer (P1-05), not a placeholder:
-	// the scheduler is wired exactly as it will run once a connector exists
-	// to publish through it.
+	// P1-04 fix: the scheduler's Publisher.Publish (publisher.go) is handed
+	// already-NORMALISED events (Connector.Normalise's output, marshalled
+	// by the scheduler itself) — never raw, pre-normalisation bytes. This
+	// was wired to EventsRaw ("events.raw") from P1-01 through P1-03, which
+	// went unnoticed because nothing published any real content through it
+	// until this ticket (P1-04) gave M365's connector a real mapping to
+	// produce. services/eventwriter/cmd/eventwriter/main.go has always
+	// consumed "events.normalized" — go/sentinelevents/batch.go's own doc
+	// comment says as much ("Nothing publishes to that topic yet — P1-04...
+	// is what will"). Without this fix, T5 (event_id survives ingest to
+	// ClickHouse) would be unprovable for real, because nothing the
+	// scheduler ever produces would reach the ClickHouse writer at all.
 	scheduler := sentinelconnector.NewScheduler(
-		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRaw),
+		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsNormalized),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
 			Interval:        time.Minute,
