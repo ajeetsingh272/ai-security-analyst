@@ -50,6 +50,18 @@ services:
     volumes:
       - chdata:/var/lib/clickhouse
       - ../../db/clickhouse/init:/docker-entrypoint-initdb.d:ro
+      # P1-06: a real S3-backed cold storage tier in dev, pointed at the
+      # `s3` service below rather than deferred to production Terraform —
+      # see clickhouse-storage.xml's own header for why.
+      - ./clickhouse-storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+    # The hot/cold storage policy references the s3 disk at startup even
+    # before any query touches the cold tier, so s3 needs to exist first —
+    # not healthy-gated as tightly as s3-init's own consumers, since
+    # ClickHouse doesn't need the sentinel-cold bucket to already exist to
+    # boot, only to eventually write into it.
+    depends_on:
+      s3:
+        condition: service_healthy
     healthcheck:
       test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8123/ping']
       interval: 5s
