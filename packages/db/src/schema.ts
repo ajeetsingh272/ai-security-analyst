@@ -219,6 +219,20 @@ export const users = pgTable("users", {
 	passwordHash: text("password_hash"),
 });
 
+export const tenantDeks = pgTable("tenant_deks", {
+	tenantId: uuid("tenant_id").primaryKey().notNull(),
+	wrappedDek: bytea("wrapped_dek").notNull(),
+	kmsKeyId: text("kms_key_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tenant_deks_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
 export const connectorCursors = pgTable("connector_cursors", {
 	connectorId: uuid("connector_id").notNull(),
 	stream: text().notNull(),

@@ -59,7 +59,7 @@ func TestRawArchiveReceivesEveryFetchedEventBeforeNormalise(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{RawArchive: rawArchive})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "success" {
 		t.Fatalf("expected outcome=success, got %q", outcome)
 	}
@@ -93,7 +93,7 @@ func TestRawArchiveFailureFailsTheWholeCycle(t *testing.T) {
 	s := NewScheduler(pub, cursors, SchedulerOptions{RawArchive: rawArchive})
 	tc := TenantConnector{TenantID: probeTenant, ConnectorRowID: "conn-1", Stream: "main", Connector: conn}
 
-	outcome := s.runCycle(context.Background(), tc)
+	outcome, _ := s.runCycle(context.Background(), tc)
 	if outcome != "raw_archive_error" {
 		t.Fatalf("expected outcome=raw_archive_error, got %q", outcome)
 	}

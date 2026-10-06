@@ -3,12 +3,12 @@ go 1.23
 use (
 	./go/sentinelconnector
 	./go/sentineldb
+	./go/sentinelevents
 	./go/sentinelobs
+	./go/sentinelreplay
 	./go/sentinelschema
 	./go/sentinelstream
-	./go/sentinelevents
 	./go/soaktest
-	./go/sentinelreplay
 	./services/correlate
 	./services/detect
 	./services/eventwriter
