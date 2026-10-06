@@ -33,6 +33,7 @@ none of them has to be taken on trust:
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -421,6 +422,34 @@ part of the control and not merely a description of it.
 **Primary key**
 
 - `schema_migrations_pkey` — `PRIMARY KEY (filename)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `tenant_deks`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `wrapped_dek` | `bytea` | no | — |
+| `kms_key_id` | `text` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tenant_deks_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_deks_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
 
 **Grants**
 
