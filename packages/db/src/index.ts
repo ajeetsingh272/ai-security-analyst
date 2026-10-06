@@ -41,6 +41,12 @@ export {
   type AuditEntryInput,
   type WrittenAuditEntry,
 } from './audit/audit-log-writer.js';
+export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
+export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
+export {
+  TenantCredentialVault,
+  type EncryptedCredentials,
+} from './crypto/tenant-credential-vault.js';
 export {
   GENESIS_HASH,
   auditEntryContent,
