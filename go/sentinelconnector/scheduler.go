@@ -64,6 +64,13 @@ type Scheduler struct {
 	// surfaced to tenant and ops" metric half; the tenant-facing half is
 	// P1-11's dashboard, same deferral as cycleCount's own comment.
 	quotaBreaches metric.Int64Counter
+	// rawArchive, if non-nil, archives every fetched RawEvent before
+	// anything else happens to it (P1-08). Optional and nil-safe like
+	// everything above — unlike RateLimiter/Archive, there is no paired
+	// requirement: a Scheduler can have a RawArchiveWriter with no
+	// RateLimiter at all (most registrations will, until a connector
+	// actually needs per-tenant throttling).
+	rawArchive RawArchiveWriter
 
 	mu           sync.Mutex
 	registered   []TenantConnector
@@ -79,6 +86,7 @@ type SchedulerOptions struct {
 	RateLimiter   RateLimiter         // optional — P1-10 AC1/AC2; nil disables limiting entirely
 	Archive       ArchiveWriter       // optional, but required alongside RateLimiter — see Scheduler's own doc comment
 	QuotaBreaches metric.Int64Counter // optional
+	RawArchive    RawArchiveWriter    // optional — P1-08 AC1; nil disables raw archiving entirely
 }
 
 func NewScheduler(publisher Publisher, cursors CursorStorer, opts SchedulerOptions) *Scheduler {
@@ -106,6 +114,7 @@ func NewScheduler(publisher Publisher, cursors CursorStorer, opts SchedulerOptio
 		rateLimiter:   opts.RateLimiter,
 		archive:       opts.Archive,
 		quotaBreaches: opts.QuotaBreaches,
+		rawArchive:    opts.RawArchive,
 	}
 }
 
@@ -240,6 +249,24 @@ func (s *Scheduler) runCycle(ctx context.Context, tc TenantConnector) string {
 		// here, before any cursor write, is the entire guarantee.
 		s.log.Error("fetch failed", "tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "err", err)
 		return "fetch_error"
+	}
+
+	// P1-08 AC1/AC5: every fetched event is archived BEFORE anything else
+	// happens to it — before rate limiting, before normalisation — and a
+	// failure here fails the whole cycle. Deliberately archives the
+	// complete, unfiltered batch.Events, not just whatever the rate
+	// limiter below ends up granting: this archive's whole purpose is
+	// recovering from a LATER bug (a bad OCSF mapping, an over-aggressive
+	// rate limit), so it must hold what was actually fetched, independent
+	// of what any later stage in this cycle decides to do with it. The
+	// cursor does not advance on failure here, same as a fetch error —
+	// next cycle re-fetches (ADR-0010's Fetch-is-idempotent contract) and
+	// gets another chance to archive it.
+	if s.rawArchive != nil && len(batch.Events) > 0 {
+		if err := s.rawArchive.ArchiveRaw(ctx, tc.TenantID, tc.ConnectorRowID, time.Now().UTC(), batch.Events); err != nil {
+			s.log.Error("archiving raw batch failed", "tenant_id", tc.TenantID, "connector_id", tc.ConnectorRowID, "err", err)
+			return "raw_archive_error"
+		}
 	}
 
 	// P1-10 AC1/AC2/AC3: rate-limit this tenant's batch before any of it is

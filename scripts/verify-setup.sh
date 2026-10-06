@@ -226,6 +226,29 @@ else
   bad "expected buckets not found (s3-init logs showed: '$buckets')"
 fi
 
+# P1-08 AC3: a lifecycle policy for sentinel-archive's retention tier is
+# (re-)applied here, idempotently, exactly as s3-init does on every boot.
+# This can only confirm the apply CALL itself succeeds (valid JSON, a real
+# S3 API call that the container accepts) — it does NOT, and cannot,
+# confirm SeaweedFS actually stores or executes the policy. Confirmed
+# empirically, separately from this script: a
+# get-bucket-lifecycle-configuration call immediately after a successful
+# put still reports NoSuchLifecycleConfiguration against this dev stack's
+# SeaweedFS — a backend limitation, not a bug in the policy or the apply
+# step, and not something this script can make true by asserting it. The
+# policy itself is real and correct, and will apply as intended against
+# actual AWS S3.
+if MSYS_NO_PATHCONV=1 docker run --rm --network sentinel-dev_default \
+  -e AWS_ACCESS_KEY_ID=sentineldev -e AWS_SECRET_ACCESS_KEY=sentineldev -e AWS_DEFAULT_REGION=ap-south-1 \
+  -v "$(pwd)/infra/docker/s3-lifecycle-archive.json:/etc/s3/lifecycle-archive.json:ro" \
+  amazon/aws-cli:2.22.0 --endpoint-url http://s3:8333 \
+  s3api put-bucket-lifecycle-configuration --bucket sentinel-archive --lifecycle-configuration file:///etc/s3/lifecycle-archive.json \
+  > /dev/null 2>&1; then
+  ok "sentinel-archive lifecycle policy applies cleanly (SeaweedFS cannot report it back — see script comment)"
+else
+  bad "applying sentinel-archive's lifecycle policy failed"
+fi
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────
 pg "DELETE FROM cases WHERE title LIKE 'verify-%';
     DELETE FROM tenants WHERE name LIKE 'verify-%';" > /dev/null

@@ -162,6 +162,12 @@ func main() {
 		UsePathStyle: true,
 	})
 	archiveWriter := sentinelconnector.NewS3ArchiveWriter(s3Client, envOr("S3_ARCHIVE_BUCKET", "sentinel-archive"))
+	// P1-08: every fetched event, archived before normalisation ever runs
+	// — same S3 client and bucket as the overflow archive above, a
+	// different key prefix (raw/ vs overflow/) and different failure
+	// semantics (a raw-archive failure fails the whole cycle; see
+	// RawArchiveWriter's own doc comment for why the two are not one type).
+	rawArchiveWriter := sentinelconnector.NewS3RawArchiveWriter(s3Client, envOr("S3_ARCHIVE_BUCKET", "sentinel-archive"))
 
 	// With zero connectors registered below (P1-02/03 land the first real
 	// one, M365), none of this is yet exercised by production traffic —
@@ -180,6 +186,7 @@ func main() {
 			RateLimiter:   rateLimiter,
 			Archive:       archiveWriter,
 			QuotaBreaches: quotaBreaches,
+			RawArchive:    rawArchiveWriter,
 		},
 	)
 	// TODO(P1-02/P1-03): scheduler.Register(...) each tenant's configured
