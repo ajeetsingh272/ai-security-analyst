@@ -24,6 +24,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/syslog"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
@@ -196,6 +197,20 @@ func main() {
 		log.Error("registering m365 connectors", "err", err)
 	}
 
+	// P1-13: the dry run's own registration — proving a second connector
+	// (go/sentinelconnector/syslog) needs nothing from THIS file beyond
+	// exactly this shape: a listener to start, and one scheduler.Register
+	// call. No change to sentinelconnector, sentinelstream, sentineldb,
+	// detect or correlate was needed to add it — see
+	// docs/architecture/connector-developer-guide.md. Gated by an env var,
+	// same pattern as M365 (unset client id) and the synthetic stalled
+	// connector below: production boot is unaffected by default.
+	if addr := os.Getenv("SYSLOG_LISTEN_ADDR"); addr != "" {
+		if err := registerSyslogConnector(ctx, addr, pool, scheduler, log); err != nil {
+			log.Error("registering syslog connector", "err", err)
+		}
+	}
+
 	// P1-11 T1 needs a REAL stalled connector running inside this REAL
 	// service to prove connector.ingest_lag_seconds genuinely rises through
 	// the live OTel pipeline (not a mock) — same reasoning as P0-10's
@@ -255,6 +270,49 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// registerSyslogConnector starts one shared TCP listener and registers it
+// against every tenant with an active syslog connectors row — the exact
+// same cross-tenant discovery shape registerM365Connectors already uses,
+// deliberately: P1-13's whole point is that a second connector looks like
+// this from the framework's point of view, not like something bespoke.
+func registerSyslogConnector(ctx context.Context, addr string, pool *pgxpool.Pool, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	listener, err := syslog.NewListener(addr, log)
+	if err != nil {
+		return fmt.Errorf("binding syslog listener on %s: %w", addr, err)
+	}
+	go listener.Serve(ctx)
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'syslog' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing syslog connectors: %w", err)
+	}
+	defer rows.Close()
+
+	registered := 0
+	for rows.Next() {
+		var connectorRowID, tenantID string
+		if err := rows.Scan(&connectorRowID, &tenantID); err != nil {
+			return fmt.Errorf("scanning syslog connector row: %w", err)
+		}
+		scheduler.Register(sentinelconnector.TenantConnector{
+			TenantID:       tenantID,
+			ConnectorRowID: connectorRowID,
+			Stream:         "main",
+			Connector:      syslog.NewConnector(tenantID, listener),
+		})
+		registered++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating syslog connector rows: %w", err)
+	}
+	log.Info("registered syslog connectors", "registrations", registered, "listen_addr", listener.Addr())
+	return nil
 }
 
 // registerM365Connectors discovers every tenant with an active ('healthy',
