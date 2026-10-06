@@ -1,0 +1,28 @@
+title: New application registration created
+id: 8f1a2b3c-0001-4a00-9000-000000000036
+status: experimental
+description: >
+  Detects a new application registration — a routine step for connecting
+  a legitimate business tool, but also the first step in
+  service-principal-credential-added.yml's own attack chain: register an
+  app, then add a credential, then request broad permissions.
+owner_description: >
+  A new app was registered with the company's Microsoft 365 account.
+  This is a normal step for connecting new business tools, but it is
+  also the first step someone would take before giving an app broad
+  access to company data.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.001
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add application.'
+  condition: selection
+falsepositives:
+  - A developer registering a new internal tool during normal development
+level: low

@@ -1,0 +1,27 @@
+title: SharePoint site permission level changed
+id: 8f1a2b3c-0001-4a00-9000-000000000029
+status: experimental
+description: >
+  Detects a permission-level modification on a site — routine site
+  administration most of the time, but also how an attacker with
+  sufficient access would widen an otherwise-restricted site's own
+  access boundary.
+owner_description: >
+  The access rules for a company site or folder were changed. This is
+  routine site administration most of the time, but is also how someone
+  could open up an area that was supposed to stay restricted.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098
+logsource:
+  category: application
+  product: m365
+  service: sharepoint
+detection:
+  selection:
+    Operation: 'PermissionLevelModified'
+  condition: selection
+falsepositives:
+  - A site owner reorganising their own team's permission levels
+level: low

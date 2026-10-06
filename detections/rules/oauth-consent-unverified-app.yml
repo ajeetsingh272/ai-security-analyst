@@ -5,6 +5,11 @@ description: >
   Detects a tenant user granting OAuth consent to an application that has
   not completed Microsoft's publisher verification — a common illicit
   consent grant pattern used to persist access without a password.
+owner_description: >
+  Someone gave an outside app permission to access this Microsoft 365
+  account, and Microsoft has not reviewed or approved that app. This is
+  a common trick attackers use to keep access to an account without
+  needing the password again.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

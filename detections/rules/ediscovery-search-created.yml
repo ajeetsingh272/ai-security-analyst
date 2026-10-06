@@ -1,0 +1,28 @@
+title: eDiscovery content search created
+id: 8f1a2b3c-0001-4a00-9000-000000000021
+status: experimental
+description: >
+  Detects creation of a new compliance search — a tool that can query
+  across every mailbox and site in the tenant at once, making it a
+  high-value target for an attacker who has obtained compliance-admin
+  rights and wants to locate sensitive content quickly.
+owner_description: >
+  A company-wide search was created that can look through many people's
+  mailboxes and files at once. This tool is normally used by legal or
+  compliance teams, but someone with admin access could misuse it to
+  find sensitive information.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1213
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-ComplianceSearch'
+  condition: selection
+falsepositives:
+  - Legal or HR running a legitimate records search
+level: medium

@@ -7,6 +7,10 @@ description: >
   client or export tool after a mailbox is compromised. Routed to the
   windowed engine (ADR-0004 §3.5): this needs a count over a time window,
   which the in-stream dispatch tree does not evaluate.
+owner_description: >
+  An unusually large number of emails were opened or copied from one
+  mailbox in a short time. This can happen when someone has broken into
+  the account and is copying out its contents.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

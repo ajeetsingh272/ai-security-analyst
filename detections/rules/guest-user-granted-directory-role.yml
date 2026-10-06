@@ -1,0 +1,28 @@
+title: Guest account added to a privileged directory role
+id: 8f1a2b3c-0001-4a00-9000-000000000017
+status: stable
+description: >
+  Detects a role assignment where UserType is Guest — a narrower, higher-
+  risk variant of privileged-role-assignment.yml's own generic check,
+  since an external guest account holding a privileged role is unusual
+  by construction, not just by context.
+owner_description: >
+  An outside guest account, not one of the company's own employees, was
+  given admin-level access. This is unusual and worth checking, since
+  guest accounts are not normally given this level of control.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1136.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add member to role.'
+    UserType: 'Guest'
+  condition: selection
+falsepositives:
+  - A vetted external consultant deliberately given scoped admin access for a project
+level: high

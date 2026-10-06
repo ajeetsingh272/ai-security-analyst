@@ -1,0 +1,27 @@
+title: Remote PowerShell access enabled for a mailbox user
+id: 8f1a2b3c-0001-4a00-9000-000000000039
+status: experimental
+description: >
+  Detects RemotePowerShellEnabled being set to true on a user — grants a
+  scripted administrative access path distinct from the normal web UI,
+  worth surfacing on an account that would not normally need it.
+owner_description: >
+  An account was given the ability to manage Microsoft 365 through
+  scripted commands instead of the normal web page. This is a powerful
+  capability usually reserved for IT administrators.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1078.004
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Set-User'
+    RemotePowerShellEnabled: 'True'
+  condition: selection
+falsepositives:
+  - IT deliberately enabling scripted access for a new automation account
+level: medium

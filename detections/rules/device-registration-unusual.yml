@@ -1,0 +1,27 @@
+title: New device registered to Azure AD
+id: 8f1a2b3c-0001-4a00-9000-000000000018
+status: experimental
+description: >
+  Detects a new device registration — on its own a routine event, but a
+  necessary precursor to device-trust-based persistence, where an
+  attacker registers their own device so it is implicitly trusted by
+  conditional access policies that key off device compliance.
+owner_description: >
+  A new device was registered to the company's Microsoft 365 account.
+  Attackers sometimes register their own device so it is trusted, which
+  lets them keep signing in without extra checks.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.005
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add device.'
+  condition: selection
+falsepositives:
+  - An employee setting up a new company-issued laptop or phone
+level: low

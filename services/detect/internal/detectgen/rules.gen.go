@@ -16,14 +16,46 @@ type CompiledRule struct {
 }
 
 var Rules = []CompiledRule{
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000015", Title: "Tenant-wide admin consent granted to an application", Level: "high", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_admin_consent_granted_to_application},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000005", Title: "Sign-in through a known anonymiser or proxy", Level: "high", MitreIDs: []string{"attack.t1090.003"}, Engine: "in-stream", Matches: ruleMatch_anonymous_proxy_signin},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000036", Title: "New application registration created", Level: "low", MitreIDs: []string{"attack.t1098.001"}, Engine: "in-stream", Matches: ruleMatch_application_registration_created},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000013", Title: "Conditional access policy disabled", Level: "high", MitreIDs: []string{"attack.t1562.001"}, Engine: "in-stream", Matches: ruleMatch_conditional_access_policy_disabled},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000018", Title: "New device registered to Azure AD", Level: "low", MitreIDs: []string{"attack.t1098.005"}, Engine: "in-stream", Matches: ruleMatch_device_registration_unusual},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000025", Title: "Data loss prevention policy disabled", Level: "high", MitreIDs: []string{"attack.t1562.001"}, Engine: "in-stream", Matches: ruleMatch_dlp_policy_disabled},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000034", Title: "Domain federation settings changed", Level: "high", MitreIDs: []string{"attack.t1484.002"}, Engine: "in-stream", Matches: ruleMatch_domain_federation_settings_changed},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000021", Title: "eDiscovery content search created", Level: "medium", MitreIDs: []string{"attack.t1213"}, Engine: "in-stream", Matches: ruleMatch_ediscovery_search_created},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000017", Title: "Guest account added to a privileged directory role", Level: "high", MitreIDs: []string{"attack.t1136.003"}, Engine: "in-stream", Matches: ruleMatch_guest_user_granted_directory_role},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000033", Title: "High-privilege permission granted to a user-assigned application", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_high_privilege_app_permission_granted},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000008", Title: "Impossible travel between sign-ins", Level: "high", MitreIDs: []string{"attack.t1078.004"}, Engine: "windowed", Matches: ruleMatch_impossible_travel},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000012", Title: "Inbox rule created to hide incoming messages", Level: "medium", MitreIDs: []string{"attack.t1564.008"}, Engine: "in-stream", Matches: ruleMatch_inbox_rule_hides_messages},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000010", Title: "Sign-in using a legacy authentication protocol", Level: "medium", MitreIDs: []string{"attack.t1078.004"}, Engine: "in-stream", Matches: ruleMatch_legacy_auth_signin},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000035", Title: "Inbound or outbound mail connector added", Level: "medium", MitreIDs: []string{"attack.t1114"}, Engine: "in-stream", Matches: ruleMatch_mail_flow_connector_added},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000031", Title: "Mailbox audit bypass enabled for an account", Level: "high", MitreIDs: []string{"attack.t1562.008"}, Engine: "in-stream", Matches: ruleMatch_mailbox_audit_bypass_enabled},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000011", Title: "Mailbox audit logging disabled", Level: "high", MitreIDs: []string{"attack.t1562.008"}, Engine: "in-stream", Matches: ruleMatch_mailbox_audit_disabled},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000023", Title: "Full access permission granted on another mailbox", Level: "medium", MitreIDs: []string{"attack.t1098.002"}, Engine: "in-stream", Matches: ruleMatch_mailbox_delegate_permission_added},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000020", Title: "Mailbox content exported to a local file", Level: "medium", MitreIDs: []string{"attack.t1114"}, Engine: "in-stream", Matches: ruleMatch_mailbox_export_to_pst},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000007", Title: "Mass file download or deletion within a short window", Level: "high", MitreIDs: []string{"attack.t1530"}, Engine: "windowed", Matches: ruleMatch_mass_file_download},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000006", Title: "Mass mailbox item access within a short window", Level: "high", MitreIDs: []string{"attack.t1114.002"}, Engine: "windowed", Matches: ruleMatch_mass_mailbox_download},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000019", Title: "Repeated MFA prompt failures for one account", Level: "high", MitreIDs: []string{"attack.t1621"}, Engine: "windowed", Matches: ruleMatch_mfa_fatigue_push_bombing},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000004", Title: "MFA method registration outside business hours", Level: "medium", MitreIDs: []string{"attack.t1556.006"}, Engine: "in-stream", Matches: ruleMatch_mfa_method_registration},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000016", Title: "Multi-factor authentication disabled for a user", Level: "high", MitreIDs: []string{"attack.t1556.006"}, Engine: "in-stream", Matches: ruleMatch_mfa_requirement_removed},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000032", Title: "New mobile device linked to a mailbox", Level: "low", MitreIDs: []string{"attack.t1098.005"}, Engine: "in-stream", Matches: ruleMatch_mobile_device_added_to_mailbox},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000001", Title: "New inbox forwarding rule to an external address", Level: "medium", MitreIDs: []string{"attack.t1114.003"}, Engine: "in-stream", Matches: ruleMatch_new_inbox_forwarding_rule},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000024", Title: "High-privilege permission granted to an application", Level: "high", MitreIDs: []string{"attack.t1528"}, Engine: "in-stream", Matches: ruleMatch_oauth_app_high_privilege_scope_granted},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000002", Title: "OAuth consent grant to an unverified application", Level: "high", MitreIDs: []string{"attack.t1528"}, Engine: "in-stream", Matches: ruleMatch_oauth_consent_unverified_app},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000038", Title: "Account password set to never expire", Level: "medium", MitreIDs: []string{"attack.t1098"}, Engine: "in-stream", Matches: ruleMatch_password_never_expires_set},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000009", Title: "Password spray against multiple accounts from one source", Level: "high", MitreIDs: []string{"attack.t1110.003"}, Engine: "windowed", Matches: ruleMatch_password_spray},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000003", Title: "Privileged directory role assignment", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_privileged_role_assignment},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000039", Title: "Remote PowerShell access enabled for a mailbox user", Level: "medium", MitreIDs: []string{"attack.t1078.004"}, Engine: "in-stream", Matches: ruleMatch_remote_powershell_enabled_for_user},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000037", Title: "Member added to a privileged group", Level: "low", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_role_assignable_group_membership_changed},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000040", Title: "Safe attachments protection disabled", Level: "high", MitreIDs: []string{"attack.t1562.001"}, Engine: "in-stream", Matches: ruleMatch_safe_attachments_policy_disabled},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000014", Title: "Credential added to an application's service principal", Level: "high", MitreIDs: []string{"attack.t1098.001"}, Engine: "in-stream", Matches: ruleMatch_service_principal_credential_added},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000027", Title: "Anonymous sharing link created for a file", Level: "medium", MitreIDs: []string{"attack.t1567.002"}, Engine: "in-stream", Matches: ruleMatch_sharepoint_anonymous_link_created},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000028", Title: "External guest granted access to a SharePoint site", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_sharepoint_external_user_granted_access},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000030", Title: "Site collection administrator added", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", Matches: ruleMatch_sharepoint_site_collection_admin_added},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000029", Title: "SharePoint site permission level changed", Level: "low", MitreIDs: []string{"attack.t1098"}, Engine: "in-stream", Matches: ruleMatch_sharepoint_site_permission_broadened},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000022", Title: "Mail flow rule created to forward mail externally", Level: "high", MitreIDs: []string{"attack.t1114.003"}, Engine: "in-stream", Matches: ruleMatch_transport_rule_forwards_externally},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000026", Title: "Trusted network location added to sign-in policy", Level: "medium", MitreIDs: []string{"attack.t1484.002"}, Engine: "in-stream", Matches: ruleMatch_trusted_location_added_to_conditional_access},
 }
 
 func boolToInt(b bool) int {
@@ -33,6 +65,13 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+func ruleMatch_admin_consent_granted_to_application(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.ConsentType"] == "AdminConsent") &&
+		(ev["metadata.operation"] == "Consent to application.")
+	return sel_selection
+
+}
+
 func ruleMatch_anonymous_proxy_signin(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "UserLoggedIn") &&
 		(ev["unmapped.ResultStatus"] == "Success")
@@ -40,9 +79,106 @@ func ruleMatch_anonymous_proxy_signin(ev map[string]string) bool {
 
 }
 
+func ruleMatch_application_registration_created(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add application.")
+	return sel_selection
+
+}
+
+func ruleMatch_conditional_access_policy_disabled(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Update Conditional Access Policy") &&
+		(ev["unmapped.PolicyState"] == "Disabled")
+	return sel_selection
+
+}
+
+func ruleMatch_device_registration_unusual(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add device.")
+	return sel_selection
+
+}
+
+func ruleMatch_dlp_policy_disabled(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Update policy.") &&
+		(ev["unmapped.PolicyState"] == "Disabled")
+	return sel_selection
+
+}
+
+func ruleMatch_domain_federation_settings_changed(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Set federation settings on domain.")
+	return sel_selection
+
+}
+
+func ruleMatch_ediscovery_search_created(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "New-ComplianceSearch")
+	return sel_selection
+
+}
+
+func ruleMatch_guest_user_granted_directory_role(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add member to role.") &&
+		(ev["unmapped.UserType"] == "Guest")
+	return sel_selection
+
+}
+
+func ruleMatch_high_privilege_app_permission_granted(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add app role assignment grant to user.")
+	return sel_selection
+
+}
+
 func ruleMatch_impossible_travel(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "UserLoggedIn") &&
 		(ev["unmapped.ResultStatus"] == "Success")
+	return sel_selection
+
+}
+
+func ruleMatch_inbox_rule_hides_messages(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.MarkAsRead"] == "True") &&
+		(ev["metadata.operation"] == "New-InboxRule")
+	return sel_selection
+
+}
+
+func ruleMatch_legacy_auth_signin(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.ClientAppUsed"] == "Other clients") &&
+		(ev["metadata.operation"] == "UserLoggedIn")
+	return sel_selection
+
+}
+
+func ruleMatch_mail_flow_connector_added(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "New-InboundConnector")
+	return sel_selection
+
+}
+
+func ruleMatch_mailbox_audit_bypass_enabled(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.AuditBypassEnabled"] == "True") &&
+		(ev["metadata.operation"] == "Set-MailboxAuditBypassAssociation")
+	return sel_selection
+
+}
+
+func ruleMatch_mailbox_audit_disabled(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.AuditEnabled"] == "False") &&
+		(ev["metadata.operation"] == "Set-Mailbox")
+	return sel_selection
+
+}
+
+func ruleMatch_mailbox_delegate_permission_added(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add-MailboxPermission")
+	return sel_selection
+
+}
+
+func ruleMatch_mailbox_export_to_pst(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "New-MailboxExportRequest")
 	return sel_selection
 
 }
@@ -60,8 +196,27 @@ func ruleMatch_mass_mailbox_download(ev map[string]string) bool {
 
 }
 
+func ruleMatch_mfa_fatigue_push_bombing(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "UserLoginFailed") &&
+		(ev["unmapped.ResultStatus"] == "MfaDenied")
+	return sel_selection
+
+}
+
 func ruleMatch_mfa_method_registration(ev map[string]string) bool {
 	sel_selection := (strings.HasPrefix(ev["metadata.operation"], "Register security info"))
+	return sel_selection
+
+}
+
+func ruleMatch_mfa_requirement_removed(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Disable Strong Authentication.")
+	return sel_selection
+
+}
+
+func ruleMatch_mobile_device_added_to_mailbox(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "New-MobileDeviceAssociation")
 	return sel_selection
 
 }
@@ -72,14 +227,96 @@ func ruleMatch_new_inbox_forwarding_rule(ev map[string]string) bool {
 
 }
 
+func ruleMatch_oauth_app_high_privilege_scope_granted(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add app role assignment to service principal.")
+	return sel_selection
+
+}
+
 func ruleMatch_oauth_consent_unverified_app(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "Consent to application.")
 	return sel_selection
 
 }
 
+func ruleMatch_password_never_expires_set(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Set-User") &&
+		(ev["unmapped.PasswordNeverExpires"] == "True")
+	return sel_selection
+
+}
+
+func ruleMatch_password_spray(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "UserLoginFailed")
+	return sel_selection
+
+}
+
 func ruleMatch_privileged_role_assignment(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "Add member to role.")
+	return sel_selection
+
+}
+
+func ruleMatch_remote_powershell_enabled_for_user(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Set-User") &&
+		(ev["unmapped.RemotePowerShellEnabled"] == "True")
+	return sel_selection
+
+}
+
+func ruleMatch_role_assignable_group_membership_changed(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add member to group.")
+	return sel_selection
+
+}
+
+func ruleMatch_safe_attachments_policy_disabled(ev map[string]string) bool {
+	sel_selection := (ev["unmapped.EnableSafeAttachments"] == "False") &&
+		(ev["metadata.operation"] == "Set-AtpPolicyForO365")
+	return sel_selection
+
+}
+
+func ruleMatch_service_principal_credential_added(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add service principal credentials.")
+	return sel_selection
+
+}
+
+func ruleMatch_sharepoint_anonymous_link_created(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "AnonymousLinkCreated")
+	return sel_selection
+
+}
+
+func ruleMatch_sharepoint_external_user_granted_access(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "SharingSet") &&
+		(ev["unmapped.TargetUserOrGroupType"] == "Guest")
+	return sel_selection
+
+}
+
+func ruleMatch_sharepoint_site_collection_admin_added(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add site collection admin.")
+	return sel_selection
+
+}
+
+func ruleMatch_sharepoint_site_permission_broadened(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "PermissionLevelModified")
+	return sel_selection
+
+}
+
+func ruleMatch_transport_rule_forwards_externally(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "New-TransportRule")
+	return sel_selection
+
+}
+
+func ruleMatch_trusted_location_added_to_conditional_access(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Add a named location.")
 	return sel_selection
 
 }

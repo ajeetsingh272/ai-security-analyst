@@ -4,6 +4,15 @@ package detectgen
 
 import "testing"
 
+func TestRule_admin_consent_granted_to_application(t *testing.T) {
+	if !ruleMatch_admin_consent_granted_to_application(map[string]string{"metadata.operation": "Consent to application.", "metadata.product": "m365", "unmapped.ConsentType": "AdminConsent"}) {
+		t.Fatalf("positive fixture for rule admin-consent-granted-to-application (Tenant-wide admin consent granted to an application) did not match")
+	}
+	if ruleMatch_admin_consent_granted_to_application(map[string]string{"metadata.operation": "Consent to application.", "metadata.product": "m365", "unmapped.ConsentType": "UserConsent"}) {
+		t.Fatalf("negative fixture for rule admin-consent-granted-to-application (Tenant-wide admin consent granted to an application) matched, but should not have")
+	}
+}
+
 func TestRule_anonymous_proxy_signin(t *testing.T) {
 	if !ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("positive fixture for rule anonymous-proxy-signin (Sign-in through a known anonymiser or proxy) did not match")
@@ -13,12 +22,147 @@ func TestRule_anonymous_proxy_signin(t *testing.T) {
 	}
 }
 
+func TestRule_application_registration_created(t *testing.T) {
+	if !ruleMatch_application_registration_created(map[string]string{"metadata.operation": "Add application.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule application-registration-created (New application registration created) did not match")
+	}
+	if ruleMatch_application_registration_created(map[string]string{"metadata.operation": "Remove application.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule application-registration-created (New application registration created) matched, but should not have")
+	}
+}
+
+func TestRule_conditional_access_policy_disabled(t *testing.T) {
+	if !ruleMatch_conditional_access_policy_disabled(map[string]string{"metadata.operation": "Update Conditional Access Policy", "metadata.product": "m365", "unmapped.PolicyState": "Disabled"}) {
+		t.Fatalf("positive fixture for rule conditional-access-policy-disabled (Conditional access policy disabled) did not match")
+	}
+	if ruleMatch_conditional_access_policy_disabled(map[string]string{"metadata.operation": "Update Conditional Access Policy", "metadata.product": "m365", "unmapped.PolicyState": "Enabled"}) {
+		t.Fatalf("negative fixture for rule conditional-access-policy-disabled (Conditional access policy disabled) matched, but should not have")
+	}
+}
+
+func TestRule_device_registration_unusual(t *testing.T) {
+	if !ruleMatch_device_registration_unusual(map[string]string{"metadata.operation": "Add device.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule device-registration-unusual (New device registered to Azure AD) did not match")
+	}
+	if ruleMatch_device_registration_unusual(map[string]string{"metadata.operation": "Remove device.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule device-registration-unusual (New device registered to Azure AD) matched, but should not have")
+	}
+}
+
+func TestRule_dlp_policy_disabled(t *testing.T) {
+	if !ruleMatch_dlp_policy_disabled(map[string]string{"metadata.operation": "Update policy.", "metadata.product": "m365", "unmapped.PolicyState": "Disabled"}) {
+		t.Fatalf("positive fixture for rule dlp-policy-disabled (Data loss prevention policy disabled) did not match")
+	}
+	if ruleMatch_dlp_policy_disabled(map[string]string{"metadata.operation": "Update policy.", "metadata.product": "m365", "unmapped.PolicyState": "Enabled"}) {
+		t.Fatalf("negative fixture for rule dlp-policy-disabled (Data loss prevention policy disabled) matched, but should not have")
+	}
+}
+
+func TestRule_domain_federation_settings_changed(t *testing.T) {
+	if !ruleMatch_domain_federation_settings_changed(map[string]string{"metadata.operation": "Set federation settings on domain.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule domain-federation-settings-changed (Domain federation settings changed) did not match")
+	}
+	if ruleMatch_domain_federation_settings_changed(map[string]string{"metadata.operation": "Set domain authentication.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule domain-federation-settings-changed (Domain federation settings changed) matched, but should not have")
+	}
+}
+
+func TestRule_ediscovery_search_created(t *testing.T) {
+	if !ruleMatch_ediscovery_search_created(map[string]string{"metadata.operation": "New-ComplianceSearch", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule ediscovery-search-created (eDiscovery content search created) did not match")
+	}
+	if ruleMatch_ediscovery_search_created(map[string]string{"metadata.operation": "Remove-ComplianceSearch", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule ediscovery-search-created (eDiscovery content search created) matched, but should not have")
+	}
+}
+
+func TestRule_guest_user_granted_directory_role(t *testing.T) {
+	if !ruleMatch_guest_user_granted_directory_role(map[string]string{"metadata.operation": "Add member to role.", "metadata.product": "m365", "unmapped.UserType": "Guest"}) {
+		t.Fatalf("positive fixture for rule guest-user-granted-directory-role (Guest account added to a privileged directory role) did not match")
+	}
+	if ruleMatch_guest_user_granted_directory_role(map[string]string{"metadata.operation": "Add member to role.", "metadata.product": "m365", "unmapped.UserType": "Member"}) {
+		t.Fatalf("negative fixture for rule guest-user-granted-directory-role (Guest account added to a privileged directory role) matched, but should not have")
+	}
+}
+
+func TestRule_high_privilege_app_permission_granted(t *testing.T) {
+	if !ruleMatch_high_privilege_app_permission_granted(map[string]string{"metadata.operation": "Add app role assignment grant to user.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule high-privilege-app-permission-granted (High-privilege permission granted to a user-assigned application) did not match")
+	}
+	if ruleMatch_high_privilege_app_permission_granted(map[string]string{"metadata.operation": "Remove app role assignment for user.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule high-privilege-app-permission-granted (High-privilege permission granted to a user-assigned application) matched, but should not have")
+	}
+}
+
 func TestRule_impossible_travel(t *testing.T) {
 	if !ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("positive fixture for rule impossible-travel (Impossible travel between sign-ins) did not match")
 	}
 	if ruleMatch_impossible_travel(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Failed"}) {
 		t.Fatalf("negative fixture for rule impossible-travel (Impossible travel between sign-ins) matched, but should not have")
+	}
+}
+
+func TestRule_inbox_rule_hides_messages(t *testing.T) {
+	if !ruleMatch_inbox_rule_hides_messages(map[string]string{"metadata.operation": "New-InboxRule", "metadata.product": "m365", "unmapped.MarkAsRead": "True"}) {
+		t.Fatalf("positive fixture for rule inbox-rule-hides-messages (Inbox rule created to hide incoming messages) did not match")
+	}
+	if ruleMatch_inbox_rule_hides_messages(map[string]string{"metadata.operation": "New-InboxRule", "metadata.product": "m365", "unmapped.MarkAsRead": "False"}) {
+		t.Fatalf("negative fixture for rule inbox-rule-hides-messages (Inbox rule created to hide incoming messages) matched, but should not have")
+	}
+}
+
+func TestRule_legacy_auth_signin(t *testing.T) {
+	if !ruleMatch_legacy_auth_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ClientAppUsed": "Other clients"}) {
+		t.Fatalf("positive fixture for rule legacy-auth-signin (Sign-in using a legacy authentication protocol) did not match")
+	}
+	if ruleMatch_legacy_auth_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ClientAppUsed": "Browser"}) {
+		t.Fatalf("negative fixture for rule legacy-auth-signin (Sign-in using a legacy authentication protocol) matched, but should not have")
+	}
+}
+
+func TestRule_mail_flow_connector_added(t *testing.T) {
+	if !ruleMatch_mail_flow_connector_added(map[string]string{"metadata.operation": "New-InboundConnector", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule mail-flow-connector-added (Inbound or outbound mail connector added) did not match")
+	}
+	if ruleMatch_mail_flow_connector_added(map[string]string{"metadata.operation": "Remove-InboundConnector", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule mail-flow-connector-added (Inbound or outbound mail connector added) matched, but should not have")
+	}
+}
+
+func TestRule_mailbox_audit_bypass_enabled(t *testing.T) {
+	if !ruleMatch_mailbox_audit_bypass_enabled(map[string]string{"metadata.operation": "Set-MailboxAuditBypassAssociation", "metadata.product": "m365", "unmapped.AuditBypassEnabled": "True"}) {
+		t.Fatalf("positive fixture for rule mailbox-audit-bypass-enabled (Mailbox audit bypass enabled for an account) did not match")
+	}
+	if ruleMatch_mailbox_audit_bypass_enabled(map[string]string{"metadata.operation": "Set-MailboxAuditBypassAssociation", "metadata.product": "m365", "unmapped.AuditBypassEnabled": "False"}) {
+		t.Fatalf("negative fixture for rule mailbox-audit-bypass-enabled (Mailbox audit bypass enabled for an account) matched, but should not have")
+	}
+}
+
+func TestRule_mailbox_audit_disabled(t *testing.T) {
+	if !ruleMatch_mailbox_audit_disabled(map[string]string{"metadata.operation": "Set-Mailbox", "metadata.product": "m365", "unmapped.AuditEnabled": "False"}) {
+		t.Fatalf("positive fixture for rule mailbox-audit-disabled (Mailbox audit logging disabled) did not match")
+	}
+	if ruleMatch_mailbox_audit_disabled(map[string]string{"metadata.operation": "Set-Mailbox", "metadata.product": "m365", "unmapped.AuditEnabled": "True"}) {
+		t.Fatalf("negative fixture for rule mailbox-audit-disabled (Mailbox audit logging disabled) matched, but should not have")
+	}
+}
+
+func TestRule_mailbox_delegate_permission_added(t *testing.T) {
+	if !ruleMatch_mailbox_delegate_permission_added(map[string]string{"metadata.operation": "Add-MailboxPermission", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule mailbox-delegate-permission-added (Full access permission granted on another mailbox) did not match")
+	}
+	if ruleMatch_mailbox_delegate_permission_added(map[string]string{"metadata.operation": "Remove-MailboxPermission", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule mailbox-delegate-permission-added (Full access permission granted on another mailbox) matched, but should not have")
+	}
+}
+
+func TestRule_mailbox_export_to_pst(t *testing.T) {
+	if !ruleMatch_mailbox_export_to_pst(map[string]string{"metadata.operation": "New-MailboxExportRequest", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule mailbox-export-to-pst (Mailbox content exported to a local file) did not match")
+	}
+	if ruleMatch_mailbox_export_to_pst(map[string]string{"metadata.operation": "Remove-MailboxExportRequest", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule mailbox-export-to-pst (Mailbox content exported to a local file) matched, but should not have")
 	}
 }
 
@@ -40,12 +184,39 @@ func TestRule_mass_mailbox_download(t *testing.T) {
 	}
 }
 
+func TestRule_mfa_fatigue_push_bombing(t *testing.T) {
+	if !ruleMatch_mfa_fatigue_push_bombing(map[string]string{"metadata.operation": "UserLoginFailed", "metadata.product": "m365", "unmapped.ResultStatus": "MfaDenied"}) {
+		t.Fatalf("positive fixture for rule mfa-fatigue-push-bombing (Repeated MFA prompt failures for one account) did not match")
+	}
+	if ruleMatch_mfa_fatigue_push_bombing(map[string]string{"metadata.operation": "UserLoginFailed", "metadata.product": "m365", "unmapped.ResultStatus": "InvalidPassword"}) {
+		t.Fatalf("negative fixture for rule mfa-fatigue-push-bombing (Repeated MFA prompt failures for one account) matched, but should not have")
+	}
+}
+
 func TestRule_mfa_method_registration(t *testing.T) {
 	if !ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "Register security info (MFA)", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule mfa-method-registration (MFA method registration outside business hours) did not match")
 	}
 	if ruleMatch_mfa_method_registration(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule mfa-method-registration (MFA method registration outside business hours) matched, but should not have")
+	}
+}
+
+func TestRule_mfa_requirement_removed(t *testing.T) {
+	if !ruleMatch_mfa_requirement_removed(map[string]string{"metadata.operation": "Disable Strong Authentication.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule mfa-requirement-removed (Multi-factor authentication disabled for a user) did not match")
+	}
+	if ruleMatch_mfa_requirement_removed(map[string]string{"metadata.operation": "Enable Strong Authentication.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule mfa-requirement-removed (Multi-factor authentication disabled for a user) matched, but should not have")
+	}
+}
+
+func TestRule_mobile_device_added_to_mailbox(t *testing.T) {
+	if !ruleMatch_mobile_device_added_to_mailbox(map[string]string{"metadata.operation": "New-MobileDeviceAssociation", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule mobile-device-added-to-mailbox (New mobile device linked to a mailbox) did not match")
+	}
+	if ruleMatch_mobile_device_added_to_mailbox(map[string]string{"metadata.operation": "Remove-MobileDeviceAssociation", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule mobile-device-added-to-mailbox (New mobile device linked to a mailbox) matched, but should not have")
 	}
 }
 
@@ -58,6 +229,15 @@ func TestRule_new_inbox_forwarding_rule(t *testing.T) {
 	}
 }
 
+func TestRule_oauth_app_high_privilege_scope_granted(t *testing.T) {
+	if !ruleMatch_oauth_app_high_privilege_scope_granted(map[string]string{"metadata.operation": "Add app role assignment to service principal.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule oauth-app-high-privilege-scope-granted (High-privilege permission granted to an application) did not match")
+	}
+	if ruleMatch_oauth_app_high_privilege_scope_granted(map[string]string{"metadata.operation": "Remove app role assignment from service principal.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule oauth-app-high-privilege-scope-granted (High-privilege permission granted to an application) matched, but should not have")
+	}
+}
+
 func TestRule_oauth_consent_unverified_app(t *testing.T) {
 	if !ruleMatch_oauth_consent_unverified_app(map[string]string{"metadata.operation": "Consent to application.", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule oauth-consent-unverified-app (OAuth consent grant to an unverified application) did not match")
@@ -67,11 +247,119 @@ func TestRule_oauth_consent_unverified_app(t *testing.T) {
 	}
 }
 
+func TestRule_password_never_expires_set(t *testing.T) {
+	if !ruleMatch_password_never_expires_set(map[string]string{"metadata.operation": "Set-User", "metadata.product": "m365", "unmapped.PasswordNeverExpires": "True"}) {
+		t.Fatalf("positive fixture for rule password-never-expires-set (Account password set to never expire) did not match")
+	}
+	if ruleMatch_password_never_expires_set(map[string]string{"metadata.operation": "Set-User", "metadata.product": "m365", "unmapped.PasswordNeverExpires": "False"}) {
+		t.Fatalf("negative fixture for rule password-never-expires-set (Account password set to never expire) matched, but should not have")
+	}
+}
+
+func TestRule_password_spray(t *testing.T) {
+	if !ruleMatch_password_spray(map[string]string{"metadata.operation": "UserLoginFailed", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule password-spray (Password spray against multiple accounts from one source) did not match")
+	}
+	if ruleMatch_password_spray(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule password-spray (Password spray against multiple accounts from one source) matched, but should not have")
+	}
+}
+
 func TestRule_privileged_role_assignment(t *testing.T) {
 	if !ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "Add member to role.", "metadata.product": "m365"}) {
 		t.Fatalf("positive fixture for rule privileged-role-assignment (Privileged directory role assignment) did not match")
 	}
 	if ruleMatch_privileged_role_assignment(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
 		t.Fatalf("negative fixture for rule privileged-role-assignment (Privileged directory role assignment) matched, but should not have")
+	}
+}
+
+func TestRule_remote_powershell_enabled_for_user(t *testing.T) {
+	if !ruleMatch_remote_powershell_enabled_for_user(map[string]string{"metadata.operation": "Set-User", "metadata.product": "m365", "unmapped.RemotePowerShellEnabled": "True"}) {
+		t.Fatalf("positive fixture for rule remote-powershell-enabled-for-user (Remote PowerShell access enabled for a mailbox user) did not match")
+	}
+	if ruleMatch_remote_powershell_enabled_for_user(map[string]string{"metadata.operation": "Set-User", "metadata.product": "m365", "unmapped.RemotePowerShellEnabled": "False"}) {
+		t.Fatalf("negative fixture for rule remote-powershell-enabled-for-user (Remote PowerShell access enabled for a mailbox user) matched, but should not have")
+	}
+}
+
+func TestRule_role_assignable_group_membership_changed(t *testing.T) {
+	if !ruleMatch_role_assignable_group_membership_changed(map[string]string{"metadata.operation": "Add member to group.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule role-assignable-group-membership-changed (Member added to a privileged group) did not match")
+	}
+	if ruleMatch_role_assignable_group_membership_changed(map[string]string{"metadata.operation": "Remove member from group.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule role-assignable-group-membership-changed (Member added to a privileged group) matched, but should not have")
+	}
+}
+
+func TestRule_safe_attachments_policy_disabled(t *testing.T) {
+	if !ruleMatch_safe_attachments_policy_disabled(map[string]string{"metadata.operation": "Set-AtpPolicyForO365", "metadata.product": "m365", "unmapped.EnableSafeAttachments": "False"}) {
+		t.Fatalf("positive fixture for rule safe-attachments-policy-disabled (Safe attachments protection disabled) did not match")
+	}
+	if ruleMatch_safe_attachments_policy_disabled(map[string]string{"metadata.operation": "Set-AtpPolicyForO365", "metadata.product": "m365", "unmapped.EnableSafeAttachments": "True"}) {
+		t.Fatalf("negative fixture for rule safe-attachments-policy-disabled (Safe attachments protection disabled) matched, but should not have")
+	}
+}
+
+func TestRule_service_principal_credential_added(t *testing.T) {
+	if !ruleMatch_service_principal_credential_added(map[string]string{"metadata.operation": "Add service principal credentials.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule service-principal-credential-added (Credential added to an application's service principal) did not match")
+	}
+	if ruleMatch_service_principal_credential_added(map[string]string{"metadata.operation": "Remove service principal credentials.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule service-principal-credential-added (Credential added to an application's service principal) matched, but should not have")
+	}
+}
+
+func TestRule_sharepoint_anonymous_link_created(t *testing.T) {
+	if !ruleMatch_sharepoint_anonymous_link_created(map[string]string{"metadata.operation": "AnonymousLinkCreated", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule sharepoint-anonymous-link-created (Anonymous sharing link created for a file) did not match")
+	}
+	if ruleMatch_sharepoint_anonymous_link_created(map[string]string{"metadata.operation": "AnonymousLinkRemoved", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule sharepoint-anonymous-link-created (Anonymous sharing link created for a file) matched, but should not have")
+	}
+}
+
+func TestRule_sharepoint_external_user_granted_access(t *testing.T) {
+	if !ruleMatch_sharepoint_external_user_granted_access(map[string]string{"metadata.operation": "SharingSet", "metadata.product": "m365", "unmapped.TargetUserOrGroupType": "Guest"}) {
+		t.Fatalf("positive fixture for rule sharepoint-external-user-granted-access (External guest granted access to a SharePoint site) did not match")
+	}
+	if ruleMatch_sharepoint_external_user_granted_access(map[string]string{"metadata.operation": "SharingSet", "metadata.product": "m365", "unmapped.TargetUserOrGroupType": "Member"}) {
+		t.Fatalf("negative fixture for rule sharepoint-external-user-granted-access (External guest granted access to a SharePoint site) matched, but should not have")
+	}
+}
+
+func TestRule_sharepoint_site_collection_admin_added(t *testing.T) {
+	if !ruleMatch_sharepoint_site_collection_admin_added(map[string]string{"metadata.operation": "Add site collection admin.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule sharepoint-site-collection-admin-added (Site collection administrator added) did not match")
+	}
+	if ruleMatch_sharepoint_site_collection_admin_added(map[string]string{"metadata.operation": "Remove site collection admin.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule sharepoint-site-collection-admin-added (Site collection administrator added) matched, but should not have")
+	}
+}
+
+func TestRule_sharepoint_site_permission_broadened(t *testing.T) {
+	if !ruleMatch_sharepoint_site_permission_broadened(map[string]string{"metadata.operation": "PermissionLevelModified", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule sharepoint-site-permission-broadened (SharePoint site permission level changed) did not match")
+	}
+	if ruleMatch_sharepoint_site_permission_broadened(map[string]string{"metadata.operation": "PermissionLevelRequested", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule sharepoint-site-permission-broadened (SharePoint site permission level changed) matched, but should not have")
+	}
+}
+
+func TestRule_transport_rule_forwards_externally(t *testing.T) {
+	if !ruleMatch_transport_rule_forwards_externally(map[string]string{"metadata.operation": "New-TransportRule", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule transport-rule-forwards-externally (Mail flow rule created to forward mail externally) did not match")
+	}
+	if ruleMatch_transport_rule_forwards_externally(map[string]string{"metadata.operation": "Remove-TransportRule", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule transport-rule-forwards-externally (Mail flow rule created to forward mail externally) matched, but should not have")
+	}
+}
+
+func TestRule_trusted_location_added_to_conditional_access(t *testing.T) {
+	if !ruleMatch_trusted_location_added_to_conditional_access(map[string]string{"metadata.operation": "Add a named location.", "metadata.product": "m365"}) {
+		t.Fatalf("positive fixture for rule trusted-location-added-to-conditional-access (Trusted network location added to sign-in policy) did not match")
+	}
+	if ruleMatch_trusted_location_added_to_conditional_access(map[string]string{"metadata.operation": "Remove a named location.", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule trusted-location-added-to-conditional-access (Trusted network location added to sign-in policy) matched, but should not have")
 	}
 }

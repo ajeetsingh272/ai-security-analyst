@@ -8,6 +8,10 @@ description: >
   evaluates today; true geo-velocity (P2-09's enrichment feeding a
   distance/time calculation) is this rule's own documented follow-up, not
   something the parser subset in P2-01 needs to express.
+owner_description: >
+  The same person signed in from two different places in a short amount
+  of time — faster than someone could realistically travel between them.
+  This usually means someone besides the real owner has their password.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

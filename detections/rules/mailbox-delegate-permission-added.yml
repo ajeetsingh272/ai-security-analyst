@@ -1,0 +1,27 @@
+title: Full access permission granted on another mailbox
+id: 8f1a2b3c-0001-4a00-9000-000000000023
+status: stable
+description: >
+  Detects a new FullAccess-style delegate grant on a mailbox — a
+  persistence technique that lets the grantee read a victim's mailbox
+  indefinitely without ever needing the victim's own credentials again.
+owner_description: >
+  One person was given permission to fully open and read someone else's
+  mailbox. This is sometimes needed for a real business reason, like
+  covering for an assistant, but it should match something the company
+  actually asked for.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.002
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Add-MailboxPermission'
+  condition: selection
+falsepositives:
+  - A manager legitimately granted access to a direct report's mailbox
+level: medium

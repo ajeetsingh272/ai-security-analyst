@@ -6,6 +6,10 @@ description: >
   single user in a short window — consistent with bulk exfiltration or
   destructive activity following account compromise. Routed to the
   windowed engine for the same reason as mass-mailbox-download.yml.
+owner_description: >
+  One person downloaded or deleted an unusually large number of files in
+  a short time. This can happen when an account has been taken over and
+  someone is copying or destroying company files.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

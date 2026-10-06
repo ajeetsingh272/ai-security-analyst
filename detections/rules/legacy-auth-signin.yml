@@ -1,0 +1,29 @@
+title: Sign-in using a legacy authentication protocol
+id: 8f1a2b3c-0001-4a00-9000-000000000010
+status: experimental
+description: >
+  Detects a successful sign-in via a legacy/basic-auth client, which
+  cannot enforce modern conditional access or MFA — a common path
+  attackers use with a stolen password specifically because it bypasses
+  those controls.
+owner_description: >
+  Someone signed in using an older connection method that cannot be
+  protected by extra security steps like a second approval code.
+  Attackers often use this method on purpose because it can slip past
+  modern account protections.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1078.004
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'UserLoggedIn'
+    ClientAppUsed: 'Other clients'
+  condition: selection
+falsepositives:
+  - A legacy line-of-business application that has not yet been migrated to modern auth
+level: medium
