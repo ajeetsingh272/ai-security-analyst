@@ -334,13 +334,22 @@ func (c *soakConnector) Normalise(raw sentinelconnector.RawEvent) ([]ocsf.Event,
 		return nil, fmt.Errorf("soaktest: unmarshalling raw payload: %w", err)
 	}
 	return []ocsf.Event{{
+		// EventID must be unique per event, not left empty — P1-04 added
+		// this field to ocsf.Event (it didn't exist when this test was
+		// first written, hence the Metadata workaround this replaces);
+		// ReplacingMergeTree is keyed on (tenant_id, time, event_id), and
+		// leaving event_id empty collapsed many same-millisecond events
+		// from the same batch into one row the moment a real P1-04
+		// marshalEvent/reconcile() OPTIMIZE FINAL ran them through the
+		// real pipeline — found via this exact test failing with
+		// produced != stored after the P0+P1 merge.
+		EventID:  fmt.Sprintf("soak-%d", p.Seq),
 		ClassUID: 3002, CategoryUID: 3, ActivityID: 1, TypeUID: 300201, SeverityID: 1,
 		// Set at normalise time, not at final storage — this is the
 		// upstream half of the end-to-end lag reconcile() measures via
 		// ClickHouse's own ingested_at - time.
 		TimeUnixMillis: time.Now().UnixMilli(),
 		TenantID:       raw.TenantID,
-		Metadata:       map[string]string{"event_id": fmt.Sprintf("soak-%d", p.Seq)},
 		RawData:        raw.Payload,
 	}}, nil
 }
@@ -367,21 +376,40 @@ func runBridge(ctx context.Context, consumeClient, produceClient *kgo.Client, lo
 
 		var records []*kgo.Record
 		fetches.EachRecord(func(rec *kgo.Record) {
-			var ev ocsf.Event
-			if err := json.Unmarshal(rec.Value, &ev); err != nil {
+			// P1-04 changed what the scheduler's Publisher actually puts on
+			// the wire: marshalEvent (go/sentinelconnector/publisher.go) now
+			// emits a snake_case wireEvent shape (tenant_id, class_uid, ...),
+			// not ocsf.Event's bare Go field names this bridge originally
+			// unmarshalled directly — that mismatch silently zeroed every
+			// field (including TenantID) once this test ran against a real
+			// P1-04. wireEvent itself is a private type in that package, so
+			// this struct mirrors its json tags rather than importing it.
+			var wire struct {
+				TenantID      string    `json:"tenant_id"`
+				EventID       string    `json:"event_id"`
+				Time          time.Time `json:"time"`
+				SchemaVersion string    `json:"schema_version"`
+				ClassUID      uint32    `json:"class_uid"`
+				CategoryUID   uint16    `json:"category_uid"`
+				ActivityID    uint16    `json:"activity_id"`
+				TypeUID       uint32    `json:"type_uid"`
+				SeverityID    uint8     `json:"severity_id"`
+			}
+			if err := json.Unmarshal(rec.Value, &wire); err != nil {
 				log.Error("bridge: unmarshalling raw event", "err", err)
 				return
 			}
 			row := sentinelevents.EventRow{
-				TenantID:    ev.TenantID,
-				EventID:     ev.Metadata["event_id"],
-				Time:        time.UnixMilli(ev.TimeUnixMillis),
-				ClassUID:    uint32(ev.ClassUID),
-				CategoryUID: uint16(ev.CategoryUID),
-				ActivityID:  uint16(ev.ActivityID),
-				TypeUID:     uint32(ev.TypeUID),
-				SeverityID:  uint8(ev.SeverityID),
-				Message:     "soak test event",
+				TenantID:      wire.TenantID,
+				EventID:       wire.EventID,
+				Time:          wire.Time,
+				SchemaVersion: wire.SchemaVersion,
+				ClassUID:      wire.ClassUID,
+				CategoryUID:   wire.CategoryUID,
+				ActivityID:    wire.ActivityID,
+				TypeUID:       wire.TypeUID,
+				SeverityID:    wire.SeverityID,
+				Message:       "soak test event",
 			}
 			payload, err := json.Marshal(row)
 			if err != nil {
@@ -390,7 +418,7 @@ func runBridge(ctx context.Context, consumeClient, produceClient *kgo.Client, lo
 			}
 			records = append(records, &kgo.Record{
 				Topic: sentinelstream.EventsNormalized,
-				Key:   []byte(ev.TenantID + ":0"),
+				Key:   []byte(wire.TenantID + ":0"),
 				Value: payload,
 			})
 		})
