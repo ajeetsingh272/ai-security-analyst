@@ -16,9 +16,15 @@ import "time"
 // IS the contract a future normaliser needs to produce, not a guess at
 // one; P1-07 doesn't get to wait for P1-04 to define it first.
 type EventRow struct {
-	TenantID       string            `json:"tenant_id"`
-	EventID        string            `json:"event_id"`
-	Time           time.Time         `json:"time"`
+	TenantID string    `json:"tenant_id"`
+	EventID  string    `json:"event_id"`
+	Time     time.Time `json:"time"`
+	// SchemaVersion is P1-04's addition — ADR-0002: "Schema version is
+	// stamped on every event, so mappings can evolve without rewriting
+	// history." Was never populated before P1-04 because nothing published
+	// real content through this path yet (see writer.go's insertSQL and
+	// services/ingest/cmd/ingest/main.go's own P1-04 fix comment).
+	SchemaVersion  string            `json:"schema_version"`
 	ClassUID       uint32            `json:"class_uid"`
 	CategoryUID    uint16            `json:"category_uid"`
 	ActivityID     uint16            `json:"activity_id"`

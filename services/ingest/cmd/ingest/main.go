@@ -24,6 +24,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/syslog"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
@@ -158,13 +159,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// With zero connectors registered below (P1-02/03 land the first real
-	// one, M365), this publisher is not yet exercised by production
-	// traffic — but it is the REAL producer (P1-05), not a placeholder:
-	// the scheduler is wired exactly as it will run once a connector exists
-	// to publish through it.
+	// P1-04 fix: the scheduler's Publisher.Publish (publisher.go) is handed
+	// already-NORMALISED events (Connector.Normalise's output, marshalled
+	// by the scheduler itself) — never raw, pre-normalisation bytes. This
+	// was wired to EventsRaw ("events.raw") from P1-01 through P1-03, which
+	// went unnoticed because nothing published any real content through it
+	// until this ticket (P1-04) gave M365's connector a real mapping to
+	// produce. services/eventwriter/cmd/eventwriter/main.go has always
+	// consumed "events.normalized" — go/sentinelevents/batch.go's own doc
+	// comment says as much ("Nothing publishes to that topic yet — P1-04...
+	// is what will"). Without this fix, T5 (event_id survives ingest to
+	// ClickHouse) would be unprovable for real, because nothing the
+	// scheduler ever produces would reach the ClickHouse writer at all.
 	scheduler := sentinelconnector.NewScheduler(
-		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRaw),
+		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsNormalized),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
 			Interval:        time.Minute,
@@ -187,6 +195,20 @@ func main() {
 	// subsequent query against this tenant's own rows).
 	if err := registerM365Connectors(ctx, pool, kafkaClient, scheduler, log); err != nil {
 		log.Error("registering m365 connectors", "err", err)
+	}
+
+	// P1-13: the dry run's own registration — proving a second connector
+	// (go/sentinelconnector/syslog) needs nothing from THIS file beyond
+	// exactly this shape: a listener to start, and one scheduler.Register
+	// call. No change to sentinelconnector, sentinelstream, sentineldb,
+	// detect or correlate was needed to add it — see
+	// docs/architecture/connector-developer-guide.md. Gated by an env var,
+	// same pattern as M365 (unset client id) and the synthetic stalled
+	// connector below: production boot is unaffected by default.
+	if addr := os.Getenv("SYSLOG_LISTEN_ADDR"); addr != "" {
+		if err := registerSyslogConnector(ctx, addr, pool, scheduler, log); err != nil {
+			log.Error("registering syslog connector", "err", err)
+		}
 	}
 
 	// P1-11 T1 needs a REAL stalled connector running inside this REAL
@@ -248,6 +270,49 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// registerSyslogConnector starts one shared TCP listener and registers it
+// against every tenant with an active syslog connectors row — the exact
+// same cross-tenant discovery shape registerM365Connectors already uses,
+// deliberately: P1-13's whole point is that a second connector looks like
+// this from the framework's point of view, not like something bespoke.
+func registerSyslogConnector(ctx context.Context, addr string, pool *pgxpool.Pool, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	listener, err := syslog.NewListener(addr, log)
+	if err != nil {
+		return fmt.Errorf("binding syslog listener on %s: %w", addr, err)
+	}
+	go listener.Serve(ctx)
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'syslog' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing syslog connectors: %w", err)
+	}
+	defer rows.Close()
+
+	registered := 0
+	for rows.Next() {
+		var connectorRowID, tenantID string
+		if err := rows.Scan(&connectorRowID, &tenantID); err != nil {
+			return fmt.Errorf("scanning syslog connector row: %w", err)
+		}
+		scheduler.Register(sentinelconnector.TenantConnector{
+			TenantID:       tenantID,
+			ConnectorRowID: connectorRowID,
+			Stream:         "main",
+			Connector:      syslog.NewConnector(tenantID, listener),
+		})
+		registered++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating syslog connector rows: %w", err)
+	}
+	log.Info("registered syslog connectors", "registrations", registered, "listen_addr", listener.Addr())
+	return nil
 }
 
 // registerM365Connectors discovers every tenant with an active ('healthy',
