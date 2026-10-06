@@ -25,4 +25,4 @@ detection:
   condition: selection
 falsepositives:
   - IT performing a planned, reviewed federation migration
-level: high
+level: critical

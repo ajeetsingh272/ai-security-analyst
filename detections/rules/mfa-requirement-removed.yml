@@ -25,4 +25,4 @@ detection:
   condition: selection
 falsepositives:
   - IT temporarily relaxing a requirement while helping a locked-out user re-enrol
-level: high
+level: critical

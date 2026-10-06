@@ -119,6 +119,7 @@ Kafka ourselves at this size. See [ADR-0003](../adr/0003-redpanda-over-kafka.md)
 | `signals` | `tenant_id:entity_id` | 32 | 7 d |
 | `cases` | `tenant_id:case_id` | 16 | 30 d |
 | `actions` | `tenant_id:case_id` | 8 | 30 d |
+| `alerts.critical` | `tenant_id` | 8 | 30 d |
 | `*.dlq` | — | 4 | 30 d |
 
 Partitioning by `tenant_id` preserves per-tenant ordering, which correlation depends on.
@@ -170,12 +171,15 @@ Every rule, in either engine, carries a mandatory MITRE ATT&CK technique ID. CI 
 unmapped rule. This is not bureaucracy — the technique ID is what the customer-facing report
 cites, and it is what makes the output defensible to the customer's auditor.
 
-**The critical bypass.** Rules with `severity: critical` publish to the alert channel
-*directly*, in parallel with entering correlation. If the LLM, correlation, or the whole
-analyst plane is down, a critical detection still reaches the customer's phone — degraded to
-the rule's own description instead of a narrative. This satisfies constraint C4 and product
-guarantee #4, and it is covered by a chaos test that kills the analyst and asserts the alert
-still lands.
+**The critical bypass.** Rules with `level: critical` publish to `alerts.critical` *directly*
+(go/sentinelstream.CriticalAlerts), in parallel with the same signal entering `signals` for
+correlation — the same producer client, two independent publishes, neither one gated on the
+other's success. If the LLM, correlation, or the whole analyst plane is down, a critical
+detection still reaches the customer — degraded to the rule's own `owner_description` (P2-06)
+instead of an AI narrative. This satisfies constraint C4 and product guarantee #4 (SECURITY.md).
+Both paths carry the same deterministic dedupe key (go/sentinelsignal.Signal.DedupeKey) so a
+downstream notifier can collapse a bypass alert and its later AI-investigated counterpart into
+one customer-facing notification once that notifier exists.
 
 ### 3.6 Correlation plane
 

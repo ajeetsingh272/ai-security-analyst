@@ -55,6 +55,7 @@ func TestMainTopicsMatchArchitectureTable(t *testing.T) {
 		"signals":           {32, 7 * 24},
 		"cases":             {16, 30 * 24},
 		"actions":           {8, 30 * 24},
+		"alerts.critical":   {8, 30 * 24},
 	}
 	if len(MainTopics) != len(want) {
 		t.Fatalf("expected %d main topics, got %d", len(want), len(MainTopics))

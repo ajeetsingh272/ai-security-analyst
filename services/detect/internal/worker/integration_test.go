@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 	defer cancel()
 	if client, err := kgo.NewClient(kgo.SeedBrokers(brokers)); err == nil {
 		admin := kadm.NewClient(client)
-		for _, topic := range []string{sentinelstream.EventsNormalized, sentinelstream.Signals} {
+		for _, topic := range []string{sentinelstream.EventsNormalized, sentinelstream.Signals, sentinelstream.CriticalAlerts} {
 			if end, err := admin.ListEndOffsets(ctx, topic); err == nil {
 				_, _ = admin.DeleteRecords(ctx, end.Offsets())
 			}
@@ -110,10 +110,25 @@ func produceWireEvent(t *testing.T, ev wireEvent) {
 // deadline passes.
 func collectSignals(t *testing.T, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
 	t.Helper()
+	return collectSignalsFromTopic(t, sentinelstream.Signals, tenantID, n, timeout)
+}
+
+// collectCriticalAlerts is collectSignals' own counterpart for the
+// direct bypass topic (P2-08) — a separate function, not a shared one
+// with a topic parameter the normal (non-test) code never needs,
+// because the two topics' own test setup already differs enough
+// (alerts.critical) to be worth naming explicitly at call sites.
+func collectCriticalAlerts(t *testing.T, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
+	t.Helper()
+	return collectSignalsFromTopic(t, sentinelstream.CriticalAlerts, tenantID, n, timeout)
+}
+
+func collectSignalsFromTopic(t *testing.T, topic, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
+	t.Helper()
 	group := "test-collect-" + randomID(t)
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers),
-		kgo.ConsumeTopics(sentinelstream.Signals),
+		kgo.ConsumeTopics(topic),
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
@@ -246,5 +261,77 @@ func TestWorker_CrashMidBatchReplaysWithoutLosingSignals(t *testing.T) {
 	}
 	if len(got[0].EventIDs) != 1 || got[0].EventIDs[0] != eventID {
 		t.Errorf("EventIDs = %v, want [%q]", got[0].EventIDs, eventID)
+	}
+}
+
+// P2-08/TG4, T1+T2+T3 combined: a critical signal is delivered on the
+// direct bypass path with no other service involved at all. "Kill the
+// analyst/correlation service and the LLM provider" (the ticket's own
+// chaos-test framing) isn't literally exercisable here — neither
+// service exists yet (correlation is P3, the AI analyst is P4) — but
+// this test proves the stronger, more direct property that actually
+// matters: delivery to alerts.critical succeeds, within a tight SLA,
+// with ZERO consumer ever joined to `signals` and nothing resembling an
+// LLM client anywhere in this process. A dependency on any of those
+// would have to be a real call this test could observe hanging or
+// failing; there is structurally nowhere for one to hide.
+func TestWorker_CriticalSignalDeliveredWithNoOtherServiceAlive(t *testing.T) {
+	tenantID := randomID(t)
+	eventID := "evt-" + tenantID
+	group := "test-detect-t208-" + tenantID
+
+	w, consumer, producer := newWorker(t, group)
+	defer consumer.Close()
+	defer producer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	go func() { _ = w.Run(ctx) }()
+
+	start := time.Now()
+	produceWireEvent(t, wireEvent{
+		TenantID: tenantID,
+		EventID:  eventID,
+		ClassUID: 3005, ActivityID: 1, SeverityID: 1,
+		// mfa-requirement-removed.yml's own trigger — promoted to
+		// level: critical by this ticket.
+		Metadata: map[string]string{"product": "m365", "operation": "Disable Strong Authentication."},
+	})
+
+	const sla = 10 * time.Second
+	got := collectCriticalAlerts(t, tenantID, 1, sla)
+	elapsed := time.Since(start)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d critical alerts for tenant %s within the %v SLA, want exactly 1: %+v", len(got), tenantID, sla, got)
+	}
+	if elapsed > sla {
+		t.Fatalf("critical alert took %v, want within the %v SLA", elapsed, sla)
+	}
+	alert := got[0]
+	if alert.RuleID != "8f1a2b3c-0001-4a00-9000-000000000016" {
+		t.Errorf("RuleID = %q, want the mfa-requirement-removed rule id", alert.RuleID)
+	}
+	if alert.Severity != "critical" {
+		t.Errorf("Severity = %q, want critical", alert.Severity)
+	}
+	if alert.OwnerDescription == "" {
+		t.Error("OwnerDescription is empty — AC3: a bypass alert must be labelled with the rule's own plain-English description, not an AI narrative")
+	}
+	if alert.DedupeKey == "" {
+		t.Error("DedupeKey is empty")
+	}
+
+	// AC4's own data contract: the SAME signal, on the normal `signals`
+	// path (which this test's worker also published to, unconditionally
+	// — see handleRecord), must carry the IDENTICAL DedupeKey, so a
+	// future notifier can actually collapse the two into one
+	// notification.
+	normal := collectSignals(t, tenantID, 1, 5*time.Second)
+	if len(normal) != 1 {
+		t.Fatalf("got %d signals on the normal path, want exactly 1: %+v", len(normal), normal)
+	}
+	if normal[0].DedupeKey != alert.DedupeKey {
+		t.Errorf("DedupeKey mismatch between the normal signal (%q) and the bypass alert (%q) for the same detection", normal[0].DedupeKey, alert.DedupeKey)
 	}
 }

@@ -33,6 +33,12 @@ import (
 // draws between sigmac and detectgen.
 const engineInStream = "in-stream"
 
+// levelCritical is the one rule Level value that triggers the direct
+// alert bypass (P2-08, SECURITY.md guarantee #4: "Critical alerts
+// survive AI outage"). Matches Sigma's own `level: critical` value
+// verbatim — a rule author sets this in YAML, nothing here infers it.
+const levelCritical = "critical"
+
 // wireEvent mirrors go/sentinelconnector/publisher.go's own wireEvent — the
 // one JSON shape actually on events.normalized's wire, field for field.
 // Kept local rather than imported: this package has no business depending
@@ -97,6 +103,12 @@ type Metrics struct {
 	SignalsEmitted metric.Int64Counter
 	EvalErrors     metric.Int64Counter
 	PartitionLag   metric.Int64Gauge
+	// CriticalAlertsEmitted counts the direct-bypass publish (P2-08),
+	// separate from SignalsEmitted — the two are independent outcomes of
+	// the same signal, and a stakeholder watching TG4's own guarantee
+	// needs to see this path's health without the ordinary signal
+	// volume drowning it out.
+	CriticalAlertsEmitted metric.Int64Counter
 }
 
 type Options struct {
@@ -200,10 +212,24 @@ func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
 		if err := w.publishSignal(ctx, sig); err != nil {
 			w.log.Error("publishing signal failed, routing to DLQ", "rule_id", sig.RuleID, "event_id", wev.EventID, "err", err)
 			w.toDLQ(ctx, "publish", err, sig.RuleID, r.Value)
-			continue
-		}
-		if w.metrics.SignalsEmitted != nil {
+		} else if w.metrics.SignalsEmitted != nil {
 			w.metrics.SignalsEmitted.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", sig.RuleID)))
+		}
+
+		// P2-08/TG4: the critical bypass. Never gated on the signals
+		// publish above — AC1's own "in parallel with entering
+		// correlation" means this runs unconditionally, whether that
+		// publish just succeeded, failed, or the whole correlation
+		// plane is down for unrelated reasons this worker never
+		// observes (AC2: "no dependency on correlation, the analyst,
+		// or the LLM provider" — this call never touches any of them).
+		if sig.Severity == levelCritical {
+			if err := w.publishCriticalAlert(ctx, sig); err != nil {
+				w.log.Error("publishing critical alert failed, routing to DLQ", "rule_id", sig.RuleID, "event_id", wev.EventID, "err", err)
+				w.toCriticalAlertDLQ(ctx, err, sig)
+			} else if w.metrics.CriticalAlertsEmitted != nil {
+				w.metrics.CriticalAlertsEmitted.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", sig.RuleID)))
+			}
 		}
 	}
 }
@@ -247,16 +273,19 @@ func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent) (signals 
 		if !matched {
 			continue
 		}
+		eventIDs := []string{wev.EventID}
 		signals = append(signals, sentinelsignal.Signal{
-			SignalID:   uuid.NewString(),
-			EventIDs:   []string{wev.EventID},
-			TenantID:   wev.TenantID,
-			RuleID:     c.ID,
-			RuleTitle:  c.Title,
-			MitreIDs:   c.MitreIDs,
-			Severity:   c.Level,
-			Engine:     c.Engine,
-			DetectedAt: time.Now().UTC(),
+			SignalID:         uuid.NewString(),
+			EventIDs:         eventIDs,
+			TenantID:         wev.TenantID,
+			RuleID:           c.ID,
+			RuleTitle:        c.Title,
+			MitreIDs:         c.MitreIDs,
+			Severity:         c.Level,
+			Engine:           c.Engine,
+			OwnerDescription: c.OwnerDescription,
+			DedupeKey:        sentinelsignal.NewDedupeKey(wev.TenantID, c.ID, "", eventIDs),
+			DetectedAt:       time.Now().UTC(),
 		})
 	}
 	return signals, failures
@@ -290,6 +319,42 @@ func (w *Worker) publishSignal(ctx context.Context, sig sentinelsignal.Signal) e
 	key := sig.TenantID + ":" + sig.EventIDs[0]
 	res := w.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.Signals, Key: []byte(key), Value: payload})
 	return res.FirstErr()
+}
+
+// publishCriticalAlert is P2-08/TG4's own direct alert path — the exact
+// same Signal already built for `signals`, published a second time to
+// `alerts.critical` over the same producer client. No RPC, lookup, or
+// health check against correlation, the analyst, or any LLM provider
+// happens anywhere in this call: that absence, not a try/catch around a
+// dependency, is what "no dependency" (AC2) actually means here.
+func (w *Worker) publishCriticalAlert(ctx context.Context, sig sentinelsignal.Signal) error {
+	payload, err := json.Marshal(sig)
+	if err != nil {
+		return err
+	}
+	key := sig.TenantID + ":" + sig.DedupeKey
+	res := w.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.CriticalAlerts, Key: []byte(key), Value: payload})
+	return res.FirstErr()
+}
+
+func (w *Worker) toCriticalAlertDLQ(ctx context.Context, cause error, sig sentinelsignal.Signal) {
+	payload, err := json.Marshal(sig)
+	if err != nil {
+		w.log.Error("marshalling critical alert for DLQ", "rule_id", sig.RuleID, "err", err)
+		return
+	}
+	env := dlqEnvelope{Stage: "publish-critical-alert", Error: cause.Error(), RuleID: sig.RuleID, RawEvent: json.RawMessage(payload)}
+	envPayload, err := json.Marshal(env)
+	if err != nil {
+		w.log.Error("marshalling critical alert DLQ envelope", "rule_id", sig.RuleID, "err", err)
+		return
+	}
+	dlqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res := w.producer.ProduceSync(dlqCtx, &kgo.Record{Topic: sentinelstream.CriticalAlertsDLQ, Value: envPayload})
+	if err := res.FirstErr(); err != nil {
+		w.log.Error("publishing critical alert to DLQ failed", "rule_id", sig.RuleID, "err", err)
+	}
 }
 
 func (w *Worker) toDLQ(ctx context.Context, stage string, cause error, ruleID string, raw []byte) {
