@@ -4,9 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
 )
+
+// wireEvent is the JSON shape actually put on the wire — go/sentinelevents's
+// EventRow (go/sentinelevents/batch.go), field for field, for every field
+// ocsf.Event actually has a value for. This is P1-04's fix for a latent
+// bug that went unnoticed through P1-01/P1-05/P1-07 because nothing ever
+// published real content through this path before: json.Marshal(ocsf.Event)
+// directly used ocsf.Event's bare Go field names ("EventID", "ClassUID",
+// ...), which do not match EventRow's snake_case json tags
+// ("event_id", "class_uid", ...) that go/sentinelevents's Consumer actually
+// unmarshals into — every field would have silently landed as a zero
+// value. ocsf.Event stays the connector framework's own abstraction, not
+// reshaped to match one specific downstream consumer's row; this struct is
+// the translation at the one place that already owned "how an event
+// becomes wire bytes."
+type wireEvent struct {
+	TenantID      string            `json:"tenant_id"`
+	EventID       string            `json:"event_id"`
+	Time          time.Time         `json:"time"`
+	SchemaVersion string            `json:"schema_version"`
+	ClassUID      uint32            `json:"class_uid"`
+	CategoryUID   uint16            `json:"category_uid"`
+	ActivityID    uint16            `json:"activity_id"`
+	TypeUID       uint32            `json:"type_uid"`
+	SeverityID    uint8             `json:"severity_id"`
+	Unmapped      map[string]string `json:"unmapped,omitempty"`
+}
 
 // marshalEvent turns a normalised event into wire bytes. JSON, not because
 // it's the final answer for the real Redpanda producer — protobuf vs JSON is
@@ -15,7 +42,18 @@ import (
 // in P1-01's own tests, and JSON is the form that needs no schema-compiler
 // step to exist yet.
 func marshalEvent(ev ocsf.Event) ([]byte, error) {
-	return json.Marshal(ev)
+	return json.Marshal(wireEvent{
+		TenantID:      ev.TenantID,
+		EventID:       ev.EventID,
+		Time:          time.UnixMilli(ev.TimeUnixMillis).UTC(),
+		SchemaVersion: ev.SchemaVersion,
+		ClassUID:      uint32(ev.ClassUID),
+		CategoryUID:   uint16(ev.CategoryUID),
+		ActivityID:    uint16(ev.ActivityID),
+		TypeUID:       uint32(ev.TypeUID),
+		SeverityID:    uint8(ev.SeverityID),
+		Unmapped:      ev.Unmapped,
+	})
 }
 
 // Publisher durably writes a batch of normalised events to the stream and
