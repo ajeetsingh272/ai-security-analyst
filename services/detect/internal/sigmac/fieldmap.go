@@ -51,6 +51,20 @@ var fieldMap = map[string]string{
 	"EnableSafeAttachments":   "unmapped.EnableSafeAttachments",
 	"RemotePowerShellEnabled": "unmapped.RemotePowerShellEnabled",
 
+	// P2-09 additions — not a raw M365 field at all, but the local
+	// threat-intel enrichment (go/sentinelenrich) attaches at dispatch
+	// time, keyed by the event's own ClientIP. Landing in the
+	// "metadata." namespace rather than "unmapped.": these values are
+	// never anything a vendor sent, which is exactly what "unmapped"
+	// means elsewhere in this table — they are this pipeline's OWN
+	// derived metadata about the event, the same category
+	// "metadata.product"/"metadata.operation" already occupy.
+	"IsAnonymousProxy":  "metadata.is_anonymous_proxy",
+	"IsVPN":             "metadata.is_vpn",
+	"IsHostingProvider": "metadata.is_hosting_provider",
+	"GeoCountry":        "metadata.geo_country",
+	"GeoASN":            "metadata.geo_asn",
+
 	"class_uid":    "class_uid",
 	"category_uid": "category_uid",
 	"activity_id":  "activity_id",

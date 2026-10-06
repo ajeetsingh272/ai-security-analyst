@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
@@ -59,12 +60,30 @@ type wireEvent struct {
 	Unmapped      map[string]string `json:"unmapped,omitempty"`
 }
 
+// Enricher is the one method services/detect/internal/worker needs from
+// go/sentinelenrich.Refresher — narrowed to an interface at this,
+// the consumer, so a unit test can inject a trivial fake instead of a
+// real Refresher with real cached feeds. A nil Enricher (the default —
+// see Options) simply means no enrichment fields are attached; it is
+// never required.
+type Enricher interface {
+	Lookup(ip string) sentinelenrich.Classification
+}
+
 // flatten turns a wire event into the flat map[string]string every
 // compiled predicate and the dispatch tree actually read (sigmac.Event is
 // exactly this type) — the OCSF-path keys fieldmap.go's own table
 // promises: bare names for typed fields, "metadata.<k>"/"unmapped.<k>" for
-// the two map fields.
-func flatten(ev wireEvent) map[string]string {
+// the two map fields. enricher, if non-nil, additionally attaches P2-09's
+// own threat-intel fields (fieldmap.go's IsAnonymousProxy/IsVPN/
+// IsHostingProvider/GeoCountry/GeoASN) keyed off whichever client-IP
+// field the event actually carries — this IS "enrichment time" (AC2):
+// the one and only place in the in-stream path an event's own ClientIP
+// is resolved against the locally cached feeds, synchronously, in
+// memory, before any rule ever sees the event (AC1 — Enricher.Lookup
+// never touches the network itself, see sentinelenrich.Refresher's own
+// doc comment).
+func flatten(ev wireEvent, enricher Enricher) map[string]string {
 	flat := map[string]string{
 		"tenant_id":    ev.TenantID,
 		"class_uid":    strconv.FormatUint(uint64(ev.ClassUID), 10),
@@ -80,6 +99,25 @@ func flatten(ev wireEvent) map[string]string {
 	}
 	for k, v := range ev.Unmapped {
 		flat["unmapped."+k] = v
+	}
+
+	if enricher != nil {
+		ip := flat["unmapped.ClientIP"]
+		if ip == "" {
+			ip = flat["unmapped.ClientIPAddress"]
+		}
+		if ip != "" {
+			c := enricher.Lookup(ip)
+			flat["metadata.is_anonymous_proxy"] = strconv.FormatBool(c.Anonymiser())
+			flat["metadata.is_vpn"] = strconv.FormatBool(c.IsVPN)
+			flat["metadata.is_hosting_provider"] = strconv.FormatBool(c.IsHosting)
+			if c.Country != "" {
+				flat["metadata.geo_country"] = c.Country
+			}
+			if c.ASN != 0 {
+				flat["metadata.geo_asn"] = strconv.FormatUint(uint64(c.ASN), 10)
+			}
+		}
 	}
 	return flat
 }
@@ -117,6 +155,14 @@ type Options struct {
 	Group string
 	Log   *slog.Logger
 	Metrics
+	// Enricher, if set, attaches P2-09's own threat-intel fields to
+	// every event with a ClientIP before dispatch (see flatten's own
+	// doc comment). Optional and nil-safe like every other capability
+	// here — a detect deployment with no enrichment configured simply
+	// never populates IsAnonymousProxy/IsVPN/etc., and any rule
+	// referencing them legitimately never matches, the same as any
+	// other field an event happens not to carry.
+	Enricher Enricher
 }
 
 // Worker evaluates events.normalized against tree and publishes matches to
@@ -132,6 +178,7 @@ type Worker struct {
 	group    string
 	log      *slog.Logger
 	metrics  Metrics
+	enricher Enricher
 }
 
 func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Worker {
@@ -146,6 +193,7 @@ func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Wor
 		group:    opts.Group,
 		log:      log,
 		metrics:  opts.Metrics,
+		enricher: opts.Enricher,
 	}
 }
 
@@ -198,7 +246,7 @@ func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
 		return
 	}
 
-	signals, failures := evaluate(ctx, w.tree, wev)
+	signals, failures := evaluate(ctx, w.tree, wev, w.enricher)
 
 	for _, f := range failures {
 		w.log.Error("rule evaluation failed, routing to DLQ", "rule_id", f.RuleID, "event_id", wev.EventID, "err", f.Err)
@@ -250,8 +298,8 @@ type ruleFailure struct {
 // continues") can be proven directly against a tree and an event, with no
 // broker involved — handleRecord is the thin, integration-tested layer
 // that turns this function's output into wire effects.
-func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent) (signals []sentinelsignal.Signal, failures []ruleFailure) {
-	flat := flatten(wev)
+func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher Enricher) (signals []sentinelsignal.Signal, failures []ruleFailure) {
+	flat := flatten(wev, enricher)
 	for _, c := range tree.Candidates(ctx, flat) {
 		// This is the IN-STREAM worker (P2-04's own title) — a "windowed"
 		// rule's compiled predicate only checks its base selection, never

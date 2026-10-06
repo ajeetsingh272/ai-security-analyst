@@ -59,15 +59,16 @@ var referenceWeek = []benignEvent{
 }
 
 // skipRuleIDs excludes rules this measurement cannot honestly run
-// against: anonymous-proxy-signin.yml's own selection is a documented
-// P2-09-blocked placeholder (Operation=UserLoggedIn + ResultStatus=
-// Success, with no actual anonymiser/proxy field to check yet — see
-// that rule's own description) that matches EVERY successful sign-in by
-// construction, not a quality defect of this ticket's own 32 rules.
-// P2-09 (not yet built) is what gives it a real discriminator.
-var skipRuleIDs = map[string]bool{
-	"8f1a2b3c-0001-4a00-9000-000000000005": true, // anonymous-proxy-signin
-}
+// against. Empty now that P2-09 gave anonymous-proxy-signin.yml a real
+// discriminator (IsAnonymousProxy) — it used to be excluded here as a
+// documented placeholder that matched every successful sign-in by
+// construction; this benign dataset's own events never carry that
+// field at all (no enrichment step runs in this test), so the rule
+// simply never matches here now, the same as any rule referencing a
+// field an event doesn't have. Kept as a named, reviewable mechanism
+// rather than deleted outright, since a FUTURE rule could plausibly
+// need the same kind of exclusion for the same reason.
+var skipRuleIDs = map[string]bool{}
 
 // T3/AC5: false-positive rate under 20% on the reference week, measured
 // across every IN-STREAM rule (the same Engine=="in-stream" filter

@@ -3,6 +3,7 @@ go 1.23
 use (
 	./go/sentinelconnector
 	./go/sentineldb
+	./go/sentinelenrich
 	./go/sentinelevents
 	./go/sentinelobs
 	./go/sentinelreplay

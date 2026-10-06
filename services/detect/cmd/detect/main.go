@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
@@ -136,9 +137,41 @@ func main() {
 		os.Exit(1)
 	}
 
+	// P2-09: threat-intel enrichment. Lookup is called synchronously
+	// from the worker's own per-event path, but every byte it reads
+	// comes from the Store this Refresher already loaded in the
+	// background — AC1's "detection never makes a synchronous external
+	// call" is true because Fetch only ever runs on enrichRefresher's
+	// own ticker (Run, below), never on the worker's.
+	enrichRefreshErrors, err := otel.Meter(serviceName).Int64Counter("detect.enrichment_refresh_errors",
+		metric.WithDescription("A threat-intel feed refresh attempt failed; the previously loaded data is still being served"))
+	if err != nil {
+		log.Error("creating detect.enrichment_refresh_errors counter", "err", err)
+		os.Exit(1)
+	}
+	enrichStale, err := otel.Meter(serviceName).Int64Gauge("detect.enrichment_stale",
+		metric.WithDescription("1 if the threat-intel feeds have not refreshed successfully within the staleness threshold (AC4), else 0"))
+	if err != nil {
+		log.Error("creating detect.enrichment_stale gauge", "err", err)
+		os.Exit(1)
+	}
+	enrichRefresher := sentinelenrich.New(sentinelenrich.Options{
+		CacheDir: envOr("ENRICHMENT_CACHE_DIR", filepath.Join(os.TempDir(), "sentinel-enrichment")),
+		Log:      log,
+		Metrics: sentinelenrich.Metrics{
+			RefreshErrors: enrichRefreshErrors,
+			Stale:         enrichStale,
+		},
+	})
+	if err := enrichRefresher.LoadFromCache(); err != nil {
+		log.Info("no cached threat-intel feeds yet; will be empty until the first refresh completes", "err", err)
+	}
+	go enrichRefresher.Run(ctx)
+
 	w := worker.New(tree, consumerClient, producerClient, worker.Options{
-		Group: group,
-		Log:   log,
+		Group:    group,
+		Log:      log,
+		Enricher: enrichRefresher,
 		Metrics: worker.Metrics{
 			SignalsEmitted:        signalsEmitted,
 			EvalErrors:            evalErrors,
@@ -240,8 +273,6 @@ func main() {
 			stop()
 		}
 	}()
-
-	// TODO(P2-08): wire the critical-severity bypass to the alert channel.
 
 	<-ctx.Done()
 	log.Info("draining in-flight evaluation before exit")

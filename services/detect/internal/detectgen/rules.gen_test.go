@@ -14,10 +14,10 @@ func TestRule_admin_consent_granted_to_application(t *testing.T) {
 }
 
 func TestRule_anonymous_proxy_signin(t *testing.T) {
-	if !ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
+	if !ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.is_anonymous_proxy": "true", "metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("positive fixture for rule anonymous-proxy-signin (Sign-in through a known anonymiser or proxy) did not match")
 	}
-	if ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Failed"}) {
+	if ruleMatch_anonymous_proxy_signin(map[string]string{"metadata.is_anonymous_proxy": "false", "metadata.operation": "UserLoggedIn", "metadata.product": "m365", "unmapped.ResultStatus": "Success"}) {
 		t.Fatalf("negative fixture for rule anonymous-proxy-signin (Sign-in through a known anonymiser or proxy) matched, but should not have")
 	}
 }

@@ -74,7 +74,8 @@ func ruleMatch_admin_consent_granted_to_application(ev map[string]string) bool {
 }
 
 func ruleMatch_anonymous_proxy_signin(ev map[string]string) bool {
-	sel_selection := (ev["metadata.operation"] == "UserLoggedIn") &&
+	sel_selection := (ev["metadata.is_anonymous_proxy"] == "true") &&
+		(ev["metadata.operation"] == "UserLoggedIn") &&
 		(ev["unmapped.ResultStatus"] == "Success")
 	return sel_selection
 
