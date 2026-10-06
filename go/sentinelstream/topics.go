@@ -61,3 +61,17 @@ var MainTopics = []TopicSpec{
 // to today (see publisher.go's RedpandaPublisher) — named here so main.go
 // doesn't hardcode the string "events.raw" at the call site.
 const EventsRaw = "events.raw"
+
+// EventsNormalized is what P1-07's ClickHouse writer consumes from. Nothing
+// publishes to it yet — P1-04 (OCSF normalisation) is what will, once a
+// real connector (P1-02/03, blocked on real OAuth credentials) exists to
+// normalise. The topic is provisioned now regardless (topics.go's
+// MainTopics), and P1-07's consumer is built and tested against it now too,
+// the same "framework ahead of the real producer" sequencing P1-01 and
+// P1-05 already established.
+const EventsNormalized = "events.normalized"
+
+// EventsRawDLQ is events.raw's own dead-letter topic — where P1-03's M365
+// connector (go/sentinelconnector/m365) sends a content blob that failed
+// to parse, raw bytes intact, rather than dropping it (that ticket's AC3).
+const EventsRawDLQ = "events.raw.dlq"
