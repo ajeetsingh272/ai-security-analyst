@@ -7,6 +7,7 @@ use (
 	./go/sentinelobs
 	./go/sentinelreplay
 	./go/sentinelschema
+	./go/sentinelsignal
 	./go/sentinelstream
 	./go/soaktest
 	./services/correlate

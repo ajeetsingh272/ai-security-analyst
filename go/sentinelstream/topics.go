@@ -75,3 +75,14 @@ const EventsNormalized = "events.normalized"
 // connector (go/sentinelconnector/m365) sends a content blob that failed
 // to parse, raw bytes intact, rather than dropping it (that ticket's AC3).
 const EventsRawDLQ = "events.raw.dlq"
+
+// Signals is P2-04's own output topic — the compiled rule corpus's
+// evaluation result for every normalised event (ADR-0004), consumed next
+// by the correlation plane (P3).
+const Signals = "signals"
+
+// SignalsDLQ is signals' own dead-letter topic — an event whose evaluation
+// panicked, or whose resulting signal could not be published, lands here
+// rather than being silently dropped (P2-04 AC: "evaluation errors route
+// to DLQ without halting the worker").
+const SignalsDLQ = "signals.dlq"

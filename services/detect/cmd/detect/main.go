@@ -17,25 +17,150 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/worker"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
-func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(log)
+const serviceName = "sentinel-detect"
 
+func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+	otlpEndpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+
+	_, shutdownTracing, err := sentinelobs.NewTracerProvider(ctx, serviceName, otlpEndpoint)
+	if err != nil {
+		slog.Error("starting tracer provider", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownTracing(context.Background()) }()
+
+	_, metrics, shutdownMetrics, err := sentinelobs.NewMeterProvider(ctx, serviceName, otlpEndpoint)
+	if err != nil {
+		slog.Error("starting meter provider", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownMetrics(context.Background()) }()
+
+	log := sentinelobs.NewLogger(serviceName, os.Stdout)
+	slog.SetDefault(log)
+
+	rulesDir, err := corpusDir()
+	if err != nil {
+		log.Error("locating detections/rules", "err", err)
+		os.Exit(1)
+	}
+	rules, errs := sigmac.ParseCorpus(rulesDir)
+	if len(errs) != 0 {
+		log.Error("parsing rule corpus", "errs", errs)
+		os.Exit(1)
+	}
+
+	candidateCount, err := otel.Meter(serviceName).Int64Histogram("detect.candidate_count",
+		metric.WithDescription("Candidate rule count surviving dispatch narrowing, per event"))
+	if err != nil {
+		log.Error("creating detect.candidate_count histogram", "err", err)
+		os.Exit(1)
+	}
+	tree, err := dispatch.Build(rules, detectgen.Rules, dispatch.Options{CandidateCount: candidateCount})
+	if err != nil {
+		log.Error("building dispatch tree", "err", err)
+		os.Exit(1)
+	}
+
+	group := envOr("CONSUMER_GROUP", "detect")
+	consumerClient, err := kgo.NewClient(
+		kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		// Offsets commit only after every record in a poll has been
+		// published as a signal or routed to DLQ (AC2) — the same
+		// false-ack-ordering concern ADR-0010 raises for the producer
+		// side, applied here to this worker's own consumption.
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		log.Error("creating kafka consumer client", "err", err)
+		os.Exit(1)
+	}
+	defer consumerClient.Close()
+
+	// A dedicated, ungrouped client for everything this worker PUBLISHES
+	// (signals and signals.dlq) — producing and a joined consumer group
+	// are two different concerns, the same split services/eventwriter's
+	// own DLQ client already uses.
+	producerClient, err := kgo.NewClient(kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")))
+	if err != nil {
+		log.Error("creating kafka producer client", "err", err)
+		os.Exit(1)
+	}
+	defer producerClient.Close()
+
+	signalsEmitted, err := otel.Meter(serviceName).Int64Counter("detect.signals_emitted",
+		metric.WithDescription("Signals published to the signals topic"))
+	if err != nil {
+		log.Error("creating detect.signals_emitted counter", "err", err)
+		os.Exit(1)
+	}
+	evalErrors, err := otel.Meter(serviceName).Int64Counter("detect.eval_errors",
+		metric.WithDescription("Rule evaluations that panicked or otherwise failed and were routed to signals.dlq"))
+	if err != nil {
+		log.Error("creating detect.eval_errors counter", "err", err)
+		os.Exit(1)
+	}
+	partitionLag, err := otel.Meter(serviceName).Int64Gauge("detect.consumer_lag",
+		metric.WithDescription("events.normalized consumer lag, per partition"))
+	if err != nil {
+		log.Error("creating detect.consumer_lag gauge", "err", err)
+		os.Exit(1)
+	}
+
+	w := worker.New(tree, consumerClient, producerClient, worker.Options{
+		Group: group,
+		Log:   log,
+		Metrics: worker.Metrics{
+			SignalsEmitted: signalsEmitted,
+			EvalErrors:     evalErrors,
+			PartitionLag:   partitionLag,
+		},
 	})
 
+	go w.RunLagReporter(ctx, sentinelstream.EventsNormalized, 10*time.Second)
+
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		if err := w.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Error("worker stopped unexpectedly", "err", err)
+			stop()
+		}
+	}()
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /healthz", metrics.InstrumentHandler("/healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})))
+	mux.Handle("GET /readyz", metrics.InstrumentHandler("/readyz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})))
+
 	srv := &http.Server{
-		Addr:              envOr("DETECT_ADDR", ":8102"),
+		Addr:              envOr("DETECT_ADDR", ":8104"),
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -48,16 +173,44 @@ func main() {
 		}
 	}()
 
-	// TODO(P2-04): consume events.normalized and evaluate the compiled corpus.
 	// TODO(P2-08): wire the critical-severity bypass to the alert channel.
 
 	<-ctx.Done()
+	log.Info("draining in-flight evaluation before exit")
+
 	shutdown, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
-		log.Error("shutdown", "err", err)
+		log.Error("http shutdown", "err", err)
+	}
+	select {
+	case <-workerDone:
+	case <-shutdown.Done():
+		log.Error("worker did not stop within the shutdown deadline")
 	}
 	log.Info("detect stopped")
+}
+
+// corpusDir walks up from the working directory to the first ancestor
+// containing go.work and returns its detections/rules — this binary is
+// run both via `go run ./cmd/detect` from services/detect and, in CI,
+// from the repo root, so it cannot assume either (the same resolution
+// cmd/sigmac-gen's own repoRoot already uses).
+func corpusDir() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.work")); err == nil {
+			return filepath.Join(dir, "detections", "rules"), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
 }
 
 func envOr(key, fallback string) string {
