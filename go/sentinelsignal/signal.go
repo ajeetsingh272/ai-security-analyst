@@ -51,8 +51,20 @@ type Signal struct {
 	// verbatim, never a narrative an AI wrote, which is also exactly
 	// what overview.md §3.5 means by "degraded to the rule's own
 	// description instead of a narrative".
-	OwnerDescription string    `json:"owner_description,omitempty"`
-	DetectedAt       time.Time `json:"detected_at"`
+	OwnerDescription string `json:"owner_description,omitempty"`
+	// Suppressed and SuppressionID are P2-10/TG3's own addition. AC3
+	// ("suppressed signals are still stored and counted, just not
+	// escalated") means this signal is published to `signals` exactly as
+	// any other — the suppression is disclosed ON the signal itself,
+	// never by silently dropping it or routing it differently, so a
+	// future consumer (correlation, a dashboard) can tell "this matched
+	// but an analyst already decided it's noise" apart from "this never
+	// got evaluated for suppression at all" (the zero-value, Suppressed
+	// == false). SuppressionID names which suppression row is responsible,
+	// for an analyst tracing back why a signal didn't escalate.
+	Suppressed    bool      `json:"suppressed,omitempty"`
+	SuppressionID string    `json:"suppression_id,omitempty"`
+	DetectedAt    time.Time `json:"detected_at"`
 }
 
 // NewDedupeKey derives Signal.DedupeKey from the content that actually

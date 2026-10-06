@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, tenantDeks, connectorCursors } from "./schema";
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -25,11 +25,18 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	mspLinks_clientTenantId: many(mspLinks, {
 		relationName: "mspLinks_clientTenantId_tenants_id"
 	}),
+	suppressions: many(suppressions),
 	tenantDeks: many(tenantDeks),
 }));
 
 export const usersRelations = relations(users, ({many}) => ({
 	memberships: many(memberships),
+	suppressions_createdBy: many(suppressions, {
+		relationName: "suppressions_createdBy_users_id"
+	}),
+	suppressions_revokedBy: many(suppressions, {
+		relationName: "suppressions_revokedBy_users_id"
+	}),
 }));
 
 export const connectorsRelations = relations(connectors, ({one, many}) => ({
@@ -93,6 +100,23 @@ export const mspLinksRelations = relations(mspLinks, ({one}) => ({
 		fields: [mspLinks.clientTenantId],
 		references: [tenants.id],
 		relationName: "mspLinks_clientTenantId_tenants_id"
+	}),
+}));
+
+export const suppressionsRelations = relations(suppressions, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [suppressions.tenantId],
+		references: [tenants.id]
+	}),
+	user_createdBy: one(users, {
+		fields: [suppressions.createdBy],
+		references: [users.id],
+		relationName: "suppressions_createdBy_users_id"
+	}),
+	user_revokedBy: one(users, {
+		fields: [suppressions.revokedBy],
+		references: [users.id],
+		relationName: "suppressions_revokedBy_users_id"
 	}),
 }));
 

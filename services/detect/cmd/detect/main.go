@@ -22,12 +22,14 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/windowed"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/worker"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -168,10 +170,23 @@ func main() {
 	}
 	go enrichRefresher.Run(ctx)
 
+	// P2-10/TG3: suppression. pgPool is used only through
+	// suppression.Checker's own tenant-scoped reads (sentineldb.
+	// WithTenantContext) — this binary writes nothing to Postgres itself;
+	// creating/revoking/renewing a suppression is apps/api's job.
+	pgPool, err := sentineldb.NewPool(ctx)
+	if err != nil {
+		log.Error("connecting to postgres for suppression checks", "err", err)
+		os.Exit(1)
+	}
+	defer pgPool.Close()
+	suppressionChecker := suppression.NewPostgresChecker(pgPool)
+
 	w := worker.New(tree, consumerClient, producerClient, worker.Options{
-		Group:    group,
-		Log:      log,
-		Enricher: enrichRefresher,
+		Group:              group,
+		Log:                log,
+		Enricher:           enrichRefresher,
+		SuppressionChecker: suppressionChecker,
 		Metrics: worker.Metrics{
 			SignalsEmitted:        signalsEmitted,
 			EvalErrors:            evalErrors,
@@ -232,7 +247,8 @@ func main() {
 	}
 
 	windowedScheduler, err := windowed.New(rules, chConn, producerClient, windowed.Options{
-		Log: log,
+		Log:                log,
+		SuppressionChecker: suppressionChecker,
 		Metrics: windowed.Metrics{
 			SignalsEmitted:        windowedSignalsEmitted,
 			QueryErrors:           windowedQueryErrors,

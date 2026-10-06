@@ -198,6 +198,22 @@ describe('cross-tenant isolation through TenantScopedRepository', () => {
     }
   });
 
+  it('suppressions: a row created for tenant A is invisible to tenant B, even unfiltered', async () => {
+    await asTenant(tenantA, (repo) =>
+      repo.query(
+        `INSERT INTO suppressions (tenant_id, rule_id, reason, created_by, expires_at)
+         VALUES ($1, 'probe-rule', 'P0-05 isolation probe', $2, now() + interval '1 day')`,
+        [tenantA, sharedUserId],
+      ),
+    );
+
+    const asA = await asTenant(tenantA, (repo) => repo.query('SELECT rule_id FROM suppressions'));
+    const asB = await asTenant(tenantB, (repo) => repo.query('SELECT rule_id FROM suppressions'));
+
+    expect(asA).toHaveLength(1);
+    expect(asB).toHaveLength(0);
+  });
+
   it('audit_log: cross-tenant isolation holds even though the table forbids DELETE', async () => {
     // Never committed: audit_log allows INSERT and SELECT for sentinel_app
     // but not UPDATE or DELETE (TG6), so a throwaway probe row is written and

@@ -11,11 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -333,5 +336,258 @@ func TestWorker_CriticalSignalDeliveredWithNoOtherServiceAlive(t *testing.T) {
 	}
 	if normal[0].DedupeKey != alert.DedupeKey {
 		t.Errorf("DedupeKey mismatch between the normal signal (%q) and the bypass alert (%q) for the same detection", normal[0].DedupeKey, alert.DedupeKey)
+	}
+}
+
+// ── P2-10/TG3 fixtures ──────────────────────────────────────────────────────
+//
+// Suppressions live in real Postgres (0006_suppressions.sql), with real FK
+// constraints back to tenants(id)/users(id) — unlike every other fixture in
+// this file, which only needs a tenant id shaped like a plausible string on
+// the Kafka wire, these tests need a REAL tenants row, whose id (returned
+// by createTenantAndUser below, via Postgres's own gen_random_uuid()) is
+// used as the test's tenantID throughout — both on the wire and as the
+// suppression's tenant_id — since sentineldb.WithTenantContext refuses any
+// tenant id that isn't actually UUID-shaped, unlike randomID's bare hex.
+
+func newSuppressionPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := sentineldb.NewPool(context.Background())
+	if err != nil {
+		t.Fatalf("connecting to postgres: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// createTenantAndUser inserts real fixture rows directly over the pool's
+// default (superuser) connection — fixture setup, not the code under test,
+// which is PostgresChecker.IsSuppressed's own tenant-scoped read below.
+func createTenantAndUser(t *testing.T, pool *pgxpool.Pool) (tenantID, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO tenants (name, plan) VALUES ($1, 'trial') RETURNING id`,
+		"P2-10 suppression probe "+randomID(t),
+	).Scan(&tenantID); err != nil {
+		t.Fatalf("creating tenant fixture: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, display_name) VALUES ($1, $2) RETURNING id`,
+		"p2-10-probe-"+randomID(t)+"@example.invalid", "P2-10 probe user",
+	).Scan(&userID); err != nil {
+		t.Fatalf("creating user fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		// Cascades through suppressions (ON DELETE CASCADE) too.
+		_, _ = pool.Exec(context.Background(), `DELETE FROM tenants WHERE id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, userID)
+	})
+	return tenantID, userID
+}
+
+// insertSuppression writes a real suppressions row, expiring `in` from now
+// — always a positive duration, never a pre-expired timestamp: the table's
+// own CHECK (expires_at > created_at) makes "already expired at creation"
+// unrepresentable by construction, so T2 below proves expiry by waiting for
+// real time to pass a short-lived suppression, not by backdating one.
+// entityID == "" inserts a NULL (tenant+rule-wide) suppression.
+func insertSuppression(t *testing.T, pool *pgxpool.Pool, tenantID, ruleID, entityID, createdBy string, in time.Duration) {
+	t.Helper()
+	var entity any
+	if entityID != "" {
+		entity = entityID
+	}
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO suppressions (tenant_id, rule_id, entity_id, reason, created_by, expires_at)
+		 VALUES ($1, $2, $3, 'P2-10 integration test probe', $4, $5)`,
+		tenantID, ruleID, entity, createdBy, time.Now().Add(in),
+	)
+	if err != nil {
+		t.Fatalf("inserting suppression fixture: %v", err)
+	}
+}
+
+// mfaRequirementRemovedRuleID is mfa-requirement-removed.yml's own id —
+// P2-08's own critical rule, reused here because it is already the exact
+// trigger TestWorker_CriticalSignalDeliveredWithNoOtherServiceAlive uses.
+const mfaRequirementRemovedRuleID = "8f1a2b3c-0001-4a00-9000-000000000016"
+
+func mfaRemovedEvent(tenantID, eventID string) wireEvent {
+	return wireEvent{
+		TenantID: tenantID,
+		EventID:  eventID,
+		ClassUID: 3005, ActivityID: 1, SeverityID: 1,
+		Metadata: map[string]string{"product": "m365", "operation": "Disable Strong Authentication."},
+	}
+}
+
+// T1 (AC3): "Suppressed signals are still stored and counted, just not
+// escalated." A wildcard (entity-less) suppression on the critical rule
+// used above must still let the normal `signals` publish through —
+// disclosing Suppressed/SuppressionID on the stored record — while the
+// alerts.critical bypass does not fire at all.
+func TestWorker_SuppressedCriticalSignalStillStoredButNotEscalated(t *testing.T) {
+	pool := newSuppressionPool(t)
+	tenantID, userID := createTenantAndUser(t, pool)
+	eventID := "evt-" + tenantID
+	group := "test-detect-p210-t1-" + tenantID
+
+	insertSuppression(t, pool, tenantID, mfaRequirementRemovedRuleID, "", userID, 5*time.Minute)
+
+	consumer, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		t.Fatalf("creating consumer: %v", err)
+	}
+	defer consumer.Close()
+	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("creating producer: %v", err)
+	}
+	defer producer.Close()
+
+	w := New(buildRealTree(t), consumer, producer, Options{
+		Group:              group,
+		SuppressionChecker: suppression.NewPostgresChecker(pool),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	go func() { _ = w.Run(ctx) }()
+
+	produceWireEvent(t, mfaRemovedEvent(tenantID, eventID))
+
+	normal := collectSignals(t, tenantID, 1, 15*time.Second)
+	if len(normal) != 1 {
+		t.Fatalf("got %d signals on the normal path, want exactly 1 (AC3: still stored)", len(normal))
+	}
+	if !normal[0].Suppressed {
+		t.Error("Suppressed = false, want true — the stored signal must disclose its own suppression")
+	}
+	if normal[0].SuppressionID == "" {
+		t.Error("SuppressionID is empty, want the responsible suppression's id")
+	}
+
+	alerts := collectCriticalAlerts(t, tenantID, 1, 3*time.Second)
+	if len(alerts) != 0 {
+		t.Fatalf("got %d critical alerts, want 0 — a suppressed critical signal must not escalate", len(alerts))
+	}
+
+	// AC5: "what they have suppressed" — PostgresChecker.IsSuppressed
+	// increments this atomically on every match.
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT suppressed_count FROM suppressions WHERE id = $1`, normal[0].SuppressionID,
+	).Scan(&count); err != nil {
+		t.Fatalf("reading suppressed_count: %v", err)
+	}
+	if count < 1 {
+		t.Errorf("suppressed_count = %d, want at least 1", count)
+	}
+}
+
+// T2 (AC4): "Suppressions expire by default." A short-lived suppression
+// stops suppressing once real time passes its expires_at — proven by
+// producing the same trigger twice against one still-running worker, once
+// while the suppression is live and once after it has expired.
+func TestWorker_SuppressionStopsApplyingAfterItExpires(t *testing.T) {
+	pool := newSuppressionPool(t)
+	tenantID, userID := createTenantAndUser(t, pool)
+	group := "test-detect-p210-t2-" + tenantID
+
+	const livenessWindow = 3 * time.Second
+	insertSuppression(t, pool, tenantID, mfaRequirementRemovedRuleID, "", userID, livenessWindow)
+
+	consumer, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		t.Fatalf("creating consumer: %v", err)
+	}
+	defer consumer.Close()
+	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("creating producer: %v", err)
+	}
+	defer producer.Close()
+
+	w := New(buildRealTree(t), consumer, producer, Options{
+		Group:              group,
+		SuppressionChecker: suppression.NewPostgresChecker(pool),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() { _ = w.Run(ctx) }()
+
+	// While live: no critical alert.
+	produceWireEvent(t, mfaRemovedEvent(tenantID, "evt-live-"+tenantID))
+	if alerts := collectCriticalAlerts(t, tenantID, 1, 2*time.Second); len(alerts) != 0 {
+		t.Fatalf("got %d critical alerts while the suppression is still live, want 0", len(alerts))
+	}
+
+	// Wait past expires_at, then trigger again: must escalate normally.
+	time.Sleep(livenessWindow + 1*time.Second)
+	produceWireEvent(t, mfaRemovedEvent(tenantID, "evt-expired-"+tenantID))
+	alerts := collectCriticalAlerts(t, tenantID, 1, 15*time.Second)
+	if len(alerts) != 1 {
+		t.Fatalf("got %d critical alerts after expiry, want exactly 1 — an expired suppression must stop applying", len(alerts))
+	}
+}
+
+// T3: cross-tenant isolation. A suppression created for tenant A must never
+// suppress the identical rule for tenant B — the same RLS guarantee
+// packages/db/src/__tests__/tenant-isolation.integration.test.ts proves on
+// the TypeScript side, exercised here through PostgresChecker instead.
+func TestWorker_SuppressionDoesNotCrossTenants(t *testing.T) {
+	pool := newSuppressionPool(t)
+	tenantA, userA := createTenantAndUser(t, pool)
+	tenantB, _ := createTenantAndUser(t, pool)
+	group := "test-detect-p210-t3-" + tenantA
+
+	insertSuppression(t, pool, tenantA, mfaRequirementRemovedRuleID, "", userA, 5*time.Minute)
+
+	consumer, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(group),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		t.Fatalf("creating consumer: %v", err)
+	}
+	defer consumer.Close()
+	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("creating producer: %v", err)
+	}
+	defer producer.Close()
+
+	w := New(buildRealTree(t), consumer, producer, Options{
+		Group:              group,
+		SuppressionChecker: suppression.NewPostgresChecker(pool),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	go func() { _ = w.Run(ctx) }()
+
+	produceWireEvent(t, mfaRemovedEvent(tenantA, "evt-a-"+tenantA))
+	produceWireEvent(t, mfaRemovedEvent(tenantB, "evt-b-"+tenantB))
+
+	if alerts := collectCriticalAlerts(t, tenantA, 1, 3*time.Second); len(alerts) != 0 {
+		t.Fatalf("got %d critical alerts for suppressed tenant A, want 0", len(alerts))
+	}
+	alertsB := collectCriticalAlerts(t, tenantB, 1, 15*time.Second)
+	if len(alertsB) != 1 {
+		t.Fatalf("got %d critical alerts for tenant B, want exactly 1 — tenant A's suppression must not leak", len(alertsB))
 	}
 }

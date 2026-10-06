@@ -7,14 +7,20 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelevents"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -76,10 +82,24 @@ func deleteTenantEvents(t *testing.T, conn clickhouse.Conn, tenantID string) {
 
 func collectSignals(t *testing.T, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
 	t.Helper()
+	return collectFromTopic(t, sentinelstream.Signals, tenantID, n, timeout)
+}
+
+// collectCriticalAlerts is collectSignals' own counterpart for the direct
+// bypass topic (P2-08/P2-10) — see services/detect/internal/worker's
+// identical split for why this stays a separate, named function rather
+// than a topic parameter ordinary (non-test) code would never need.
+func collectCriticalAlerts(t *testing.T, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
+	t.Helper()
+	return collectFromTopic(t, sentinelstream.CriticalAlerts, tenantID, n, timeout)
+}
+
+func collectFromTopic(t *testing.T, topic, tenantID string, n int, timeout time.Duration) []sentinelsignal.Signal {
+	t.Helper()
 	group := "test-windowed-collect-" + randomUUID(t)
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers),
-		kgo.ConsumeTopics(sentinelstream.Signals),
+		kgo.ConsumeTopics(topic),
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
@@ -196,5 +216,140 @@ func TestImpossibleTravel_DoesNotFireForSameIPTravel(t *testing.T) {
 	got := collectSignals(t, tenantID, 1, 5*time.Second)
 	if len(got) != 0 {
 		t.Fatalf("got %d signals for same-IP travel, want 0: %+v", len(got), got)
+	}
+}
+
+// ── P2-10/TG3 ────────────────────────────────────────────────────────────
+//
+// No rule in today's real windowed corpus is level: critical (all three
+// are high — see scanSignals_test.go's own TestScanSignals_
+// CriticalLevelCarriesThroughToSeverity for the same situation), so this
+// reuses that file's synthetic-critical-rule approach, paired with
+// scheduler_test.go's fakeConn/fakeRows so no real ClickHouse data needs
+// to exist for a rule that isn't real — Postgres (suppression) and Kafka
+// (producer, signals/alerts.critical) stay genuinely real underneath.
+
+func newWindowedSuppressionPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := sentineldb.NewPool(context.Background())
+	if err != nil {
+		t.Fatalf("connecting to postgres: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func createWindowedTenantAndUser(t *testing.T, pool *pgxpool.Pool) (tenantID, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO tenants (name, plan) VALUES ($1, 'trial') RETURNING id`,
+		"P2-10 windowed suppression probe "+randomUUID(t),
+	).Scan(&tenantID); err != nil {
+		t.Fatalf("creating tenant fixture: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, display_name) VALUES ($1, $2) RETURNING id`,
+		"p2-10-windowed-probe-"+randomUUID(t)+"@example.invalid", "P2-10 windowed probe user",
+	).Scan(&userID); err != nil {
+		t.Fatalf("creating user fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM tenants WHERE id = $1`, tenantID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, userID)
+	})
+	return tenantID, userID
+}
+
+func insertWindowedSuppression(t *testing.T, pool *pgxpool.Pool, tenantID, ruleID, entityID, createdBy string, in time.Duration) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO suppressions (tenant_id, rule_id, entity_id, reason, created_by, expires_at)
+		 VALUES ($1, $2, $3, 'P2-10 windowed integration test probe', $4, $5)`,
+		tenantID, ruleID, entityID, createdBy, time.Now().Add(in),
+	)
+	if err != nil {
+		t.Fatalf("inserting suppression fixture: %v", err)
+	}
+}
+
+func syntheticCriticalWindowedRule(id string) *sigmac.Rule {
+	return &sigmac.Rule{
+		ID: id, Slug: id, Title: "Synthetic critical windowed rule", Level: "critical",
+		MitreIDs:         []string{"attack.t1078"},
+		OwnerDescription: "A synthetic critical windowed rule for P2-10 testing.",
+		Selections: map[string]sigmac.Selection{
+			"selection": {Name: "selection", Fields: []sigmac.FieldMatch{
+				{SigmaField: "Operation", OCSFPath: "metadata.operation", Modifier: sigmac.ModEquals, Values: []string{"X"}},
+			}},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+		Engine:    sigmac.EngineWindowed,
+		Aggregation: &sigmac.Aggregation{
+			GroupBy: []string{"UserId"}, Op: "count", Comparator: ">", Threshold: 1, Window: 10 * time.Minute,
+		},
+	}
+}
+
+// T1 (AC3) + entity-scoping: unlike the in-stream worker, a windowed
+// signal has a real EntityID — this proves a suppression scoped to ONE
+// entity ("alice") silences only that entity's own escalation, while a
+// different entity ("bob") matched by the SAME rule in the SAME tick
+// still escalates normally, both signals still landing on the normal
+// `signals` topic either way (AC3's "still stored and counted").
+func TestRunOnce_SuppressedWindowedCriticalSignalStillStoredButNotEscalated(t *testing.T) {
+	pool := newWindowedSuppressionPool(t)
+	tenantID, userID := createWindowedTenantAndUser(t, pool)
+	ruleID := "synthetic-critical-windowed-" + randomUUID(t)
+
+	insertWindowedSuppression(t, pool, tenantID, ruleID, "alice", userID, 5*time.Minute)
+
+	r := syntheticCriticalWindowedRule(ruleID)
+	q, err := BuildQuery(r)
+	if err != nil {
+		t.Fatalf("BuildQuery: %v", err)
+	}
+	conn := &fakeConn{queryFn: func(context.Context, string, ...any) (driver.Rows, error) {
+		return &fakeRows{rows: []fakeRow{
+			{tenantID: tenantID, groupKey: "alice", aggValue: 5, eventIDs: []string{"evt-alice"}},
+			{tenantID: tenantID, groupKey: "bob", aggValue: 5, eventIDs: []string{"evt-bob"}},
+		}}, nil
+	}}
+
+	producer, err := kgo.NewClient(kgo.SeedBrokers(brokers))
+	if err != nil {
+		t.Fatalf("creating producer: %v", err)
+	}
+	defer producer.Close()
+
+	s := &Scheduler{conn: conn, producer: producer, log: slog.New(slog.NewTextHandler(io.Discard, nil)), suppressor: suppression.NewPostgresChecker(pool)}
+	s.runOnce(context.Background(), scheduledRule{query: q, interval: time.Second})
+
+	normal := collectSignals(t, tenantID, 2, 15*time.Second)
+	if len(normal) != 2 {
+		t.Fatalf("got %d signals, want exactly 2 (AC3: both still stored): %+v", len(normal), normal)
+	}
+	byEntity := map[string]sentinelsignal.Signal{}
+	for _, sig := range normal {
+		byEntity[sig.EntityID] = sig
+	}
+	alice, ok := byEntity["alice"]
+	if !ok {
+		t.Fatalf("no signal for alice in %+v", normal)
+	}
+	if !alice.Suppressed || alice.SuppressionID == "" {
+		t.Errorf("alice's signal = %+v, want Suppressed=true with a SuppressionID", alice)
+	}
+	bob, ok := byEntity["bob"]
+	if !ok {
+		t.Fatalf("no signal for bob in %+v", normal)
+	}
+	if bob.Suppressed {
+		t.Errorf("bob's signal = %+v, want Suppressed=false — the suppression is scoped to alice only", bob)
+	}
+
+	alerts := collectCriticalAlerts(t, tenantID, 1, 15*time.Second)
+	if len(alerts) != 1 || alerts[0].EntityID != "bob" {
+		t.Fatalf("critical alerts = %+v, want exactly 1 for bob — alice's is suppressed, bob's must still escalate", alerts)
 	}
 }

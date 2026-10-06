@@ -20,6 +20,7 @@ import { authPlugin } from './auth/auth-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
 import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-connector.js';
+import { suppressionsRoutes } from './routes/suppressions.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
 export interface BuildAppOptions {
@@ -47,6 +48,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(tenantContextPlugin, { publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out'] });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
+  await app.register(suppressionsRoutes, { pool });
 
   return app;
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel/attribute"
@@ -40,6 +41,12 @@ const levelCritical = "critical"
 type Options struct {
 	Log *slog.Logger
 	Metrics
+	// SuppressionChecker, if set, is consulted once per emitted signal
+	// (P2-10/TG3) — see services/detect/internal/worker's identical
+	// field for the full rationale (disclosed on the stored signal,
+	// gates only the critical bypass, fails open). Optional and
+	// nil-safe like every other capability here.
+	SuppressionChecker suppression.Checker
 }
 
 // levelInterval maps a rule's declared severity to its own schedule
@@ -76,11 +83,12 @@ type scheduledRule struct {
 // queuing it, which is exactly "an overlapping execution never starts"
 // rather than "an overlapping execution is blocked and queued."
 type Scheduler struct {
-	rules    []scheduledRule
-	conn     driver.Conn
-	producer *kgo.Client
-	log      *slog.Logger
-	metrics  Metrics
+	rules      []scheduledRule
+	conn       driver.Conn
+	producer   *kgo.Client
+	log        *slog.Logger
+	metrics    Metrics
+	suppressor suppression.Checker
 }
 
 // New compiles every windowed rule in rules (sigmac.EngineInStream rules
@@ -93,7 +101,7 @@ func New(rules []*sigmac.Rule, conn driver.Conn, producer *kgo.Client, opts Opti
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Scheduler{conn: conn, producer: producer, log: log, metrics: opts.Metrics}
+	s := &Scheduler{conn: conn, producer: producer, log: log, metrics: opts.Metrics, suppressor: opts.SuppressionChecker}
 	for _, r := range rules {
 		if r.Engine != sigmac.EngineWindowed {
 			continue
@@ -182,6 +190,22 @@ func (s *Scheduler) runOnce(ctx context.Context, sr scheduledRule) {
 	}
 
 	for _, sig := range signals {
+		// P2-10/TG3: see services/detect/internal/worker's identical
+		// logic for the full rationale — checked once, disclosed on the
+		// stored signal, fails open, gates only the critical bypass
+		// below. Unlike the in-stream worker, a windowed signal already
+		// has a real EntityID (the group-by key), so this can match an
+		// entity-scoped suppression, not only a wildcard one.
+		if s.suppressor != nil {
+			suppressed, suppressionID, err := s.suppressor.IsSuppressed(ctx, sig.TenantID, sig.RuleID, sig.EntityID)
+			if err != nil {
+				s.log.Error("checking suppression failed, treating as not suppressed", "rule_id", sr.query.Rule.ID, "err", err)
+			} else if suppressed {
+				sig.Suppressed = true
+				sig.SuppressionID = suppressionID
+			}
+		}
+
 		if err := s.publishSignal(ctx, sig); err != nil {
 			s.log.Error("publishing windowed signal failed", "rule_id", sr.query.Rule.ID, "tenant_id", sig.TenantID, "err", err)
 		} else if s.metrics.SignalsEmitted != nil {
@@ -192,8 +216,9 @@ func (s *Scheduler) runOnce(ctx context.Context, sr scheduledRule) {
 		// services/detect/internal/worker's identical logic for the
 		// in-stream engine. Unconditional on the signals publish above,
 		// and makes no call of any kind into correlation, the analyst,
-		// or an LLM provider.
-		if sig.Severity == levelCritical {
+		// or an LLM provider. The ONE new gate, from P2-10: a suppressed
+		// critical signal is still stored above, but does not escalate.
+		if sig.Severity == levelCritical && !sig.Suppressed {
 			if err := s.publishCriticalAlert(ctx, sig); err != nil {
 				s.log.Error("publishing windowed critical alert failed", "rule_id", sr.query.Rule.ID, "tenant_id", sig.TenantID, "err", err)
 			} else if s.metrics.CriticalAlertsEmitted != nil {
