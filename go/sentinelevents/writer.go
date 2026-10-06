@@ -9,7 +9,7 @@ import (
 )
 
 const insertSQL = `INSERT INTO sentinel.events
-	(tenant_id, event_id, time, class_uid, category_uid, activity_id, type_uid, severity_id,
+	(tenant_id, event_id, time, schema_version, class_uid, category_uid, activity_id, type_uid, severity_id,
 	 actor_user_uid, actor_user_name, actor_user_email, status_id, message, unmapped, raw_ref, trace_id)`
 
 // Writer durably writes a batch of rows to sentinel.events, returning only
@@ -96,7 +96,7 @@ func (w *ClickHouseWriter) Write(ctx context.Context, rows []EventRow) error {
 		var appendErr error
 		for i, r := range remaining {
 			if err := batch.Append(
-				r.TenantID, r.EventID, r.Time, r.ClassUID, r.CategoryUID, r.ActivityID, r.TypeUID, r.SeverityID,
+				r.TenantID, r.EventID, r.Time, r.SchemaVersion, r.ClassUID, r.CategoryUID, r.ActivityID, r.TypeUID, r.SeverityID,
 				r.ActorUserUID, r.ActorUserName, r.ActorUserEmail, r.StatusID, r.Message, r.Unmapped, r.RawRef, r.TraceID,
 			); err != nil {
 				badIdx, appendErr = i, err

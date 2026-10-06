@@ -19,6 +19,8 @@ import type { RedisClientType } from 'redis';
 import { authPlugin } from './auth/auth-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
 import { connectorsRoutes } from './routes/connectors.js';
+import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-connector.js';
+import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
 export interface BuildAppOptions {
   pool: Pool;
@@ -26,10 +28,15 @@ export interface BuildAppOptions {
   /** See AuthPluginOptions' own doc comment — must be true in any real
    * deployment; false only so tests can run over plain HTTP. */
   cookieSecure?: boolean;
+  /** Defaults to reading M365_CLIENT_ID/SECRET/REDIRECT_URI from the
+   * environment (undefined if unset, which routes/m365-connector.ts
+   * handles with a 503, not a crash). Overridable so tests can point it
+   * at a local mock token endpoint instead. */
+  m365OAuthConfig?: M365OAuthConfig | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
-  const { pool, redis, cookieSecure = true } = options;
+  const { pool, redis, cookieSecure = true, m365OAuthConfig = m365OAuthConfigFromEnv() } = options;
 
   const app = Fastify();
 
@@ -39,6 +46,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(authPlugin, { pool, redis, cookieSecure });
   await app.register(tenantContextPlugin, { publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out'] });
   await app.register(connectorsRoutes, { pool });
+  await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
 
   return app;
 }
