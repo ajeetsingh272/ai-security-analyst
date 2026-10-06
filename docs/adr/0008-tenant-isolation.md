@@ -44,6 +44,15 @@ to the query user.
 encrypted with a per-tenant DEK, itself wrapped by a KEK in KMS. A stolen database dump
 without KMS access yields nothing usable.
 
+Implemented in P1-02: `tenant_deks` (`db/postgres/migrations/0005_tenant_deks.sql`) holds
+one wrapped DEK per tenant; `packages/db/src/crypto/envelope.ts` is the DEK layer (AES-256-GCM);
+`packages/db/src/crypto/kms.ts` is the KEK layer behind a `KeyManagementService` interface —
+`LocalKMS` is the dev/test implementation (a real AES-256-GCM wrap, sourced from a local
+env-var master key rather than a cloud KMS call, the same kind of substitution this dev
+stack already makes for Postgres/Redis/S3's own credentials). Which real cloud KMS a
+production deployment uses is a separate, not-yet-made decision — `KeyManagementService`
+is the seam it plugs into without `TenantCredentialVault` or anything above it changing.
+
 **5. Tenant context is established once, at the edge.** Middleware resolves the tenant from
 the authenticated session and opens the transaction with `app.tenant_id` set. Handlers
 cannot reach the database outside that context — a repository constructed without a tenant

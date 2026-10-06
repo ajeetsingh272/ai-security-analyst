@@ -19,7 +19,7 @@ export const GLOBAL_TABLES = {
   users:
     'An identity can belong to more than one tenant, so it cannot carry a single tenant_id. Tenant association lives in memberships.',
   msp_links:
-    'Relates two tenants, so it holds msp_tenant_id and client_tenant_id instead of one tenant_id. Needs its own policy covering both sides (P0-05).',
+    'Relates two tenants, so it holds msp_tenant_id and client_tenant_id instead of one tenant_id — this check only looks for the latter. RLS is still enforced (0003_msp_links_rls.sql): a row is visible to either the MSP tenant or the client tenant named in it, never to anyone else.',
   schema_migrations:
     'The migration runner ledger. Infrastructure, not application data, and deliberately untyped in @sentinel/db.',
 };

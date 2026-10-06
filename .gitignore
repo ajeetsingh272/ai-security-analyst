@@ -14,6 +14,15 @@ vendor/
 *.exe
 *.test
 *.out
+# Extension-less Linux build output when `go build` runs outside this
+# repo's usual Windows dev environment (e.g. inside a Docker container for
+# a race-detector run) — `go build ./...` with no -o writes one of these at
+# each service's module root.
+services/ingest/ingest
+services/detect/detect
+services/correlate/correlate
+services/eventwriter/eventwriter
+go/soaktest/soaktest
 
 # Env & secrets
 .env

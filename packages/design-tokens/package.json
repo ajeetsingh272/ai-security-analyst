@@ -6,14 +6,18 @@
   "main": "./src/tokens.ts",
   "exports": {
     ".": "./src/tokens.ts",
-    "./theme.css": "./src/theme.css"
+    "./theme.css": "./src/theme.css",
+    "./tailwind.css": "./src/tailwind.generated.css"
   },
   "scripts": {
+    "build": "tsx scripts/build.mjs",
+    "build:check": "tsx scripts/build.mjs --check",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run"
   },
   "devDependencies": {
+    "tsx": "^4.19.2",
     "vitest": "^2.1.8"
   }
 }

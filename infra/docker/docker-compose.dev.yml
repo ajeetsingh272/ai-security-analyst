@@ -50,6 +50,18 @@ services:
     volumes:
       - chdata:/var/lib/clickhouse
       - ../../db/clickhouse/init:/docker-entrypoint-initdb.d:ro
+      # P1-06: a real S3-backed cold storage tier in dev, pointed at the
+      # `s3` service below rather than deferred to production Terraform —
+      # see clickhouse-storage.xml's own header for why.
+      - ./clickhouse-storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+    # The hot/cold storage policy references the s3 disk at startup even
+    # before any query touches the cold tier, so s3 needs to exist first —
+    # not healthy-gated as tightly as s3-init's own consumers, since
+    # ClickHouse doesn't need the sentinel-cold bucket to already exist to
+    # boot, only to eventually write into it.
+    depends_on:
+      s3:
+        condition: service_healthy
     healthcheck:
       test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:8123/ping']
       interval: 5s
@@ -120,11 +132,22 @@ services:
   # SeaweedFS speaks the same S3 API, is a single binary, and is freely pullable.
   s3:
     image: chrislusf/seaweedfs:3.80
+    # -volume.max=20: was 10, too low for three collections (sentinel-archive,
+    # sentinel-cold, sentinel-reports) plus default/no-collection usage to
+    # share — P1-06's ClickHouse cold-tier testing alone consumed 7 of the
+    # 10 slots for sentinel-cold, leaving P1-08's raw archive unable to get
+    # a single volume for sentinel-archive at all ("No writable volumes and
+    # no free volumes left for collection:sentinel-archive"), confirmed
+    # against the live container, not assumed. 20 volumes at 1024MB each is
+    # still a bounded 20GB ceiling for a local dev stack — the cap's whole
+    # purpose (bounding a single runaway bulk generation, per P1-06's own
+    # incident) still holds, just with headroom for more than one
+    # collection to actually coexist.
     command: >
       server -dir=/data -s3 -s3.port=8333
       -s3.config=/etc/seaweedfs/s3.json
       -master.volumeSizeLimitMB=1024
-      -volume.max=10
+      -volume.max=20
     ports:
       - '8333:8333'   # S3 API
       - '9333:9333'   # master UI
@@ -147,28 +170,118 @@ services:
       AWS_ACCESS_KEY_ID: sentineldev
       AWS_SECRET_ACCESS_KEY: sentineldev
       AWS_DEFAULT_REGION: ap-south-1
+    volumes:
+      - ./s3-lifecycle-archive.json:/etc/s3/lifecycle-archive.json:ro
+    # The put-bucket-lifecycle-configuration call below is the REAL,
+    # correct configuration for AWS S3 (P1-08 AC3's retention-tier
+    # requirement) — but SeaweedFS (this dev stack's S3-compatible
+    # backend) accepts the request and silently drops it: a
+    # get-bucket-lifecycle-configuration immediately afterward still
+    # reports NoSuchLifecycleConfiguration, confirmed empirically against
+    # the live container, not assumed. Applying it anyway, unconditionally
+    # and idempotently on every boot, costs nothing here and is exactly
+    # what a real AWS deployment needs; `|| true` on that one call only,
+    # so a dev-stack boot never fails over a limitation of the dev stack's
+    # own backend.
     entrypoint: >
       /bin/sh -c "
       for b in sentinel-archive sentinel-cold sentinel-reports; do
         aws --endpoint-url http://s3:8333 s3 mb s3://$$b 2>/dev/null || true;
       done;
+      aws --endpoint-url http://s3:8333 s3api put-bucket-lifecycle-configuration --bucket sentinel-archive --lifecycle-configuration file:///etc/s3/lifecycle-archive.json || true;
       aws --endpoint-url http://s3:8333 s3 ls
       "
 
-  # ── Observability ─────────────────────────────────────────────────────────
+  # ── Observability (P0-10) ──────────────────────────────────────────────────
+  #
+  # Every service exports OTLP to otel-collector (4317/4318), never to Jaeger
+  # or Prometheus directly — otel-collector-config.yaml is the one place that
+  # knows traces go to Jaeger and metrics go to Prometheus, so a service's own
+  # code never has to care about that split. Jaeger's 4317/4318 therefore
+  # moved from "published to the host, apps connect here" to
+  # "container-network-only, the collector connects here" — nothing on the
+  # host should point at Jaeger's OTLP ports any more.
   jaeger:
     image: jaegertracing/all-in-one:1.64.0
     environment:
       COLLECTOR_OTLP_ENABLED: 'true'
     ports:
       - '16686:16686' # UI
-      - '4317:4317' # OTLP gRPC
-      - '4318:4318' # OTLP HTTP
-    # 14269 is Jaeger's admin port. It is deliberately not published to the host:
-    # the healthcheck runs inside the container, and exposing an admin endpoint to
-    # the host buys nothing a developer needs.
+    # 4317/4318 (OTLP) and 14269 (admin, used by the healthcheck) stay
+    # internal — only otel-collector and this container's own healthcheck
+    # reach them, over the docker network.
     healthcheck:
       test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:14269/']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    command: ['--config=/etc/otel-collector-config.yaml']
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - '4317:4317' # OTLP gRPC — every service points here now
+      - '4318:4318' # OTLP HTTP
+      - '8889:8889' # Prometheus-scrapable metrics, published for ad-hoc debugging
+      - '13133:13133' # health_check extension — see the note below
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    # No Docker healthcheck on THIS service, by necessity rather than choice:
+    # otel-collector-contrib's image is fully distroless — no shell, no
+    # wget/curl, no `ls`, nothing executable but the collector binary itself
+    # (confirmed by trying each of those and getting "executable file not
+    # found" every time). A CMD-based healthcheck needs an executable to run
+    # INSIDE the container, and there is none. The health_check extension
+    # still runs and answers real GET requests on 13133 — just not from
+    # Docker's own probe mechanism. scripts/check-stack.sh accordingly treats
+    # this service the same way it already treats s3-init: no healthcheck
+    # to poll, not a gap in coverage.
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=24h'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090'
+    # service_started, not service_healthy — otel-collector has no healthcheck
+    # (see its own comment above for why). Prometheus will retry its scrape
+    # on the usual interval regardless, so starting slightly before the
+    # collector's extensions finish initializing costs one missed scrape
+    # cycle at most, not a failure.
+    depends_on:
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:9090/-/healthy']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Viewer'
+      # No real secret guarded by this — a throwaway local dev instance with
+      # nothing but Prometheus metrics behind it. Never reused for anything
+      # that is actually deployed.
+      GF_SECURITY_ADMIN_PASSWORD: 'sentineldev'
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - '3001:3000' # 3000 is the dashboard app's port (README) — offset here
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:3000/api/health']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -179,3 +292,4 @@ volumes:
   rpdata:
   redisdata:
   s3data:
+  grafanadata:

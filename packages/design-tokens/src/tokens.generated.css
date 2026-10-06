@@ -1,0 +1,110 @@
+/* GENERATED FILE — DO NOT EDIT BY HAND.
+ * Produced by `pnpm --filter @sentinel/design-tokens build` from tokens.ts.
+ * Edit tokens.ts and regenerate; an edit here is discarded on the next build. */
+
+:root {
+  /* ── Surfaces ──────────────────────────────────────────────────────────── */
+  --cr-bg-void: #070A11;
+  --cr-bg-base: #0C111C;
+  --cr-bg-raised: #131A28;
+  --cr-bg-sunken: #04060B;
+
+  --cr-border-hairline: rgba(255, 255, 255, 0.08);
+  --cr-border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --cr-text-primary: #E8ECF4;
+  --cr-text-secondary: #9BA6BA;
+  --cr-text-tertiary: #7A849A;
+  --cr-text-disabled: #3C465C;
+
+  /* ── Severity (colour-blind-safe blue→magenta axis) ────────────────────── */
+  --cr-sev-critical: #FF3D6E;
+  --cr-sev-high: #FF8A3D;
+  --cr-sev-medium: #F5C544;
+  --cr-sev-low: #3DBFF2;
+  --cr-sev-info: #777F8F;
+
+  /* ── Accents (scarce by design) ────────────────────────────────────────── */
+  --cr-signal: #34D1F0;
+  /* Reserved exclusively for grounded evidence. Used nowhere else. */
+  --cr-verified: #4ADE9B;
+
+  /* ── Type ──────────────────────────────────────────────────────────────── */
+  --cr-font-display: 'Bricolage Grotesque', 'Archivo', system-ui, sans-serif;
+  --cr-font-ui: 'Archivo', system-ui, -apple-system, sans-serif;
+  --cr-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+
+  --cr-text-display-xl: 3.5rem;
+  --cr-text-display-l: 2.375rem;
+  --cr-text-display-m: 1.6875rem;
+  --cr-text-body-l: 1.0625rem;
+  --cr-text-body-m: 0.875rem;
+  --cr-text-body-s: 0.8125rem;
+  --cr-text-label: 0.6875rem;
+  --cr-text-mono-m: 0.8125rem;
+  --cr-text-mono-s: 0.71875rem;
+
+  /* ── Space ─────────────────────────────────────────────────────────────── */
+  --cr-space-1: 0.25rem;
+  --cr-space-2: 0.5rem;
+  --cr-space-3: 0.75rem;
+  --cr-space-4: 1rem;
+  --cr-space-5: 1.25rem;
+  --cr-space-6: 1.5rem;
+  --cr-space-8: 2rem;
+  --cr-space-10: 2.5rem;
+  --cr-space-12: 3rem;
+  --cr-space-16: 4rem;
+  --cr-space-20: 5rem;
+  --cr-space-24: 6rem;
+
+  --cr-radius-sm: 0.25rem;
+  --cr-radius-md: 0.375rem;
+  --cr-radius-lg: 0.5rem;
+  --cr-radius-xl: 0.75rem;
+  --cr-radius-full: 9999px;
+
+  /* ── Density (default: comfortable) ────────────────────────────────────── */
+  --cr-row-height: 3.5rem;
+  --cr-section-gap: var(--cr-space-8);
+  --cr-card-padding: var(--cr-space-6);
+
+  /* ── Motion ────────────────────────────────────────────────────────────── */
+  --cr-motion-instant: 80ms cubic-bezier(0, 0, 0.2, 1);
+  --cr-motion-quick: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cr-motion-considered: 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  --cr-stagger: 40ms;
+}
+
+[data-density='compact'] {
+  --cr-row-height: 2.25rem;
+  --cr-section-gap: var(--cr-space-5);
+  --cr-card-padding: var(--cr-space-4);
+}
+
+/* Severity hues shift in lightness, never in hue, so the learned
+   colour-to-meaning mapping survives the theme switch. */
+[data-theme='light'] {
+  --cr-bg-void: #F7F8FA;
+  --cr-bg-base: #FFFFFF;
+  --cr-bg-raised: #F0F2F6;
+  --cr-bg-sunken: #EBEEF3;
+
+  --cr-border-hairline: rgba(10, 14, 22, 0.10);
+  --cr-border-strong: rgba(10, 14, 22, 0.20);
+
+  --cr-text-primary: #0C111C;
+  --cr-text-secondary: #4A5568;
+  --cr-text-tertiary: #626D7D;
+  --cr-text-disabled: #A3ACBD;
+
+  --cr-sev-critical: #C70038;
+  --cr-sev-high: #B45309;
+  --cr-sev-medium: #8A6400;
+  --cr-sev-low: #0369A1;
+  --cr-sev-info: #54606F;
+
+  --cr-signal: #0E7F99;
+  --cr-verified: #15803D;
+}

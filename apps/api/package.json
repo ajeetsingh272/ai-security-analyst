@@ -8,9 +8,19 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:unit": "vitest run --passWithNoTests"
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run -c vitest.integration.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@sentinel/db": "workspace:*",
+    "fastify": "^5.12.5",
+    "fastify-plugin": "^6.0.0",
+    "pg": "^8.13.1",
+    "redis": "^6.3.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.11.10",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

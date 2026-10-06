@@ -1,0 +1,46 @@
+/* GENERATED FILE — DO NOT EDIT BY HAND.
+ * Produced by `pnpm --filter @sentinel/design-tokens build` from tokens.ts.
+ * Edit tokens.ts and regenerate; an edit here is discarded on the next build. */
+
+@theme inline {
+  --color-surface-void: var(--cr-bg-void);
+  --color-surface-base: var(--cr-bg-base);
+  --color-surface-raised: var(--cr-bg-raised);
+  --color-surface-sunken: var(--cr-bg-sunken);
+  --color-border-hairline: var(--cr-border-hairline);
+  --color-border-strong: var(--cr-border-strong);
+  --color-text-primary: var(--cr-text-primary);
+  --color-text-secondary: var(--cr-text-secondary);
+  --color-text-tertiary: var(--cr-text-tertiary);
+  --color-text-disabled: var(--cr-text-disabled);
+  --color-severity-critical: var(--cr-sev-critical);
+  --color-severity-high: var(--cr-sev-high);
+  --color-severity-medium: var(--cr-sev-medium);
+  --color-severity-low: var(--cr-sev-low);
+  --color-severity-info: var(--cr-sev-info);
+  --color-signal: var(--cr-signal);
+  --color-verified: var(--cr-verified);
+
+  --font-display: var(--cr-font-display);
+  --font-ui: var(--cr-font-ui);
+  --font-mono: var(--cr-font-mono);
+
+  --spacing-1: var(--cr-space-1);
+  --spacing-2: var(--cr-space-2);
+  --spacing-3: var(--cr-space-3);
+  --spacing-4: var(--cr-space-4);
+  --spacing-5: var(--cr-space-5);
+  --spacing-6: var(--cr-space-6);
+  --spacing-8: var(--cr-space-8);
+  --spacing-10: var(--cr-space-10);
+  --spacing-12: var(--cr-space-12);
+  --spacing-16: var(--cr-space-16);
+  --spacing-20: var(--cr-space-20);
+  --spacing-24: var(--cr-space-24);
+
+  --radius-sm: var(--cr-radius-sm);
+  --radius-md: var(--cr-radius-md);
+  --radius-lg: var(--cr-radius-lg);
+  --radius-xl: var(--cr-radius-xl);
+  --radius-full: var(--cr-radius-full);
+}

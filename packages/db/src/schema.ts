@@ -48,34 +48,6 @@ export const tenants = pgTable("tenants", {
 	check("tenants_status_check", sql`status = ANY (ARRAY['active'::text, 'suspended'::text, 'degraded'::text, 'churned'::text])`),
 ]);
 
-export const users = pgTable("users", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	email: citext("email"),
-	displayName: text("display_name"),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-});
-
-export const mspLinks = pgTable("msp_links", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	mspTenantId: uuid("msp_tenant_id").notNull(),
-	clientTenantId: uuid("client_tenant_id").notNull(),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
-}, (table) => [
-	foreignKey({
-			columns: [table.mspTenantId],
-			foreignColumns: [tenants.id],
-			name: "msp_links_msp_tenant_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.clientTenantId],
-			foreignColumns: [tenants.id],
-			name: "msp_links_client_tenant_id_fkey"
-		}).onDelete("cascade"),
-	unique("msp_links_msp_tenant_id_client_tenant_id_key").on(table.mspTenantId, table.clientTenantId),
-	check("msp_links_check", sql`msp_tenant_id <> client_tenant_id`),
-]);
-
 export const memberships = pgTable("memberships", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	tenantId: uuid("tenant_id").notNull(),
@@ -213,6 +185,50 @@ export const approvalNonces = pgTable("approval_nonces", {
 			columns: [table.tenantId],
 			foreignColumns: [tenants.id],
 			name: "approval_nonces_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
+export const mspLinks = pgTable("msp_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	mspTenantId: uuid("msp_tenant_id").notNull(),
+	clientTenantId: uuid("client_tenant_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	foreignKey({
+			columns: [table.mspTenantId],
+			foreignColumns: [tenants.id],
+			name: "msp_links_msp_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.clientTenantId],
+			foreignColumns: [tenants.id],
+			name: "msp_links_client_tenant_id_fkey"
+		}).onDelete("cascade"),
+	unique("msp_links_msp_tenant_id_client_tenant_id_key").on(table.mspTenantId, table.clientTenantId),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`((msp_tenant_id = (current_setting('app.tenant_id'::text, true))::uuid) OR (client_tenant_id = (current_setting('app.tenant_id'::text, true))::uuid))` }),
+	check("msp_links_check", sql`msp_tenant_id <> client_tenant_id`),
+]);
+
+export const users = pgTable("users", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	email: citext("email"),
+	displayName: text("display_name"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	passwordHash: text("password_hash"),
+});
+
+export const tenantDeks = pgTable("tenant_deks", {
+	tenantId: uuid("tenant_id").primaryKey().notNull(),
+	wrappedDek: bytea("wrapped_dek").notNull(),
+	kmsKeyId: text("kms_key_id").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tenant_deks_tenant_id_fkey"
 		}).onDelete("cascade"),
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 ]);

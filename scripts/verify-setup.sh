@@ -103,8 +103,40 @@ fi
 echo
 echo "══ TG6 · Audit log is tamper-evident (ADR-0007) ═════════════════════════"
 
-pg "INSERT INTO audit_log (tenant_id, actor_type, actor_id, action, subject_type, subject_id, prev_hash, entry_hash)
-    VALUES ('11111111-1111-1111-1111-111111111111','system','verify','verify.probe','test','1','\\\\x00','\\\\x01');" > /dev/null
+# This probe's row is permanent — audit_log forbids DELETE even for its own
+# rows (that is the point), and every run of this script adds one more. The
+# hash below has to be a REAL one, computed with the same algorithm P0-06's
+# AuditLogWriter uses (packages/db/scripts/chain-verifier.mjs), chained off
+# whatever this tenant's actual last hash currently is. An earlier version of
+# this script inserted a single placeholder byte for each hash — harmless for
+# testing UPDATE/DELETE rejection in isolation, but it permanently poisons
+# that tenant's chain for scripts/verify-audit-chain.mjs, which has no way to
+# know "that one is just a grants probe" from "that one is a real break."
+prev_hex=$(pg "SELECT encode(entry_hash, 'hex') FROM audit_log
+                WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+                ORDER BY id DESC LIMIT 1;" | tr -d '[:space:]')
+[ -z "$prev_hex" ] && prev_hex=$(printf '0%.0s' $(seq 1 64))
+
+hashes=$(cd "$(dirname "$0")/../packages/db/scripts" && node --input-type=module -e "
+  import { auditEntryContent, computeEntryHash } from './chain-verifier.mjs';
+  const prevHash = Buffer.from('$prev_hex', 'hex');
+  const occurredAt = new Date().toISOString();
+  const content = auditEntryContent({
+    tenantId: '11111111-1111-1111-1111-111111111111',
+    occurredAt, actorType: 'system', actorId: 'verify',
+    action: 'verify.probe', subjectType: 'test', subjectId: '1', payload: {},
+  });
+  const entryHash = computeEntryHash(prevHash, content);
+  console.log(occurredAt);
+  console.log(prevHash.toString('hex'));
+  console.log(entryHash.toString('hex'));
+")
+occurred_at=$(echo "$hashes" | sed -n '1p')
+prev_hash_hex=$(echo "$hashes" | sed -n '2p')
+entry_hash_hex=$(echo "$hashes" | sed -n '3p')
+
+pg "INSERT INTO audit_log (tenant_id, occurred_at, actor_type, actor_id, action, subject_type, subject_id, payload, prev_hash, entry_hash)
+    VALUES ('11111111-1111-1111-1111-111111111111', '$occurred_at', 'system', 'verify', 'verify.probe', 'test', '1', '{}', '\\x$prev_hash_hex', '\\x$entry_hash_hex');" > /dev/null
 
 upd=$(pg "UPDATE audit_log SET action = 'tampered' WHERE actor_id = 'verify';")
 if echo "$upd" | grep -qi "append-only"; then
@@ -145,6 +177,46 @@ n=$(ch "SELECT count() FROM sentinel.events WHERE event_id = 'dup-1'" | tr -d '[
 if [ "$n" = "1" ]; then ok "duplicate event_id collapsed by ReplacingMergeTree"; else bad "expected 1 row after merge, got $n"; fi
 ch "TRUNCATE TABLE sentinel.events" > /dev/null
 
+# P1-06 T2: the row policy (db/clickhouse/0002_hot_cold_tier_and_row_policy.sql)
+# must actually block a cross-tenant read, not just exist. Queried as
+# sentinel_query_user — the role the policy is scoped TO — never as the
+# default/admin user the rest of this script uses, which would bypass it
+# entirely and prove nothing.
+ch_as() {
+  curl -sS "$CLICKHOUSE_URL/?user=sentinel_query_user&SQL_app_tenant_id=$1" --data-binary "$2" 2>&1
+}
+ch "INSERT INTO sentinel.events (tenant_id, event_id, time, class_uid) VALUES
+    ('11111111-1111-1111-1111-111111111111','rp-a',now(),3002),
+    ('22222222-2222-2222-2222-222222222222','rp-b',now(),3002)" > /dev/null
+asA=$(ch_as '11111111-1111-1111-1111-111111111111' \
+  "SELECT count() FROM sentinel.events WHERE event_id IN ('rp-a','rp-b')" | tr -d '[:space:]')
+asB=$(ch_as '22222222-2222-2222-2222-222222222222' \
+  "SELECT count() FROM sentinel.events WHERE event_id IN ('rp-a','rp-b')" | tr -d '[:space:]')
+if [ "$asA" = "1" ] && [ "$asB" = "1" ]; then
+  ok "row policy: each tenant context sees only its own row (1 of 2 each), not the other's"
+else
+  bad "row policy leak: tenant A saw $asA rows, tenant B saw $asB rows (expected 1 each)"
+fi
+ch "TRUNCATE TABLE sentinel.events" > /dev/null
+
+# P1-06 T4: TTL moves an aged partition to the cold (S3) tier, and the data
+# is still queryable there — proven by actually moving a part and reading it
+# back, not by inspecting the TTL clause's text.
+oldDate=$(ch "SELECT toDate(now() - INTERVAL 100 DAY)" | tr -d '[:space:]')
+partitionId=$(ch "SELECT toYYYYMMDD(toDate('$oldDate'))" | tr -d '[:space:]')
+ch "INSERT INTO sentinel.events (tenant_id, event_id, time, class_uid) VALUES
+    ('11111111-1111-1111-1111-111111111111','ttl-cold-1','$oldDate 00:00:00',3002)" > /dev/null
+ch "ALTER TABLE sentinel.events MOVE PARTITION $partitionId TO VOLUME 'cold'" > /dev/null
+diskName=$(ch "SELECT disk_name FROM system.parts
+  WHERE table = 'events' AND database = 'sentinel' AND partition_id = '$partitionId' AND active" | tr -d '[:space:]')
+stillReadable=$(ch "SELECT count() FROM sentinel.events WHERE event_id = 'ttl-cold-1'" | tr -d '[:space:]')
+if [ "$diskName" = "cold" ] && [ "$stillReadable" = "1" ]; then
+  ok "TTL cold tier: aged partition moved to the S3-backed 'cold' disk and remains queryable"
+else
+  bad "TTL cold tier: disk_name=$diskName (want cold), readable=$stillReadable (want 1)"
+fi
+ch "ALTER TABLE sentinel.events DELETE WHERE event_id = 'ttl-cold-1'" > /dev/null
+
 echo
 echo "══ Object storage ═══════════════════════════════════════════════════════"
 buckets=$(docker compose -f "$COMPOSE_FILE" logs s3-init 2>/dev/null | grep -oE "sentinel-(archive|cold|reports)" | sort -u | tr '\n' ' ')
@@ -152,6 +224,29 @@ if echo "$buckets" | grep -q "sentinel-archive"; then
   ok "buckets created:$(echo " $buckets" | sed 's/ $//')"
 else
   bad "expected buckets not found (s3-init logs showed: '$buckets')"
+fi
+
+# P1-08 AC3: a lifecycle policy for sentinel-archive's retention tier is
+# (re-)applied here, idempotently, exactly as s3-init does on every boot.
+# This can only confirm the apply CALL itself succeeds (valid JSON, a real
+# S3 API call that the container accepts) — it does NOT, and cannot,
+# confirm SeaweedFS actually stores or executes the policy. Confirmed
+# empirically, separately from this script: a
+# get-bucket-lifecycle-configuration call immediately after a successful
+# put still reports NoSuchLifecycleConfiguration against this dev stack's
+# SeaweedFS — a backend limitation, not a bug in the policy or the apply
+# step, and not something this script can make true by asserting it. The
+# policy itself is real and correct, and will apply as intended against
+# actual AWS S3.
+if MSYS_NO_PATHCONV=1 docker run --rm --network sentinel-dev_default \
+  -e AWS_ACCESS_KEY_ID=sentineldev -e AWS_SECRET_ACCESS_KEY=sentineldev -e AWS_DEFAULT_REGION=ap-south-1 \
+  -v "$(pwd)/infra/docker/s3-lifecycle-archive.json:/etc/s3/lifecycle-archive.json:ro" \
+  amazon/aws-cli:2.22.0 --endpoint-url http://s3:8333 \
+  s3api put-bucket-lifecycle-configuration --bucket sentinel-archive --lifecycle-configuration file:///etc/s3/lifecycle-archive.json \
+  > /dev/null 2>&1; then
+  ok "sentinel-archive lifecycle policy applies cleanly (SeaweedFS cannot report it back — see script comment)"
+else
+  bad "applying sentinel-archive's lifecycle policy failed"
 fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────────────

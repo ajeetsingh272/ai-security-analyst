@@ -1,0 +1,61 @@
+# P1-11 AC3: "Alert fires when ingest lag exceeds 5 minutes."
+#
+# Grafana's own unified alerting evaluates this directly off the Prometheus
+# datasource already provisioned (datasources/prometheus.yml, uid
+# "prometheus") — no separate Alertmanager container is needed for a rule
+# to EVALUATE and enter the Alerting state; Alertmanager (or Grafana's own
+# notification policies) is only needed to ROUTE a firing alert to a
+# person, which is explicitly not built here. This repo has no alert
+# delivery/paging infrastructure yet (see
+# services/eventwriter/cmd/eventwriter/main.go's own comment on the same
+# point for P1-07's merge-queue metric) — that is a separate concern from
+# "the alert fires", which this file does cover.
+#
+# `for: 0s` is deliberate, not an oversight: the threshold itself (300s)
+# IS the 5-minute requirement, so firing immediately once the condition is
+# true is the correct reading of the AC — adding an extra dwell period on
+# top would mean the alert fires later than "lag exceeds 5 minutes".
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: ingest-observability
+    # NOT "General": Grafana's built-in General folder is a special,
+    # already-existing folder that the alerting provisioner's own
+    # get-or-create-by-title logic cannot resolve against — it fails at
+    # startup with "A folder with that name already exists" (confirmed by
+    # actually crashing this dev stack's Grafana container on first boot
+    # with this file). A distinct, provisioner-owned folder name sidesteps
+    # it entirely.
+    folder: Sentinel Alerting
+    interval: 1m
+    rules:
+      - uid: p1-11-ingest-lag-5m
+        title: 'Ingest lag exceeds 5 minutes'
+        condition: Threshold
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: 'Tenant {{ $labels.tenant_id }} / connector {{ $labels.connector_id }} has not completed a successful ingest cycle in over 5 minutes.'
+        data:
+          - refId: Query
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: max by (tenant_id, connector_id) (connector_ingest_lag_seconds)
+              instant: true
+              refId: Query
+          - refId: Threshold
+            datasourceUid: '-100'
+            model:
+              type: threshold
+              expression: Query
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 300
+              refId: Threshold

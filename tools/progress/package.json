@@ -1,0 +1,15 @@
+{
+  "name": "@sentinel/progress",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Progress dashboard generator — the counting logic (compute.mjs) is tested; build.mjs's rendering runs live in CI (progress.yml)",
+  "scripts": {
+    "typecheck": "node --check build.mjs && node --check compute.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

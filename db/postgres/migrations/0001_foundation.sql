@@ -101,7 +101,7 @@ CREATE TABLE connectors (
 );
 
 -- Cursors commit only after the batch is durably acknowledged by Kafka, which
--- is what makes at-least-once delivery hold (ADR-0002).
+-- is what makes at-least-once delivery hold (ADR-0010).
 CREATE TABLE connector_cursors (
   connector_id  UUID NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
   stream        TEXT NOT NULL,

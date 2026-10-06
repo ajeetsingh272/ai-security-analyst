@@ -108,10 +108,11 @@ jobs:
       - name: Data model doc is current
         run: pnpm db:docs:check
 
-      # No package defines test:integration yet — Phase 0 has no business logic to
-      # integration-test, so this is a 0-tasks no-op (exit 0) until one exists. Kept
-      # in the pipeline now so that the step, and the `--` separator below, are
-      # already correct on the day a real test lands rather than being debugged then.
+      # @sentinel/db, @sentinel/api and @sentinel/observability all define
+      # test:integration (P0-05/P0-09/P0-10) — the observability package's
+      # builds services/ingest from source and runs it as a real subprocess,
+      # which is why Go is set up above even though this step is driven by
+      # pnpm, not go-test.sh.
       - name: Integration tests
         run: pnpm test:integration
 
@@ -122,6 +123,13 @@ jobs:
       # task's script, same as `npm run x -- --flag`.
       - name: Tenant isolation suite
         run: pnpm test:integration -- --project=isolation
+
+      # P1-01: go/sentineldb's own RLS-through-Go proof (mirrors the
+      # TypeScript tenant-isolation suite above). Separate from go-test.sh's
+      # `go test ./...` via the `integration` build tag, since that step runs
+      # in ci-go.yml's job, which has no Postgres available at all.
+      - name: Go integration tests
+        run: pnpm go:test:integration
 
       - name: Stack logs on failure
         if: failure()

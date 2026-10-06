@@ -2,25 +2,61 @@
  * @sentinel/db — typed access to the control plane.
  *
  * What this package is: the generated Drizzle schema (src/schema.ts), the column
- * types introspection cannot express (src/types.ts), and a low-level pool
- * factory. That is all.
+ * types introspection cannot express (src/types.ts), the tenant context boundary
+ * (src/tenant-context.ts, P0-05), and a low-level pool factory.
  *
- * What this package is NOT: the tenant boundary. Nothing exported here sets
- * `app.tenant_id`, and nothing here refuses to run outside a tenant context.
- * That boundary is P0-05 and it belongs in one place, wrapping this one.
- *
- * Reaching for the pool below in application code is therefore a design smell
- * rather than a shortcut, and it is a smell with a visible symptom: row-level
- * security is FORCED on every tenant-scoped table, so a query issued without
- * `app.tenant_id` set does not leak another tenant's rows — it returns none.
- * The failure mode is an empty result, not a breach. That is deliberate, and it
- * is still a bug worth catching at construction time, which is what P0-05 adds.
+ * `createControlPlanePool` below is NOT tenant-scoped — nothing it returns sets
+ * `app.tenant_id`, and nothing refuses to run outside a tenant context. Reaching
+ * for it directly in application code is a design smell with a visible symptom:
+ * row-level security is FORCED on every tenant-scoped table, so a query issued
+ * without `app.tenant_id` set does not leak another tenant's rows — it returns
+ * none. The failure mode is an empty result, not a breach. Still a bug worth
+ * catching at construction time, which is what `TenantScopedRepository` does.
  */
 import { Pool, type PoolConfig } from 'pg';
 
 export * as schema from './schema.js';
 export * as relations from './relations.js';
 export { bytea, citext } from './types.js';
+export {
+  withTenantContext,
+  enterTenantContext,
+  exitTenantContext,
+  getTenantContext,
+  hasTenantContext,
+  TenantScopedRepository,
+  TenantContextError,
+  type TenantContext,
+} from './tenant-context.js';
+export { CasesRepository, type CaseRow } from './repositories/cases-repository.js';
+export {
+  ConnectorsRepository,
+  type ConnectorHealth,
+  type ConnectorApiStatus,
+  type ConnectorDbStatus,
+} from './repositories/connectors-repository.js';
+export {
+  AuditLogWriter,
+  type ActorType,
+  type AuditEntryInput,
+  type WrittenAuditEntry,
+} from './audit/audit-log-writer.js';
+export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
+export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
+export {
+  TenantCredentialVault,
+  type EncryptedCredentials,
+} from './crypto/tenant-credential-vault.js';
+export {
+  GENESIS_HASH,
+  auditEntryContent,
+  computeEntryHash,
+  verifyChain,
+  type AuditEntryContent,
+  type AuditEntryRow,
+  type VerifyChainResult,
+} from '../scripts/chain-verifier.mjs';
+export { canonicalJSON } from '../scripts/canonical-json.mjs';
 
 /** Where the control plane lives, when nothing says otherwise. */
 const DEFAULT_URL = 'postgres://sentinel:sentinel@localhost:5434/sentinel';

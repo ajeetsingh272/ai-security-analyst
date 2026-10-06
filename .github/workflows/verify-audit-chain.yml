@@ -1,0 +1,63 @@
+name: Verify audit chain
+
+# P0-06 AC5: the audit log chain verifier runs as a scheduled job and alerts
+# on failure. Concretely in this phase: a cron-triggered workflow invokes
+# scripts/verify-audit-chain.mjs, and a non-zero exit fails the run — which
+# is what GitHub's own failed-workflow notification surfaces. That is a real,
+# working alert, not a placeholder; it is honestly scoped as GitHub's own
+# notification rather than a dedicated paging integration, because no such
+# integration exists yet in this phase.
+#
+# Phase 0 has no deployed production database, so this runs against the
+# ephemeral dev stack — which proves the job mechanism end to end, even
+# though there is no real audit history yet for it to find a break in. When
+# a production database exists, point POSTGRES_URL at it via a repository
+# secret; nothing else about this workflow needs to change.
+
+on:
+  schedule:
+    # Daily. The chain only grows by what the product writes, so checking
+    # more often than that buys nothing — a break, once introduced, stays
+    # detectable at the next run regardless of how soon after it happened.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: verify-audit-chain
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait postgres
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      # The alert. A broken chain exits 1 here, which fails this job, which
+      # is what turns into GitHub's scheduled-workflow-failed notification.
+      - name: Verify every tenant's audit chain
+        run: pnpm --filter @sentinel/db verify:audit-chain
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs postgres --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v

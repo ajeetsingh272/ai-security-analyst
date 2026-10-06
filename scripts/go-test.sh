@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vets and tests every Go service.
+# Vets and tests every Go service and library.
 #
 # Two things this works around:
 #
@@ -26,7 +26,7 @@ else
 fi
 
 fail=0
-for dir in services/*/; do
+for dir in services/*/ go/*/; do
   [ -f "${dir}go.mod" ] || continue
   name=$(basename "$dir")
   echo "── ${name} ──"

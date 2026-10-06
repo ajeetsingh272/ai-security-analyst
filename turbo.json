@@ -22,7 +22,8 @@
       "outputs": [
         ".next/**",
         "!.next/cache/**",
-        "dist/**"
+        "dist/**",
+        "src/*.generated.css"
       ]
     },
     "dev": {

@@ -7,6 +7,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
@@ -79,5 +80,65 @@ export default tseslint.config(
   {
     files: ['**/*.test.{ts,tsx}', '**/__tests__/**'],
     rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
+  },
+
+  // packages/ui is the only React code in the repo so far — hook rules scoped
+  // here rather than loaded globally for packages that never use a hook.
+  {
+    files: ['packages/ui/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+    },
+  },
+
+  // P0-08 AC1: no hardcoded hex colour anywhere in packages/ui. Every colour
+  // must come through a design token (a Tailwind utility class generated from
+  // one, or a value imported from @sentinel/design-tokens) so the token
+  // package stays the single place a colour decision can be changed. Scoped
+  // to packages/ui/src only — @sentinel/design-tokens itself is where hex
+  // values are legitimately defined, and this rule would be nonsensical there.
+  {
+    files: ['packages/ui/src/**/*.{ts,tsx}'],
+    plugins: {
+      'control-room': {
+        rules: {
+          'no-hardcoded-hex': {
+            meta: {
+              type: 'problem',
+              docs: {
+                description: 'disallow hardcoded hex colours outside @sentinel/design-tokens',
+              },
+              schema: [],
+            },
+            create(context) {
+              const HEX = /#[0-9a-fA-F]{3,8}\b/;
+              return {
+                Literal(node) {
+                  if (typeof node.value === 'string' && HEX.test(node.value)) {
+                    context.report({
+                      node,
+                      message:
+                        'Hardcoded hex colour. Use a Tailwind utility backed by a design ' +
+                        'token, or import the value from @sentinel/design-tokens.',
+                    });
+                  }
+                },
+                TemplateElement(node) {
+                  if (HEX.test(node.value.raw)) {
+                    context.report({
+                      node,
+                      message:
+                        'Hardcoded hex colour in a template literal. Use a design token instead.',
+                    });
+                  }
+                },
+              };
+            },
+          },
+        },
+      },
+    },
+    rules: { 'control-room/no-hardcoded-hex': 'error' },
   },
 );

@@ -1,33 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, mspLinks, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, connectorCursors } from "./schema";
-
-export const mspLinksRelations = relations(mspLinks, ({one}) => ({
-	tenant_mspTenantId: one(tenants, {
-		fields: [mspLinks.mspTenantId],
-		references: [tenants.id],
-		relationName: "mspLinks_mspTenantId_tenants_id"
-	}),
-	tenant_clientTenantId: one(tenants, {
-		fields: [mspLinks.clientTenantId],
-		references: [tenants.id],
-		relationName: "mspLinks_clientTenantId_tenants_id"
-	}),
-}));
-
-export const tenantsRelations = relations(tenants, ({many}) => ({
-	mspLinks_mspTenantId: many(mspLinks, {
-		relationName: "mspLinks_mspTenantId_tenants_id"
-	}),
-	mspLinks_clientTenantId: many(mspLinks, {
-		relationName: "mspLinks_clientTenantId_tenants_id"
-	}),
-	memberships: many(memberships),
-	connectors: many(connectors),
-	cases: many(cases),
-	caseTransitions: many(caseTransitions),
-	actions: many(actions),
-	approvalNonces: many(approvalNonces),
-}));
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, tenantDeks, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -38,6 +10,22 @@ export const membershipsRelations = relations(memberships, ({one}) => ({
 		fields: [memberships.userId],
 		references: [users.id]
 	}),
+}));
+
+export const tenantsRelations = relations(tenants, ({many}) => ({
+	memberships: many(memberships),
+	connectors: many(connectors),
+	cases: many(cases),
+	caseTransitions: many(caseTransitions),
+	actions: many(actions),
+	approvalNonces: many(approvalNonces),
+	mspLinks_mspTenantId: many(mspLinks, {
+		relationName: "mspLinks_mspTenantId_tenants_id"
+	}),
+	mspLinks_clientTenantId: many(mspLinks, {
+		relationName: "mspLinks_clientTenantId_tenants_id"
+	}),
+	tenantDeks: many(tenantDeks),
 }));
 
 export const usersRelations = relations(users, ({many}) => ({
@@ -91,6 +79,26 @@ export const approvalNoncesRelations = relations(approvalNonces, ({one}) => ({
 	}),
 	tenant: one(tenants, {
 		fields: [approvalNonces.tenantId],
+		references: [tenants.id]
+	}),
+}));
+
+export const mspLinksRelations = relations(mspLinks, ({one}) => ({
+	tenant_mspTenantId: one(tenants, {
+		fields: [mspLinks.mspTenantId],
+		references: [tenants.id],
+		relationName: "mspLinks_mspTenantId_tenants_id"
+	}),
+	tenant_clientTenantId: one(tenants, {
+		fields: [mspLinks.clientTenantId],
+		references: [tenants.id],
+		relationName: "mspLinks_clientTenantId_tenants_id"
+	}),
+}));
+
+export const tenantDeksRelations = relations(tenantDeks, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tenantDeks.tenantId],
 		references: [tenants.id]
 	}),
 }));

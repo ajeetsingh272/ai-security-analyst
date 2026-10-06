@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<!--
+  P1-06 AC3: a real hot/cold storage tier in dev, not a stub deferred to
+  production Terraform. The `s3` service (SeaweedFS) already speaks the S3
+  API and already provisions a `sentinel-cold` bucket (P0-03's s3-init) —
+  this just points ClickHouse's own storage policy at it, so TTL-driven
+  tiering (0002_hot_cold_tier.sql) is something a developer can actually
+  observe locally, not something that only exists once Phase 7 lands.
+
+  Loaded automatically: official ClickHouse images read every *.xml under
+  /etc/clickhouse-server/config.d/ as a config override.
+-->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <cold>
+        <type>s3</type>
+        <endpoint>http://s3:8333/sentinel-cold/</endpoint>
+        <access_key_id>sentineldev</access_key_id>
+        <secret_access_key>sentineldev</secret_access_key>
+        <!-- SeaweedFS's S3 gateway, not AWS — path-style addressing only. -->
+        <use_path_style>true</use_path_style>
+        <metadata_path>/var/lib/clickhouse/disks/cold/</metadata_path>
+      </cold>
+    </disks>
+    <policies>
+      <hot_cold>
+        <volumes>
+          <!-- Named "default", not "hot": ClickHouse requires a policy
+               switch (ALTER TABLE ... MODIFY SETTING storage_policy) to
+               keep every volume NAME the old policy had, so existing parts
+               stay addressable under the new policy. The implicit `default`
+               storage policy's one volume is itself named "default" — found
+               by actually hitting "New storage policy shall contain volumes
+               of the old storage policy" against the live server when this
+               was first named "hot". -->
+          <default>
+            <disk>default</disk>
+          </default>
+          <cold>
+            <disk>cold</disk>
+          </cold>
+        </volumes>
+      </hot_cold>
+    </policies>
+  </storage_configuration>
+</clickhouse>

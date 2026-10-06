@@ -8,7 +8,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:unit": "vitest run --passWithNoTests"
+    "test:unit": "vitest run --passWithNoTests",
+    "generate": "node scripts/generate-go.mjs",
+    "generate:check": "node scripts/generate-go.mjs --check",
+    "check-compat": "node scripts/check-compatibility.mjs",
+    "check-compat:check": "node scripts/check-compatibility.mjs --check",
+    "roundtrip-check": "node scripts/roundtrip-check.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

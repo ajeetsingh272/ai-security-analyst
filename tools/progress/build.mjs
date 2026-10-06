@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { computeCounts, STATUSES } from './compute.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT = join(ROOT, 'site');
@@ -63,82 +64,17 @@ try {
 }
 
 // ── Join plan to reality ────────────────────────────────────────────────────
+//
+// The actual counting logic lives in compute.mjs (P0-12 T2) — pulled out so
+// it is callable with a fixture issue set in a unit test, without needing a
+// live API call or planning/ on disk. Behaviour here is unchanged from
+// before the extraction; only where the code lives moved.
 
-const byTicketId = new Map();
-for (const i of issues) {
-  const m = /^\[([A-Z]\d-\d+)\]/.exec(i.title);
-  if (m) byTicketId.set(m[1], i);
-}
-
-/** Status is derived from labels first, then issue state. */
-function statusOf(issue) {
-  if (!issue) return 'Backlog';
-  if (issue.state === 'closed') return 'Done';
-  const labels = issue.labels.map((l) => (typeof l === 'string' ? l : l.name).toLowerCase());
-  if (labels.some((l) => l.includes('blocked'))) return 'Blocked';
-  if (labels.some((l) => l.includes('in review'))) return 'In Review';
-  if (labels.some((l) => l.includes('in progress'))) return 'In Progress';
-  if (issue.assignee) return 'In Progress';
-  return 'Ready';
-}
-
-const enriched = tickets.map((t) => {
-  const issue = byTicketId.get(t.id);
-  return {
-    ...t,
-    issue: issue ? { number: issue.number, url: issue.html_url, updated: issue.updated_at } : null,
-    status: statusOf(issue),
-  };
-});
-
-const STATUSES = ['Backlog', 'Ready', 'In Progress', 'In Review', 'Blocked', 'Done'];
-
-const phases = meta.phases.map((p) => {
-  const ts = enriched.filter((t) => t.phase === p.key);
-  const done = ts.filter((t) => t.status === 'Done');
-  return {
-    ...p,
-    tickets: ts,
-    total: ts.length,
-    done: done.length,
-    points: ts.reduce((a, t) => a + t.points, 0),
-    donePoints: done.reduce((a, t) => a + t.points, 0),
-    tests: ts.reduce((a, t) => a + t.tests.length, 0),
-    doneTests: done.reduce((a, t) => a + t.tests.length, 0),
-    pct: ts.length ? Math.round((done.length / ts.length) * 100) : 0,
-  };
-});
-
-const totals = {
-  tickets: enriched.length,
-  done: enriched.filter((t) => t.status === 'Done').length,
-  points: enriched.reduce((a, t) => a + t.points, 0),
-  donePoints: enriched.filter((t) => t.status === 'Done').reduce((a, t) => a + t.points, 0),
-  tests: enriched.reduce((a, t) => a + t.tests.length, 0),
-  doneTests: enriched.filter((t) => t.status === 'Done').reduce((a, t) => a + t.tests.length, 0),
-  weeks: meta.phases.reduce((a, p) => a + p.weeks, 0),
-};
-totals.pct = Math.round((totals.done / totals.tickets) * 100);
-
-const statusCounts = Object.fromEntries(
-  STATUSES.map((s) => [s, enriched.filter((t) => t.status === s).length]),
+const { enriched, phases, totals, statusCounts, testTypeCounts, guaranteeRows } = computeCounts(
+  tickets,
+  issues,
+  meta,
 );
-
-const testTypeCounts = {};
-for (const t of enriched) {
-  for (const tc of t.tests) testTypeCounts[tc.type] = (testTypeCounts[tc.type] ?? 0) + 1;
-}
-
-const guaranteeRows = Object.entries(meta.trustGuarantees).map(([key, text]) => {
-  const ts = enriched.filter((t) => t.guarantee === key);
-  return {
-    key,
-    text,
-    total: ts.length,
-    done: ts.filter((t) => t.status === 'Done').length,
-    tickets: ts,
-  };
-});
 
 const activeTickets = enriched
   .filter((t) => t.status === 'In Progress' || t.status === 'In Review' || t.status === 'Blocked')
@@ -501,3 +437,12 @@ console.log(
   `Built site/index.html — ${totals.done}/${totals.tickets} tickets (${totals.pct}%), ` +
     `${totals.tests} test cases, live=${live}`,
 );
+
+// P0-12 AC4: "degrades gracefully when the API is unavailable — serves the
+// last good build." The page above IS a graceful degraded view (plan-only,
+// with a visible note), but PUBLISHING it would not be serving the last
+// good build — it would be serving a NEW, worse one in its place. Exit 2
+// (not the generic 1) specifically so the workflow can tell "the API was
+// down, skip deploy and leave the previous Pages build live" apart from
+// "this script is actually broken," which should fail the job normally.
+if (!live) process.exitCode = 2;

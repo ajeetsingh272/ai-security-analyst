@@ -85,7 +85,7 @@ type Connector interface {
 written to Kafka. The contract is at-least-once delivery; duplicates are collapsed
 downstream by ClickHouse `ReplacingMergeTree` keyed on `(tenant_id, event_id)`. Exactly-once
 across a vendor API boundary is not achievable, so we make duplicates harmless instead of
-pretending to prevent them.
+pretending to prevent them. See [ADR-0010](../adr/0010-checkpoint-after-kafka-ack.md).
 
 **Back-pressure.** A tenant that suddenly emits 50× its normal volume — usually a
 misconfiguration, occasionally an attack — must not starve other tenants. Per-tenant token
@@ -128,7 +128,29 @@ configured EPS threshold are re-keyed to `tenant_id:shard_n`, and their correlat
 are merged downstream. The threshold and the merge are implemented in Phase 7; the key
 format carries the shard suffix from day one so the change is non-breaking.
 
-### 3.4 Detection plane
+### 3.4 Event store plane — ClickHouse writer
+
+`services/eventwriter` consumes `events.normalized` and writes to
+`sentinel.events` (ADR-0005) in batches, never per-row — the batch sizing
+respects whichever of a row-count or a time-window trigger fires first, so
+a low-volume tenant's events still land within a bounded delay rather than
+waiting indefinitely for a batch to fill. Kafka offsets commit only after
+ClickHouse acknowledges the batch durably, mirroring the connector plane's
+own checkpoint discipline (ADR-0010) one layer downstream: a crash between
+consume and commit replays, never loses, the same at-least-once contract
+Detection and ClickHouse's `ReplacingMergeTree` already have to tolerate
+regardless.
+
+A single malformed row (a schema violation ClickHouse itself rejects) is
+routed to `events.normalized.dlq` rather than retried forever — found
+operationally, not designed in advance: an early version retried the whole
+batch on any row's failure, which meant one bad row blocked every other
+tenant's events behind it indefinitely. The write path is otherwise a plain
+batched insert; merge queue depth (`system.parts`/`system.merges`) is
+polled and exported as a metric so sustained merge pressure is visible
+before it becomes a query latency problem, not after.
+
+### 3.5 Detection plane
 
 Two distinct engines, because one engine cannot do both jobs well.
 
@@ -155,7 +177,7 @@ the rule's own description instead of a narrative. This satisfies constraint C4 
 guarantee #4, and it is covered by a chaos test that kills the analyst and asserts the alert
 still lands.
 
-### 3.5 Correlation plane
+### 3.6 Correlation plane
 
 This is the component that makes the product viable, and it contains no AI.
 
@@ -178,7 +200,7 @@ model or auto-closed by rule.
 **The 10:1 SLO.** `signals_in / cases_escalated` is emitted as a metric per tenant per day
 and alerted on. If it degrades, that is a product incident, not a tuning task.
 
-### 3.6 AI analyst plane
+### 3.7 AI analyst plane
 
 A TypeScript worker consuming the `cases` topic. See
 [ADR-0006](../adr/0006-llm-tiering-and-grounding.md).
@@ -222,7 +244,7 @@ Failure is explicit, never silent: a report that cannot be grounded twice degrad
 rule-only alert and pages the on-call. We would rather ship a terse true alert than a fluent
 false one.
 
-### 3.7 Response plane
+### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.
 

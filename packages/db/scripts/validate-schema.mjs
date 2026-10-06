@@ -21,6 +21,7 @@
  */
 import pg from 'pg';
 import { GLOBAL_TABLES } from './tenancy.mjs';
+import { classifyTables } from './classify-tables.mjs';
 
 const POSTGRES_URL =
   process.env.POSTGRES_URL ?? 'postgres://sentinel:sentinel@localhost:5434/sentinel';
@@ -68,57 +69,7 @@ if (tables.length === 0) {
   process.exit(1);
 }
 
-const failures = [];
-const scoped = [];
-const globals = [];
-
-for (const table of tables) {
-  const col = tenantCols.get(table);
-  const allowed = Object.hasOwn(GLOBAL_TABLES, table);
-
-  if (!col) {
-    if (allowed) {
-      globals.push(table);
-    } else {
-      failures.push(
-        `${table}: no tenant_id column, and it is not in the allowlist.\n` +
-          '    Either add a non-null tenant_id, or add it to GLOBAL_TABLES in\n' +
-          '    packages/db/scripts/tenancy.mjs with the reason it has no tenant.',
-      );
-    }
-    continue;
-  }
-
-  // A table carrying tenant_id while claiming to be global is contradictory, and
-  // the contradiction will be resolved by whoever reads it next — possibly wrongly.
-  if (allowed) {
-    failures.push(
-      `${table}: has a tenant_id column but is listed in GLOBAL_TABLES.\n` +
-        '    Remove it from the allowlist, or drop the column.',
-    );
-    continue;
-  }
-
-  if (col.is_nullable !== 'NO') {
-    failures.push(
-      `${table}: tenant_id is nullable.\n` +
-        "    A NULL tenant_id matches no policy, so the row is invisible to every\n" +
-        '    tenant including its owner — data that exists and cannot be read.',
-    );
-    continue;
-  }
-
-  if (col.udt_name !== 'uuid') {
-    failures.push(
-      `${table}: tenant_id is ${col.udt_name}, expected uuid.\n` +
-        "    The policies cast app.tenant_id to uuid; a different type either fails\n" +
-        '    the comparison or silently coerces.',
-    );
-    continue;
-  }
-
-  scoped.push(table);
-}
+const { failures, scoped, globals } = classifyTables(tables, tenantCols, GLOBAL_TABLES);
 
 if (failures.length > 0) {
   console.error(`validate-schema: ${failures.length} problem(s)\n`);
