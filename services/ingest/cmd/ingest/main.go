@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,10 +22,12 @@ import (
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -173,9 +176,19 @@ func main() {
 			BatchSize:       batchSize,
 		},
 	)
-	// TODO(P1-02/P1-03): scheduler.Register(...) each tenant's configured
-	// connector here, once a real Connector implementation (M365) exists.
-	//
+	// P1-03: register one M365 connector per (tenant, content type) that
+	// has an active connectors row. This is a genuinely cross-tenant read
+	// at boot — exactly the "privileged role for a background job that
+	// legitimately spans tenants" exception ADR-0008's own risk table
+	// names, not a bypass of it: `pool` here is the same superuser-
+	// authenticated pool sentineldb.NewPool always returns (RLS is
+	// enforced per-tenant only once sentineldb.WithTenantContext switches
+	// role — see registerM365Connectors for where that happens for every
+	// subsequent query against this tenant's own rows).
+	if err := registerM365Connectors(ctx, pool, kafkaClient, scheduler, log); err != nil {
+		log.Error("registering m365 connectors", "err", err)
+	}
+
 	// P1-11 T1 needs a REAL stalled connector running inside this REAL
 	// service to prove connector.ingest_lag_seconds genuinely rises through
 	// the live OTel pipeline (not a mock) — same reasoning as P0-10's
@@ -235,6 +248,67 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// registerM365Connectors discovers every tenant with an active ('healthy',
+// 'degraded' or 'pending' — anything but 'revoked') m365 connectors row and
+// registers one TenantConnector per (tenant, content type), mirroring
+// m365.ContentTypes exactly (AC1: Audit.Exchange/SharePoint/
+// AzureActiveDirectory/General). Returns nil (not an error that stops this
+// service booting) when M365_CLIENT_ID/CLIENT_SECRET or
+// KMS_LOCAL_MASTER_KEY aren't set — there being no Entra app registration
+// yet is the expected, normal state for every environment that hasn't
+// completed P1-02's consent flow, the same graceful-absence framing
+// apps/api's own m365OAuthConfigFromEnv uses.
+func registerM365Connectors(ctx context.Context, pool *pgxpool.Pool, kafkaClient *kgo.Client, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	clientID := os.Getenv("M365_CLIENT_ID")
+	clientSecret := os.Getenv("M365_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		log.Info("m365 connector not configured (M365_CLIENT_ID/M365_CLIENT_SECRET unset) — skipping registration")
+		return nil
+	}
+
+	store, err := m365.NewCredentialStore(pool)
+	if err != nil {
+		log.Info("m365 credential store unavailable, skipping registration", "err", err)
+		return nil
+	}
+
+	oauthCfg := m365.OAuthConfig{
+		ClientID:         clientID,
+		ClientSecret:     clientSecret,
+		AuthorityBaseURL: os.Getenv("M365_AUTHORITY_BASE_URL"),
+	}
+	managementAPIBaseURL := os.Getenv("M365_MANAGEMENT_API_BASE_URL")
+	dlq := sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRawDLQ)
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'm365' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing m365 connectors: %w", err)
+	}
+	defer rows.Close()
+
+	registered := 0
+	for rows.Next() {
+		var connectorRowID, tenantID string
+		if err := rows.Scan(&connectorRowID, &tenantID); err != nil {
+			return fmt.Errorf("scanning m365 connector row: %w", err)
+		}
+		for _, contentType := range m365.ContentTypes {
+			scheduler.Register(sentinelconnector.TenantConnector{
+				TenantID:       tenantID,
+				ConnectorRowID: connectorRowID,
+				Stream:         contentType,
+				Connector:      m365.NewConnector(tenantID, contentType, store, oauthCfg, managementAPIBaseURL, http.DefaultClient, dlq),
+			})
+			registered++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating m365 connector rows: %w", err)
+	}
+	log.Info("registered m365 connectors", "registrations", registered)
+	return nil
 }
 
 // syntheticStalledConnector never completes a Fetch on its own — only when

@@ -70,3 +70,8 @@ const EventsRaw = "events.raw"
 // the same "framework ahead of the real producer" sequencing P1-01 and
 // P1-05 already established.
 const EventsNormalized = "events.normalized"
+
+// EventsRawDLQ is events.raw's own dead-letter topic — where P1-03's M365
+// connector (go/sentinelconnector/m365) sends a content blob that failed
+// to parse, raw bytes intact, rather than dropping it (that ticket's AC3).
+const EventsRawDLQ = "events.raw.dlq"
