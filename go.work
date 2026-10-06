@@ -7,6 +7,8 @@ use (
 	./go/sentinelschema
 	./go/sentinelstream
 	./go/sentinelevents
+	./go/soaktest
+	./go/sentinelreplay
 	./services/correlate
 	./services/detect
 	./services/eventwriter

@@ -24,6 +24,10 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/redis/go-redis/v9"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -131,23 +135,65 @@ func main() {
 		os.Exit(1)
 	}
 
+	quotaBreaches, err := otel.Meter(serviceName).Int64Counter("connector.quota_breach_count",
+		metric.WithDescription("Cycles where a tenant's requested volume exceeded its rate limit (P1-10 AC4)"))
+	if err != nil {
+		log.Error("creating connector.quota_breach_count counter", "err", err)
+		os.Exit(1)
+	}
+
+	// P1-10: a real, shared Redis-backed token bucket (AC1/AC2), wrapped so
+	// Redis being unreachable degrades to a conservative in-process limit
+	// rather than halting ingest (AC5) — ratelimit.go's own doc comments
+	// explain why FailOpenLimiter's fallback is deliberately the smallest
+	// tier's quota, not the tenant's real one.
+	redisClient := redis.NewClient(&redis.Options{Addr: envOr("REDIS_ADDR", "localhost:6379")})
+	rateLimiter := sentinelconnector.NewFailOpenLimiter(
+		sentinelconnector.NewRedisTokenBucket(redisClient),
+		func(tenantID string, err error) {
+			log.Warn("rate limiter failed open to the conservative fallback quota", "tenant_id", tenantID, "err", err)
+		},
+	)
+
+	s3Client := s3.New(s3.Options{
+		Region:       envOr("S3_REGION", "ap-south-1"),
+		Credentials:  credentials.NewStaticCredentialsProvider(envOr("S3_ACCESS_KEY", "sentineldev"), envOr("S3_SECRET_KEY", "sentineldev"), ""),
+		BaseEndpoint: aws.String(envOr("S3_ENDPOINT", "http://localhost:8333")),
+		UsePathStyle: true,
+	})
+	archiveWriter := sentinelconnector.NewS3ArchiveWriter(s3Client, envOr("S3_ARCHIVE_BUCKET", "sentinel-archive"))
+	// P1-08: every fetched event, archived before normalisation ever runs
+	// — same S3 client and bucket as the overflow archive above, a
+	// different key prefix (raw/ vs overflow/) and different failure
+	// semantics (a raw-archive failure fails the whole cycle; see
+	// RawArchiveWriter's own doc comment for why the two are not one type).
+	rawArchiveWriter := sentinelconnector.NewS3RawArchiveWriter(s3Client, envOr("S3_ARCHIVE_BUCKET", "sentinel-archive"))
+
 	// With zero connectors registered below (P1-02/03 land the first real
-	// one, M365), this publisher is not yet exercised by production
-	// traffic — but it is the REAL producer (P1-05), not a placeholder:
-	// the scheduler is wired exactly as it will run once a connector exists
-	// to publish through it.
+	// one, M365), none of this is yet exercised by production traffic —
+	// but every piece (the real Redpanda producer, the real rate limiter,
+	// the real archive writer) is the REAL thing, not a placeholder: the
+	// scheduler is wired exactly as it will run once a connector exists to
+	// publish through it.
 	scheduler := sentinelconnector.NewScheduler(
 		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRaw),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
-			Interval:   time.Minute,
-			Log:        log,
-			CycleCount: cycleCount,
-			Health:     sentinelconnector.NewPostgresHealthRecorder(pool),
+			Interval:      time.Minute,
+			Log:           log,
+			CycleCount:    cycleCount,
+			Health:        sentinelconnector.NewPostgresHealthRecorder(pool),
+			RateLimiter:   rateLimiter,
+			Archive:       archiveWriter,
+			QuotaBreaches: quotaBreaches,
+			RawArchive:    rawArchiveWriter,
 		},
 	)
 	// TODO(P1-02/P1-03): scheduler.Register(...) each tenant's configured
-	// connector here, once a real Connector implementation (M365) exists.
+	// connector here, once a real Connector implementation (M365) exists —
+	// looking up that tenant's tenants.plan column to resolve its Quota
+	// (sentinelconnector.DefaultQuotas[plan]) at registration time, per
+	// quota.go's own doc comment.
 	scheduler.Start(ctx)
 
 	<-ctx.Done()

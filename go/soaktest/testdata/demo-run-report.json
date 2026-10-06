@@ -1,0 +1,382 @@
+{
+  "started_at": "2026-10-05T18:30:08.3362571+05:30",
+  "duration": "12m9s",
+  "produced": 89700,
+  "written_by_consumer": 89700,
+  "stored_after_merge": 89700,
+  "reconciled_exactly": true,
+  "vendor_failures_injected": 61,
+  "broker_restarts": 2,
+  "clickhouse_restarts": 2,
+  "lag_p50_ms": 2055,
+  "lag_p95_ms": 3070,
+  "lag_p99_ms": 4052,
+  "resource_samples": [
+    {
+      "at_unix_millis": 1791205208336,
+      "goroutines": 23,
+      "heap_alloc_bytes": 1292904
+    },
+    {
+      "at_unix_millis": 1791205218335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4074736
+    },
+    {
+      "at_unix_millis": 1791205228335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2603304
+    },
+    {
+      "at_unix_millis": 1791205238335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3758408
+    },
+    {
+      "at_unix_millis": 1791205248335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3668200
+    },
+    {
+      "at_unix_millis": 1791205258335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3171384
+    },
+    {
+      "at_unix_millis": 1791205268335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3092696
+    },
+    {
+      "at_unix_millis": 1791205278335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3955912
+    },
+    {
+      "at_unix_millis": 1791205288335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3853680
+    },
+    {
+      "at_unix_millis": 1791205298335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3564328
+    },
+    {
+      "at_unix_millis": 1791205308336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4334264
+    },
+    {
+      "at_unix_millis": 1791205318335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2890672
+    },
+    {
+      "at_unix_millis": 1791205328335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2578800
+    },
+    {
+      "at_unix_millis": 1791205338335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3510280
+    },
+    {
+      "at_unix_millis": 1791205348335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3929632
+    },
+    {
+      "at_unix_millis": 1791205358335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3049840
+    },
+    {
+      "at_unix_millis": 1791205368335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2847216
+    },
+    {
+      "at_unix_millis": 1791205378335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3561200
+    },
+    {
+      "at_unix_millis": 1791205388335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3893584
+    },
+    {
+      "at_unix_millis": 1791205398336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4279360
+    },
+    {
+      "at_unix_millis": 1791205408335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2985272
+    },
+    {
+      "at_unix_millis": 1791205418336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3574824
+    },
+    {
+      "at_unix_millis": 1791205428336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3380296
+    },
+    {
+      "at_unix_millis": 1791205438335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3974504
+    },
+    {
+      "at_unix_millis": 1791205448335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4128392
+    },
+    {
+      "at_unix_millis": 1791205458335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2652856
+    },
+    {
+      "at_unix_millis": 1791205468335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3885928
+    },
+    {
+      "at_unix_millis": 1791205478335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3813120
+    },
+    {
+      "at_unix_millis": 1791205488335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3091904
+    },
+    {
+      "at_unix_millis": 1791205498335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4252680
+    },
+    {
+      "at_unix_millis": 1791205508335,
+      "goroutines": 40,
+      "heap_alloc_bytes": 3457152
+    },
+    {
+      "at_unix_millis": 1791205518335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4013752
+    },
+    {
+      "at_unix_millis": 1791205528335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2749152
+    },
+    {
+      "at_unix_millis": 1791205538335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4282520
+    },
+    {
+      "at_unix_millis": 1791205548342,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2906528
+    },
+    {
+      "at_unix_millis": 1791205558335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2944216
+    },
+    {
+      "at_unix_millis": 1791205568336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3404904
+    },
+    {
+      "at_unix_millis": 1791205578335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4041008
+    },
+    {
+      "at_unix_millis": 1791205588341,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4121112
+    },
+    {
+      "at_unix_millis": 1791205598345,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4405056
+    },
+    {
+      "at_unix_millis": 1791205608337,
+      "goroutines": 34,
+      "heap_alloc_bytes": 4223136
+    },
+    {
+      "at_unix_millis": 1791205618337,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2985608
+    },
+    {
+      "at_unix_millis": 1791205628340,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4620720
+    },
+    {
+      "at_unix_millis": 1791205638335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3029832
+    },
+    {
+      "at_unix_millis": 1791205648335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4213936
+    },
+    {
+      "at_unix_millis": 1791205658335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3431224
+    },
+    {
+      "at_unix_millis": 1791205668335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4443064
+    },
+    {
+      "at_unix_millis": 1791205678335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4470896
+    },
+    {
+      "at_unix_millis": 1791205688335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4183848
+    },
+    {
+      "at_unix_millis": 1791205698335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3174648
+    },
+    {
+      "at_unix_millis": 1791205708335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3230872
+    },
+    {
+      "at_unix_millis": 1791205718335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4546112
+    },
+    {
+      "at_unix_millis": 1791205728335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3977048
+    },
+    {
+      "at_unix_millis": 1791205738335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3122992
+    },
+    {
+      "at_unix_millis": 1791205748340,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4473240
+    },
+    {
+      "at_unix_millis": 1791205758335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3489640
+    },
+    {
+      "at_unix_millis": 1791205768344,
+      "goroutines": 35,
+      "heap_alloc_bytes": 5453400
+    },
+    {
+      "at_unix_millis": 1791205778338,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4718352
+    },
+    {
+      "at_unix_millis": 1791205788340,
+      "goroutines": 34,
+      "heap_alloc_bytes": 4955720
+    },
+    {
+      "at_unix_millis": 1791205798338,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3135464
+    },
+    {
+      "at_unix_millis": 1791205808335,
+      "goroutines": 38,
+      "heap_alloc_bytes": 3660520
+    },
+    {
+      "at_unix_millis": 1791205818338,
+      "goroutines": 35,
+      "heap_alloc_bytes": 4511944
+    },
+    {
+      "at_unix_millis": 1791205828336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 5131624
+    },
+    {
+      "at_unix_millis": 1791205838336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4879024
+    },
+    {
+      "at_unix_millis": 1791205848337,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4486120
+    },
+    {
+      "at_unix_millis": 1791205858336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4272960
+    },
+    {
+      "at_unix_millis": 1791205868336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 5455152
+    },
+    {
+      "at_unix_millis": 1791205878355,
+      "goroutines": 40,
+      "heap_alloc_bytes": 6551104
+    },
+    {
+      "at_unix_millis": 1791205888335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 2943848
+    },
+    {
+      "at_unix_millis": 1791205898335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 4233272
+    },
+    {
+      "at_unix_millis": 1791205908336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3001216
+    },
+    {
+      "at_unix_millis": 1791205918336,
+      "goroutines": 32,
+      "heap_alloc_bytes": 5012888
+    },
+    {
+      "at_unix_millis": 1791205928335,
+      "goroutines": 32,
+      "heap_alloc_bytes": 3542352
+    }
+  ],
+  "scope_note": "P1-12's own AC asks for 72 hours continuous; this run's -duration flag is in the accompanying log/PR, not hardcoded here. See go/soaktest/main.go's own doc comment and the PR description for the honest accounting of what was run versus what this harness supports."
+}
