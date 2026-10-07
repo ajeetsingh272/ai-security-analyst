@@ -608,6 +608,33 @@ than building a second one. Cost per tenant is visible on a real Grafana dashboa
 hit rate and grounding rejection rate it sits next to for the same reason: all three move
 together when a tenant's behavior actually changes.
 
+**Plain-English report generation (P4-07).** The customer-facing output, built entirely from an
+already-validated, already-grounded Verdict (P4-03/P4-04) — `report.ts`'s own `generateReport`
+never calls a model again and never invents content; it only glosses jargon and restructures
+what already passed grounding, the same "deterministic code, never a model self-check"
+discipline the grounding validator itself applies, now to WRITING a report instead of
+validating one. A fixed glossary (`jargon.ts`) explains any technical term inline the first
+time it appears, never repeating the gloss on later mentions; a Flesch-Kincaid grade-level
+check (`readability.ts`) gates every report before it goes out — calibrated empirically against
+a genuinely plain security-report sentence (~8) versus dense, jargon-heavy prose (25+), since
+the formula is known to be noisy on short passages and a stricter threshold would fail ordinary
+sentences on noise alone. `recommendedActions` are grouped into now/today/later and each
+playbook identifier (P4-03's own known-playbook registry) gets a one-line plain description,
+falling back to the raw identifier rather than fabricating one for anything unrecognised.
+Every statement stays traceable to its own claim's `evidenceRef` (AC3) — carried alongside the
+narrative, not woven into it, since narrating "(see evt_abc123)" inline would reintroduce the
+same jargon this file exists to remove. Four channel renderers (`report-channels.ts`) turn the
+same `Report` into WhatsApp plain text, Slack Block Kit, escaped HTML email, and the dashboard's
+own structured JSON — each respecting that channel's real limits (WhatsApp's message cap,
+Slack's per-block text cap) with an explicit truncation marker, never a silent cut, and the
+email renderer HTML-escapes every piece of report text, since it ultimately traces back to
+model-authored claim text that is grounding-validated but never HTML-encoding-trusted. No real
+delivery channel exists yet (WhatsApp/Slack/email integration is P5's own response plane), so
+the worker renders for all four channels against every real case it processes — proving AC4
+against real production traffic, not only a unit-test fixture — and logs the result rather than
+sending it, the same honestly-scoped pattern every other not-yet-delivered alert in this
+codebase already uses.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.
