@@ -1,0 +1,22 @@
+title: OAuth consent grant to an unverified application
+id: 8f1a2b3c-0001-4a00-9000-000000000002
+status: stable
+description: >
+  Detects a tenant user granting OAuth consent to an application that has
+  not completed Microsoft's publisher verification — a common illicit
+  consent grant pattern used to persist access without a password.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1528
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Consent to application.'
+  condition: selection
+falsepositives:
+  - A legitimate line-of-business app pending publisher verification
+level: high

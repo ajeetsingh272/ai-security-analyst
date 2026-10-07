@@ -1,0 +1,24 @@
+title: Sign-in through a known anonymiser or proxy
+id: 8f1a2b3c-0001-4a00-9000-000000000005
+status: experimental
+description: >
+  Detects a successful sign-in where the source IP is a known Tor exit
+  node or anonymising proxy — threat-intel enrichment populates this flag
+  (P2-09); this rule's own job is purely the field match once that
+  enrichment exists.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1090.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'UserLoggedIn'
+    ResultStatus: 'Success'
+  condition: selection
+falsepositives:
+  - A user legitimately travelling or using a corporate VPN exit node
+level: high

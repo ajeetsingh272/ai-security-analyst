@@ -1,0 +1,26 @@
+title: Impossible travel between sign-ins
+id: 8f1a2b3c-0001-4a00-9000-000000000008
+status: experimental
+description: >
+  Detects more distinct source IPs for one user's sign-ins within a short
+  window than is physically plausible to travel between. This rule
+  captures only the volume-of-distinct-IPs signal the windowed engine
+  evaluates today; true geo-velocity (P2-09's enrichment feeding a
+  distance/time calculation) is this rule's own documented follow-up, not
+  something the parser subset in P2-01 needs to express.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1078.004
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'UserLoggedIn'
+    ResultStatus: 'Success'
+  condition: selection | count() by UserId, ClientIP > 1 within 10m
+falsepositives:
+  - A user switching between corporate VPN exit nodes
+level: high
