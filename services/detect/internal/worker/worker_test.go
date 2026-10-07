@@ -143,8 +143,8 @@ func TestEvaluate_SignalCarriesEventRuleAndTenant(t *testing.T) {
 		t.Fatalf("got %d signals, want 1", len(signals))
 	}
 	sig := signals[0]
-	if sig.EventID != "evt-99" {
-		t.Errorf("EventID = %q, want evt-99", sig.EventID)
+	if len(sig.EventIDs) != 1 || sig.EventIDs[0] != "evt-99" {
+		t.Errorf("EventIDs = %v, want [evt-99]", sig.EventIDs)
 	}
 	if sig.TenantID != "tenant-42" {
 		t.Errorf("TenantID = %q, want tenant-42", sig.TenantID)

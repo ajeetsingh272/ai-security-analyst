@@ -249,7 +249,7 @@ func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent) (signals 
 		}
 		signals = append(signals, sentinelsignal.Signal{
 			SignalID:   uuid.NewString(),
-			EventID:    wev.EventID,
+			EventIDs:   []string{wev.EventID},
 			TenantID:   wev.TenantID,
 			RuleID:     c.ID,
 			RuleTitle:  c.Title,
@@ -285,8 +285,9 @@ func (w *Worker) publishSignal(ctx context.Context, sig sentinelsignal.Signal) e
 	// key (go/sentinelstream.TopicSpec) until an actual entity concept
 	// exists — that resolution is the correlation plane's own job (P3),
 	// not this ticket's. This at least keeps every signal for the same
-	// event on one partition, in order.
-	key := sig.TenantID + ":" + sig.EventID
+	// event on one partition, in order. EventIDs[0] because an in-stream
+	// signal always has exactly one.
+	key := sig.TenantID + ":" + sig.EventIDs[0]
 	res := w.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.Signals, Key: []byte(key), Value: payload})
 	return res.FirstErr()
 }
