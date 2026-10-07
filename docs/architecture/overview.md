@@ -532,6 +532,21 @@ reads like any other tool result, logged with its arguments either way for repla
 tool-use loop in `investigation-model.ts` is capped at a fixed number of round-trips so a case
 that never converges on an answer fails loudly rather than looping (and spending) forever.
 
+**Structured verdict validation (P4-03).** The model's final JSON response is checked against
+the Verdict contract for real (`verdict-validation.ts`) — not the duck-typed shape check P4-01
+shipped as a placeholder: severity is constrained to its five-value enum, every claim must cite
+at least one non-empty `evidenceRef` (an unverifiable claim is rejected here, before the
+grounding validator, P4-04, would otherwise re-query the event store for nothing), and every
+recommended action's `playbook` is checked against a known-identifier list
+(`playbook-registry.ts`). That list is deliberately NOT the real playbook registry — P5-05
+("Response playbook registry and executor") owns blast radius, required scopes, step-up
+requirements, reversal procedures, and the actual executor; this is only validation, using the
+exact six identifiers P5-05's own ticket already names, not invented ahead of that design. A
+validation failure (malformed JSON or any schema violation) gives the model exactly one
+corrected attempt — the failure is fed back as a plain-language message listing every problem
+found in one pass — before the investigation fails outright; a second consecutive failure is
+treated the same as `UnparsableVerdictError` always has been, non-retryable.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

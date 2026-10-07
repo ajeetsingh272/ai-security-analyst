@@ -1,21 +1,23 @@
 /**
  * The investigation step (P4-01's own minimal slice of ADR-0006's
  * tiered design) — calls Claude, lets it call P4-02's own investigation
- * tools, and parses its final response into a Verdict (packages/schema's
- * own frozen contract, P3-08/P0-11).
+ * tools, validates its final response against the Verdict contract
+ * (packages/schema's own frozen shape, P3-08/P0-11), and gives the model
+ * exactly one chance to correct itself if that validation fails (P4-03).
  *
  * Deliberately NOT the full ADR-0006 design: tiered routing between
  * Haiku (triage) and Opus (investigation), and prompt caching, are
- * P4-05's own ticket; the structured-output contract's real parsing
- * and validation (claims with evidence_ref, grounding) are P4-03's
- * and P4-04's. This file's job is to prove the worker SKELETON (P4-01)
- * produces *a* Verdict end to end, now WITH the real tool-use loop
- * (P4-02) that lets the model actually gather evidence rather than
- * guess — a minimal prompt, no caching, no tiering yet.
+ * P4-05's own ticket; grounding each claim's evidenceRef against the
+ * real event store is P4-04's. This file's job is to prove the worker
+ * produces a real, schema-valid Verdict end to end — gathering evidence
+ * via tools (P4-02) and self-correcting a malformed first answer (P4-03)
+ * — a minimal prompt, no caching, no tiering yet.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { Verdict } from '@sentinel/schema';
 import { TOOL_DEFINITIONS, executeTool, type ToolDependencies } from './tools/index.js';
+import { validateVerdict, formatValidationErrors } from './verdict-validation.js';
+import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
 
 export interface CaseContext {
   caseId: string;
@@ -29,13 +31,13 @@ export interface InvestigationModel {
   investigate(ctx: CaseContext): Promise<Verdict>;
 }
 
-/** Thrown when the model's response cannot be parsed into a Verdict
- * at all — P4-03's own job to make this richer (retry-with-the-
- * -validation-error-fed-back, per ADR-0006); P4-01 only needs this
- * to exist as a distinguishable failure mode its own retry logic
- * can reason about (a malformed response is not a transient
- * provider error — retrying the IDENTICAL request would get the
- * identical malformed response). */
+/** Thrown when the model's response cannot be turned into a valid
+ * Verdict even after the one repair attempt AC3 allows — a
+ * distinguishable failure mode `main.ts`'s own `isRetryable` already
+ * treats as non-retryable (a malformed response is not a transient
+ * provider error — retrying the IDENTICAL request gets the identical
+ * malformed response; only a DIFFERENT request, i.e. the repair
+ * attempt this file already tried once, has any chance of succeeding). */
 export class UnparsableVerdictError extends Error {
   constructor(
     message: string,
@@ -47,7 +49,7 @@ export class UnparsableVerdictError extends Error {
 }
 
 const SYSTEM_PROMPT = `You are a security analyst investigating an escalated case. You may call the available tools to gather evidence before answering. When you are done, respond with ONLY a JSON object matching this exact shape, no other text:
-{"severity": "critical"|"high"|"medium"|"low"|"info", "title": string, "claims": [{"text": string, "evidenceRef": string[]}], "attackChain": string[], "recommendedActions": [{"playbook": string, "urgency": "now"|"today"|"later", "blastRadius": string}]}`;
+{"severity": "critical"|"high"|"medium"|"low"|"info", "title": string, "claims": [{"text": string, "evidenceRef": string[] (non-empty, every claim must cite at least one piece of evidence)}], "attackChain": string[], "recommendedActions": [{"playbook": one of [${PLAYBOOK_REGISTRY.join(', ')}], "urgency": "now"|"today"|"later", "blastRadius": string}]}`;
 
 export interface AnthropicInvestigationModelOptions {
   apiKey: string;
@@ -88,6 +90,11 @@ export class AnthropicInvestigationModel implements InvestigationModel {
         content: `Case ${ctx.caseId} (tenant ${ctx.tenantId}): severity=${ctx.severity ?? 'unknown'}, title=${ctx.title ?? 'untitled'}, score=${ctx.score ?? 'unknown'}.`,
       },
     ];
+    // AC3: "a schema violation triggers one repair attempt, then fails
+    // the investigation" — exactly one chance across the WHOLE
+    // investigation, not one per malformed response, so this is a
+    // single flag, not a counter with a higher budget.
+    let repairAttempted = false;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const response = await this.client.messages.create({
@@ -98,29 +105,43 @@ export class AnthropicInvestigationModel implements InvestigationModel {
         ...(this.tools ? { tools: TOOL_DEFINITIONS } : {}),
       });
 
-      if (response.stop_reason !== 'tool_use' || !this.tools) {
-        const block = response.content.find((b) => b.type === 'text');
-        const text = block && block.type === 'text' ? block.text : '';
-        return parseVerdict(text);
+      if (response.stop_reason === 'tool_use' && this.tools) {
+        messages.push({ role: 'assistant', content: response.content });
+        const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const block of toolUseBlocks) {
+          const result = await executeTool(block.name, ctx.tenantId, block.input, this.tools);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+        }
+        messages.push({ role: 'user', content: toolResults });
+        continue;
       }
 
-      messages.push({ role: 'assistant', content: response.content });
-      const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const block of toolUseBlocks) {
-        const result = await executeTool(block.name, ctx.tenantId, block.input, this.tools);
-        toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+      const block = response.content.find((b) => b.type === 'text');
+      const text = block && block.type === 'text' ? block.text : '';
+      try {
+        return parseVerdict(text);
+      } catch (err) {
+        if (!(err instanceof UnparsableVerdictError) || repairAttempted) throw err;
+        repairAttempted = true;
+        messages.push({ role: 'assistant', content: response.content });
+        messages.push({
+          role: 'user',
+          content: `Your previous response could not be used: ${err.message}. Respond again with ONLY a corrected JSON object matching the required shape — no other text.`,
+        });
       }
-      messages.push({ role: 'user', content: toolResults });
     }
 
-    throw new UnparsableVerdictError(`model did not produce a final answer within ${MAX_TOOL_ITERATIONS} tool-use iterations`, '');
+    throw new UnparsableVerdictError(`model did not produce a valid Verdict within ${MAX_TOOL_ITERATIONS} iterations`, '');
   }
 }
 
-/** Exported for P4-03 to build on, and for this ticket's own unit
- * tests — parsing is pure and has nothing to do with the network
- * call itself. */
+/** Parses the model's final text block and validates it against the
+ * Verdict contract (verdict-validation.ts) — JSON syntax errors and
+ * schema violations (unknown severity, an evidence-less claim, an
+ * unknown playbook, ...) both become an `UnparsableVerdictError`,
+ * carrying enough detail (`formatValidationErrors`) for `investigate`'s
+ * own repair prompt to tell the model exactly what to fix. */
 export function parseVerdict(text: string): Verdict {
   let parsed: unknown;
   try {
@@ -128,20 +149,9 @@ export function parseVerdict(text: string): Verdict {
   } catch (err) {
     throw new UnparsableVerdictError(`model response was not valid JSON: ${(err as Error).message}`, text);
   }
-  if (!isVerdictShaped(parsed)) {
-    throw new UnparsableVerdictError('model response was valid JSON but not a Verdict', text);
+  const result = validateVerdict(parsed);
+  if (!result.ok) {
+    throw new UnparsableVerdictError(`model response failed verdict validation: ${formatValidationErrors(result.errors)}`, text);
   }
-  return parsed;
-}
-
-function isVerdictShaped(value: unknown): value is Verdict {
-  if (typeof value !== 'object' || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.severity === 'string' &&
-    typeof v.title === 'string' &&
-    Array.isArray(v.claims) &&
-    Array.isArray(v.attackChain) &&
-    Array.isArray(v.recommendedActions)
-  );
+  return result.verdict;
 }
