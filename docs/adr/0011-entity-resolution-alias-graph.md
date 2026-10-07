@@ -116,3 +116,14 @@ A second Go service needs to write an audited, attributable event and the two-au
 (`audit_log` for TypeScript, `entity_merges` for this one thing) becomes real duplicated
 infrastructure rather than a one-off — that is the point to port the hash chain to Go once,
 properly, and migrate `entity_merges` into it rather than maintaining both indefinitely.
+
+### Update (P3-03)
+
+That trigger fired: P3-03 (case lifecycle, TG6) needed `audit_log` writes from Go for case
+transitions. The hash chain is now ported, once, properly, as `go/sentinelaudit` — same
+`SHA256(prevHash || canonicalJSON(content))` algorithm, same 8 hashed fields, same genesis
+hash as `packages/db`'s TypeScript implementation, proven byte-identical against real
+ground-truth hashes and against the real `verify-audit-chain.mjs` CLI reading entries the Go
+writer produced. `entity_merges` itself was **not** migrated into `audit_log` as part of this —
+that remains its own, separate piece of work (the risk row above still applies until it's
+done), scoped out of P3-03 to keep that ticket's own diff to the case lifecycle it was about.

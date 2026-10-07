@@ -293,9 +293,27 @@ only a new `case_signals` join table was needed, to know *which* signals are in 
 — without it, idempotent replay has nothing to check a signal's membership against.
 
 A case has a lifecycle: `open → triaging → investigating → awaiting_approval → actioned →
-closed`, with `dismissed` reachable from triaging and investigating. State transitions are
-append-only events in Postgres, so the full history of a case is reconstructible — required
-for the audit guarantee.
+closed`, with `dismissed` reachable from triaging and investigating, and a failed response
+action returning `actioned → awaiting_approval` (§6's failure-mode table). One further edge
+exists outside that main path: `open → closed` directly, for a case that quiets out before
+anything ever triages it — the same "quiet period elapsed" case P3-02's clustering already
+produces. State transitions are append-only events in Postgres, so the full history of a case
+is reconstructible — required for the audit guarantee.
+
+**Case lifecycle (`services/correlate/internal/lifecycle`, P3-03, TG6).** The legal-transition
+graph above is enforced in one place, `IsLegalTransition`, not re-checked ad hoc at each call
+site; an illegal transition is rejected before anything is written. `Writer.Transition` appends
+the `case_transitions` row and its `go/sentinelaudit` audit entry inside the *same*,
+caller-provided transaction — so a transition and its audit record commit or roll back
+together, never one without the other. `go/sentinelaudit` is itself a Go port of
+`packages/db`'s TypeScript hash chain (`SHA256(prevHash || canonicalJSON(content))`, same 8
+hashed fields, same genesis hash) — the thing P3-01's own entity-merge audit trail had
+deliberately deferred porting, now done once, properly, and proven cross-language: entries
+written entirely by the Go writer pass the real TypeScript `verify-audit-chain.mjs` CLI
+unmodified. Both transitions `cluster.PostgresStore` already wrote before this ticket (`open`
+on case creation, `closed` on quiet timeout) now go through this same writer, so every
+case transition in the system — not only ones added after this ticket — is legality-checked
+and audited.
 
 Cases are scored before the LLM sees them: entity criticality (is this the CFO?), signal
 count, highest constituent severity, MITRE kill-chain progression (a case spanning Initial

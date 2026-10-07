@@ -1,6 +1,7 @@
 go 1.23
 
 use (
+	./go/sentinelaudit
 	./go/sentinelconnector
 	./go/sentineldb
 	./go/sentinelenrich
