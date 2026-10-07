@@ -20,13 +20,20 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/baseline"
 	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/cluster"
+	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/reduction"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
+
+const serviceName = "sentinel-correlate"
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -34,6 +41,28 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	otlpEndpoint := envOr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+	_, _, shutdownMetrics, err := sentinelobs.NewMeterProvider(ctx, serviceName, otlpEndpoint)
+	if err != nil {
+		log.Error("starting meter provider", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = shutdownMetrics(context.Background()) }()
+
+	// P3-06/TG3: the reduction ratio a later Grafana alert (AC2) and
+	// the operations dashboard (AC3) both read, as
+	// correlate_reduction_ratio. A synchronous gauge, not a push per
+	// signal: it is only ever Record()-ed once per tenant per day, by
+	// runReductionRatioSweep below — Prometheus's own scrape then keeps
+	// reporting that same last-set value until the next day's run
+	// updates it, which is the correct reading of a DAILY SLO.
+	reductionRatio, err := otel.Meter(serviceName).Float64Gauge("correlate.reduction_ratio",
+		metric.WithDescription("Signal-to-case reduction ratio for the most recently completed day this tenant had any signals"))
+	if err != nil {
+		log.Error("creating correlate.reduction_ratio gauge", "err", err)
+		os.Exit(1)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -140,6 +169,13 @@ func main() {
 		runBaselineRecomputeSweep(ctx, log, pgPool, baselineStore)
 	}()
 
+	reductionStore := reduction.NewStore(pgPool, chConn)
+	reductionDone := make(chan struct{})
+	go func() {
+		defer close(reductionDone)
+		runReductionRatioSweep(ctx, log, reductionStore, reductionRatio)
+	}()
+
 	<-ctx.Done()
 	log.Info("draining in-flight clustering before exit")
 
@@ -162,6 +198,11 @@ func main() {
 	case <-baselineDone:
 	case <-shutdown.Done():
 		log.Error("baseline recompute sweep did not stop within the shutdown deadline")
+	}
+	select {
+	case <-reductionDone:
+	case <-shutdown.Done():
+		log.Error("reduction ratio sweep did not stop within the shutdown deadline")
 	}
 	log.Info("correlate stopped")
 }
@@ -298,6 +339,51 @@ func runBaselineRecomputeSweep(ctx context.Context, log *slog.Logger, pool *pgxp
 		for _, tenantID := range tenantIDs {
 			if err := store.Recompute(ctx, tenantID, time.Now().UTC()); err != nil {
 				log.Error("recomputing entity baselines", "tenant_id", tenantID, "err", err)
+			}
+		}
+	}
+
+	sweepOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweepOnce()
+		}
+	}
+}
+
+// runReductionRatioSweep measures each tenant's own PREVIOUS calendar
+// day's reduction ratio once per day — "yesterday" rather than "today
+// so far", since today is still incomplete and a partial day's ratio
+// is not a meaningful SLO measurement. T3's own "zero signals, no
+// spurious alert" is why OK is checked before Record: a quiet
+// tenant's gauge is left exactly as it was (unset, or whatever the
+// last real day reported), never overwritten with a misleading 0.
+func runReductionRatioSweep(ctx context.Context, log *slog.Logger, store *reduction.Store, gauge metric.Float64Gauge) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	sweepOnce := func() {
+		tenantIDs, err := store.AllTenantIDs(ctx)
+		if err != nil {
+			log.Error("listing tenants for reduction ratio sweep", "err", err)
+			return
+		}
+		yesterday := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+		for _, tenantID := range tenantIDs {
+			result, err := store.ComputeDaily(ctx, tenantID, yesterday)
+			if err != nil {
+				log.Error("computing reduction ratio", "tenant_id", tenantID, "err", err)
+				continue
+			}
+			if !result.OK {
+				continue
+			}
+			gauge.Record(ctx, result.Ratio, metric.WithAttributes(attribute.String("tenant_id", tenantID)))
+			if result.Ratio < 8 {
+				log.Warn("reduction ratio below the 8:1 floor", "tenant_id", tenantID, "ratio", result.Ratio,
+					"signals", result.Signals, "cases_escalated", result.CasesEscalated)
 			}
 		}
 	}

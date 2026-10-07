@@ -360,8 +360,26 @@ this ticket, not wired to a real value: doing so needs per-signal geography/devi
 this ticket's own scope — `GetBaseline` gives scoring something real to deviate against, but
 connecting the two is still open, future work.
 
-**The 10:1 SLO.** `signals_in / cases_escalated` is emitted as a metric per tenant per day
-and alerted on. If it degrades, that is a product incident, not a tuning task.
+**The 10:1 SLO (`services/correlate/internal/reduction`, P3-06, TG3).**
+`signals / cases_escalated` is computed per tenant per day
+(`services/correlate/internal/reduction`) and exported as the `correlate_reduction_ratio`
+Prometheus gauge; Grafana alerts when it drops below 8:1
+(`infra/docker/grafana-provisioning/alerting/reduction-ratio.yml`), visible platform-wide and
+per-tenant on its own operations dashboard. `signals` is a count of every `case_signals` row
+for the day — deliberately with no suppression-status filter of any kind: TG3 ("nothing is
+hidden") means a suppressed signal (still stored and counted since P2-10) cannot quietly fall
+out of the denominator to make the ratio look healthier than it is. `cases_escalated` uses
+P3-04's own `scoring.EscalationThreshold` for that tenant's plan tier, which is why this
+ticket depends on P3-04 specifically. The historical record lives in ClickHouse's own
+`sentinel.daily_reduction` (pre-built by P1-06) for backfill and trend analysis — a dedicated
+CLI (`cmd/backfill-reduction`) reuses the identical counting logic the live daily sweep uses,
+over any explicit date range, idempotently (a rerun deletes any existing row for that
+tenant/day first, since the table's own `SummingMergeTree` engine would otherwise double-count
+a repeated insert). A tenant with zero signals that day reports nothing to the gauge at all,
+rather than a misleading ratio of 0 — a quiet tenant is not a degraded one. A genuine
+degradation (as opposed to a single noisy rule caught and suppressed the same day) is
+documented as a product incident, not a tuning task — see
+[`docs/runbooks/reduction-ratio-degraded.md`](../runbooks/reduction-ratio-degraded.md).
 
 ### 3.7 AI analyst plane
 
