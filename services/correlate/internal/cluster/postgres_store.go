@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelaudit"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
+	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/lifecycle"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,12 +19,20 @@ import (
 // uses. cases/case_transitions (0001_foundation.sql) are written here
 // for the first time from Go — see this package's own doc comment for
 // why their shape is treated as fixed, not evolved, by this ticket.
+//
+// Both transitions this store writes (open, on case creation; closed,
+// on quiet timeout) go through lifecycle.Writer rather than a raw
+// INSERT — P3-03's own AC5 ("transition events are written in the
+// same transaction as the audit entry") applies to these two edges
+// just as much as to any state lifecycle.Writer's own callers add
+// later, even though they predate that ticket.
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool      *pgxpool.Pool
+	lifecycle *lifecycle.Writer
 }
 
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
-	return &PostgresStore{pool: pool}
+	return &PostgresStore{pool: pool, lifecycle: lifecycle.NewWriter(sentinelaudit.NewWriter(pool))}
 }
 
 func (s *PostgresStore) FindOpenCaseForEntity(ctx context.Context, tenantID, entityType, entityID string, windowDuration time.Duration, asOf time.Time) (string, bool, error) {
@@ -97,11 +107,7 @@ func (s *PostgresStore) CreateCaseWithSignal(ctx context.Context, tenantID strin
 			return "", err
 		}
 
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
-			 VALUES ($1, $2, NULL, 'open', 'system', 'correlate', 'first signal clustered')`,
-			tenantID, caseID,
-		); err != nil {
+		if err := s.lifecycle.Transition(ctx, tx, tenantID, caseID, lifecycle.StateOpen, sentinelaudit.ActorSystem, "correlate", "first signal clustered"); err != nil {
 			return "", err
 		}
 
@@ -178,11 +184,7 @@ func (s *PostgresStore) CloseQuietCases(ctx context.Context, tenantID string, qu
 			if _, err := tx.Exec(ctx, `UPDATE cases SET window_end = $1 WHERE id = $2`, windowEnd, c.id); err != nil {
 				return 0, err
 			}
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
-				 VALUES ($1, $2, 'open', 'closed', 'system', 'correlate', 'quiet period elapsed with no new signal')`,
-				tenantID, c.id,
-			); err != nil {
+			if err := s.lifecycle.Transition(ctx, tx, tenantID, c.id, lifecycle.StateClosed, sentinelaudit.ActorSystem, "correlate", "quiet period elapsed with no new signal"); err != nil {
 				return 0, err
 			}
 		}

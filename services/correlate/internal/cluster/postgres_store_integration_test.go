@@ -139,4 +139,17 @@ func TestPostgresStore_CloseQuietCasesRecordsTransition(t *testing.T) {
 	if transitionCount != 1 {
 		t.Errorf("'closed' transitions for case %s = %d, want 1", caseID, transitionCount)
 	}
+
+	// P3-03/AC5: this transition — shipped in P3-02, before the audit
+	// writer existed — must now have a matching audit_log entry,
+	// written in the same transaction as the case_transitions row.
+	var auditCount int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE subject_type = 'case' AND subject_id = $1 AND action = 'case.transition'`, caseID,
+	).Scan(&auditCount); err != nil {
+		t.Fatalf("counting audit_log: %v", err)
+	}
+	if auditCount != 2 { // one for the 'open' transition, one for 'closed'
+		t.Errorf("audit_log entries for case %s = %d, want 2", caseID, auditCount)
+	}
 }
