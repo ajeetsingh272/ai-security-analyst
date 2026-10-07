@@ -14,6 +14,7 @@ func TestIsLegalTransition_MatchesTheDocumentedGraph(t *testing.T) {
 		{StateNone, StateOpen}:                      true,
 		{StateOpen, StateTriaging}:                  true,
 		{StateOpen, StateClosed}:                    true,
+		{StateOpen, StateDismissed}:                 true,
 		{StateTriaging, StateInvestigating}:         true,
 		{StateTriaging, StateDismissed}:             true,
 		{StateInvestigating, StateAwaitingApproval}: true,
@@ -21,6 +22,7 @@ func TestIsLegalTransition_MatchesTheDocumentedGraph(t *testing.T) {
 		{StateAwaitingApproval, StateActioned}:      true,
 		{StateActioned, StateClosed}:                true,
 		{StateActioned, StateAwaitingApproval}:      true,
+		{StateDismissed, StateTriaging}:             true,
 	}
 
 	all := []State{
@@ -39,16 +41,30 @@ func TestIsLegalTransition_MatchesTheDocumentedGraph(t *testing.T) {
 	}
 }
 
-func TestIsLegalTransition_TerminalStatesHaveNoLegalExit(t *testing.T) {
+func TestIsLegalTransition_ClosedIsTerminal(t *testing.T) {
 	all := []State{
 		StateNone, StateOpen, StateTriaging, StateInvestigating,
 		StateAwaitingApproval, StateActioned, StateClosed, StateDismissed,
 	}
-	for _, terminal := range []State{StateClosed, StateDismissed} {
-		for _, to := range all {
-			if IsLegalTransition(terminal, to) {
-				t.Errorf("IsLegalTransition(%q, %q) = true, want false — %q is terminal", terminal, to, terminal)
-			}
+	for _, to := range all {
+		if IsLegalTransition(StateClosed, to) {
+			t.Errorf("IsLegalTransition(%q, %q) = true, want false — %q is terminal", StateClosed, to, StateClosed)
+		}
+	}
+}
+
+// P3-07/AC5: "a dismissal can be challenged" — dismissed is no longer
+// terminal, but its ONLY legal exit is back into triaging (a
+// challenge), never anywhere else.
+func TestIsLegalTransition_DismissedOnlyExitsToTriaging(t *testing.T) {
+	all := []State{
+		StateNone, StateOpen, StateTriaging, StateInvestigating,
+		StateAwaitingApproval, StateActioned, StateClosed, StateDismissed,
+	}
+	for _, to := range all {
+		want := to == StateTriaging
+		if got := IsLegalTransition(StateDismissed, to); got != want {
+			t.Errorf("IsLegalTransition(%q, %q) = %v, want %v", StateDismissed, to, got, want)
 		}
 	}
 }

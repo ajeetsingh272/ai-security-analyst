@@ -381,6 +381,26 @@ degradation (as opposed to a single noisy rule caught and suppressed the same da
 documented as a product incident, not a tuning task — see
 [`docs/runbooks/reduction-ratio-degraded.md`](../runbooks/reduction-ratio-degraded.md).
 
+**Dismissed-signal digest (P3-07, TG3).** Every non-escalated case carries a machine-readable
+dismissal reason, never free prose — `below_escalation_threshold` today, the one reason this
+phase's own machinery can produce (`cluster.CloseQuietCases` now dismisses a case whose score
+never crossed the threshold, rather than merely closing it; a case that DID escalate still
+closes exactly as before — it was never hidden to begin with). `dismissed` is no longer a
+terminal lifecycle state: `dismissed → triaging` is a new legal edge
+(`services/correlate/internal/lifecycle`) specifically for a human challenging an
+auto-dismissal, which reopens the case and writes its own audit entry — the identical AC5
+("transition and audit entry in the same transaction") P3-03 already established, now also
+true from TypeScript (`CasesRepository.challengeDismissal`, `apps/api`'s own
+`POST /cases/:id/challenge`), via `writeAuditEntryTx` — `AuditLogWriter.insert`'s own
+transactional core, extracted so a caller already holding a transaction can write an audit
+entry inside it rather than opening a second one. No signal or case is ever deleted: a
+dismissal is an append-only transition like every other, so a case's full history —
+including every past dismissal and every challenge — is always reconstructible. The digest
+itself (`GET /dismissals/digest`) is retrievable through the API for any tenant and day;
+`apps/dashboard` has no real UI framework yet (the same gap `routes/suppressions.ts` already
+documents for its own dashboard requirement), so the API response is the real, tested
+deliverable here, not a placeholder standing in for a UI that doesn't exist.
+
 ### 3.7 AI analyst plane
 
 A TypeScript worker consuming the `cases` topic. See

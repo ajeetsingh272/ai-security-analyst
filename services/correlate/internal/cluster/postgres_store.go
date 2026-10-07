@@ -154,14 +154,30 @@ func (s *PostgresStore) AddSignalToCase(ctx context.Context, tenantID, caseID st
 	return added, nil
 }
 
+// CloseQuietCases closes every tenant-open case whose signals have
+// gone quiet. P3-07/TG3: a case whose score never crossed its
+// tenant's own escalation threshold is DISMISSED (with a machine-
+// readable reason), not merely closed — "every non-escalated signal
+// records a machine-readable dismissal reason" (AC1) applies here
+// specifically, since quiet-timeout is the only path that concludes a
+// case in this phase (no triage/investigation pipeline exists yet to
+// dismiss one actively). A case whose score DID cross the threshold
+// still closes exactly as it did before this ticket — it was never a
+// "hidden" dismissal to begin with.
 func (s *PostgresStore) CloseQuietCases(ctx context.Context, tenantID string, quietPeriod time.Duration, asOf time.Time) (int, error) {
+	var plan string
+	if err := s.pool.QueryRow(ctx, `SELECT plan FROM tenants WHERE id = $1`, tenantID).Scan(&plan); err != nil {
+		return 0, fmt.Errorf("cluster: reading plan for tenant %s: %w", tenantID, err)
+	}
+	threshold := scoring.EscalationThreshold(scoring.PlanTier(plan))
+
 	closed, err := sentineldb.WithTenantContext(ctx, s.pool, tenantID, func(ctx context.Context, tx pgx.Tx) (int, error) {
 		rows, err := tx.Query(ctx,
-			`SELECT cs.case_id, MAX(cs.detected_at) AS last_detected
+			`SELECT cs.case_id, MAX(cs.detected_at) AS last_detected, c.score
 			 FROM case_signals cs
 			 JOIN cases c ON c.id = cs.case_id AND c.window_end IS NULL
 			 WHERE cs.tenant_id = $1
-			 GROUP BY cs.case_id
+			 GROUP BY cs.case_id, c.score
 			 HAVING $2 - MAX(cs.detected_at) > $3`,
 			tenantID, asOf, quietPeriod,
 		)
@@ -169,13 +185,14 @@ func (s *PostgresStore) CloseQuietCases(ctx context.Context, tenantID string, qu
 			return 0, err
 		}
 		type candidate struct {
-			id   string
-			last time.Time
+			id    string
+			last  time.Time
+			score *float64
 		}
 		var toClose []candidate
 		for rows.Next() {
 			var c candidate
-			if err := rows.Scan(&c.id, &c.last); err != nil {
+			if err := rows.Scan(&c.id, &c.last, &c.score); err != nil {
 				rows.Close()
 				return 0, err
 			}
@@ -191,8 +208,16 @@ func (s *PostgresStore) CloseQuietCases(ctx context.Context, tenantID string, qu
 			if _, err := tx.Exec(ctx, `UPDATE cases SET window_end = $1 WHERE id = $2`, windowEnd, c.id); err != nil {
 				return 0, err
 			}
-			if err := s.lifecycle.Transition(ctx, tx, tenantID, c.id, lifecycle.StateClosed, sentinelaudit.ActorSystem, "correlate", "quiet period elapsed with no new signal"); err != nil {
-				return 0, err
+
+			escalated := c.score != nil && *c.score >= threshold
+			if escalated {
+				if err := s.lifecycle.Transition(ctx, tx, tenantID, c.id, lifecycle.StateClosed, sentinelaudit.ActorSystem, "correlate", "quiet period elapsed with no new signal"); err != nil {
+					return 0, err
+				}
+			} else {
+				if err := s.lifecycle.Transition(ctx, tx, tenantID, c.id, lifecycle.StateDismissed, sentinelaudit.ActorSystem, "correlate", string(lifecycle.ReasonBelowEscalationThreshold)); err != nil {
+					return 0, err
+				}
 			}
 		}
 		return len(toClose), nil

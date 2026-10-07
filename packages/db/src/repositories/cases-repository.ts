@@ -5,8 +5,21 @@
  * runs end to end — P0-05's acceptance criteria are about the base class's
  * behaviour, and the clearest way to show it holds is a repository that
  * actually queries a real table.
+ *
+ * P3-07 (TG3: "nothing is hidden — dismissals are surfaced") added
+ * `dailyDismissalDigest` and `challengeDismissal` — the one place this
+ * package writes `case_transitions` from TypeScript, mirroring
+ * `services/correlate/internal/lifecycle.Writer`'s own Go-side writer
+ * for the identical `dismissed → triaging` edge (a human challenging an
+ * auto-dismissal is naturally an API-initiated action, the same way
+ * `SuppressionsRepository.revoke` already is for suppressions). The two
+ * writers are NOT the same code — Go's own `IsLegalTransition` is not
+ * re-implemented here in full; `challengeDismissal` only ever checks the
+ * ONE specific precondition it needs (the case is currently dismissed),
+ * which is also the only transition this class is ever asked to write.
  */
 import { TenantScopedRepository } from '../tenant-context.js';
+import { writeAuditEntryTx } from '../audit/audit-log-writer.js';
 
 export interface CaseRow {
   id: string;
@@ -15,6 +28,21 @@ export interface CaseRow {
   title: string | null;
   signalCount: number;
   createdAt: string;
+}
+
+export interface DismissalDigestRow {
+  /** Machine-readable (services/correlate/internal/lifecycle.DismissalReason) —
+   * e.g. "below_escalation_threshold" — never free prose (AC1). */
+  reason: string;
+  caseCount: number;
+  signalCount: number;
+}
+
+export class DismissalChallengeEmptyReasonError extends Error {
+  constructor() {
+    super('A reason is required to challenge a dismissal and cannot be blank.');
+    this.name = 'DismissalChallengeEmptyReasonError';
+  }
 }
 
 function mapRow(row: Record<string, unknown>): CaseRow {
@@ -53,6 +81,100 @@ export class CasesRepository extends TenantScopedRepository {
       const { rows } = await client.query(
         'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
         [id],
+      );
+      return rows.length > 0 ? mapRow(rows[0]) : null;
+    });
+  }
+
+  /**
+   * AC2: "a daily digest per tenant lists dismissals grouped by reason."
+   * `cases.signal_count` is already maintained by
+   * services/correlate/internal/cluster (incremented as each signal
+   * joins), so summing it per reason gives the TOTAL underlying signal
+   * volume each reason accounts for, not just a count of cases — "every
+   * non-escalated SIGNAL" (AC1's own wording), not only every dismissed
+   * case.
+   */
+  async dailyDismissalDigest(day: Date): Promise<DismissalDigestRow[]> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ reason: string; case_count: string; signal_count: string }>(
+        `SELECT ct.reason, count(DISTINCT ct.case_id) AS case_count, sum(c.signal_count) AS signal_count
+           FROM case_transitions ct
+           JOIN cases c ON c.id = ct.case_id
+          WHERE ct.to_state = 'dismissed'
+            AND ct.occurred_at >= $1
+            AND ct.occurred_at < $1::timestamptz + INTERVAL '1 day'
+          GROUP BY ct.reason
+          ORDER BY case_count DESC`,
+        [day.toISOString()],
+      );
+      return rows.map((r) => ({
+        reason: r.reason,
+        caseCount: Number(r.case_count),
+        signalCount: Number(r.signal_count),
+      }));
+    });
+  }
+
+  /** The current to_state of a case, derived the same way
+   * services/correlate/internal/lifecycle.CurrentState is: the most
+   * recently written case_transitions row, nothing stored
+   * destructively. Returns null for a case with no transitions at all
+   * (should not happen for a real case, but this is a read, not an
+   * assumption). */
+  async currentState(caseId: string): Promise<string | null> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ to_state: string }>(
+        'SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1',
+        [caseId],
+      );
+      return rows[0]?.to_state ?? null;
+    });
+  }
+
+  /**
+   * AC5: "a dismissal can be challenged, which reopens the case and is
+   * audited." Returns null if the case is not currently dismissed —
+   * there is nothing to challenge, not an error (a caller re-submitting
+   * an already-handled challenge, or racing another analyst, should see
+   * "not found" semantics, not a 500).
+   *
+   * Writes case_transitions and the audit entry in the SAME transaction
+   * (the identical AC5 guarantee services/correlate/internal/lifecycle's
+   * own Go writer gives P3-03's transitions) — `writeAuditEntryTx` is
+   * exactly the function `AuditLogWriter.insert` itself calls, just with
+   * this method's own already-open client instead of a fresh one.
+   */
+  async challengeDismissal(caseId: string, actorId: string, reason: string): Promise<CaseRow | null> {
+    if (reason.trim().length === 0) {
+      throw new DismissalChallengeEmptyReasonError();
+    }
+    return this.withTransaction(async (client) => {
+      const current = await client.query<{ to_state: string }>(
+        'SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1',
+        [caseId],
+      );
+      if (current.rows[0]?.to_state !== 'dismissed') {
+        return null;
+      }
+
+      await client.query(
+        `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+         VALUES ($1, $2, 'dismissed', 'triaging', 'human', $3, $4)`,
+        [this.tenantId, caseId, actorId, reason],
+      );
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'human',
+        actorId,
+        action: 'case.transition',
+        subjectType: 'case',
+        subjectId: caseId,
+        payload: { fromState: 'dismissed', toState: 'triaging', reason },
+      });
+
+      const { rows } = await client.query(
+        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        [caseId],
       );
       return rows.length > 0 ? mapRow(rows[0]) : null;
     });
