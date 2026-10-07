@@ -1,0 +1,341 @@
+// Package worker is P2-04: the in-stream detection runtime. It consumes
+// events.normalized, narrows candidates through the dispatch tree (P2-03),
+// calls each candidate's compiled predicate (P2-02), and publishes a
+// Signal for every match to the `signals` topic — with offsets committed
+// only after every record in a poll has been durably handled (ADR-0010's
+// commit-after-ack discipline, the same shape go/sentinelevents.Consumer
+// already uses for its own Kafka-to-ClickHouse path).
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strconv"
+	"time"
+
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/google/uuid"
+	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+)
+
+// engineInStream matches detectgen.CompiledRule.Engine's string form for an
+// in-stream rule (sigmac.EngineInStream.String()) — duplicated as a literal
+// rather than importing sigmac just for this one constant, the same
+// "compiled output is the contract, not the IR" boundary P2-02 already
+// draws between sigmac and detectgen.
+const engineInStream = "in-stream"
+
+// wireEvent mirrors go/sentinelconnector/publisher.go's own wireEvent — the
+// one JSON shape actually on events.normalized's wire, field for field.
+// Kept local rather than imported: this package has no business depending
+// on the connector framework just to read a JSON shape, the same reasoning
+// go/sentinelevents.EventRow already applies on that topic's other
+// consumer.
+type wireEvent struct {
+	TenantID      string            `json:"tenant_id"`
+	EventID       string            `json:"event_id"`
+	Time          time.Time         `json:"time"`
+	SchemaVersion string            `json:"schema_version"`
+	ClassUID      uint32            `json:"class_uid"`
+	CategoryUID   uint16            `json:"category_uid"`
+	ActivityID    uint16            `json:"activity_id"`
+	TypeUID       uint32            `json:"type_uid"`
+	SeverityID    uint8             `json:"severity_id"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	Unmapped      map[string]string `json:"unmapped,omitempty"`
+}
+
+// flatten turns a wire event into the flat map[string]string every
+// compiled predicate and the dispatch tree actually read (sigmac.Event is
+// exactly this type) — the OCSF-path keys fieldmap.go's own table
+// promises: bare names for typed fields, "metadata.<k>"/"unmapped.<k>" for
+// the two map fields.
+func flatten(ev wireEvent) map[string]string {
+	flat := map[string]string{
+		"tenant_id":    ev.TenantID,
+		"class_uid":    strconv.FormatUint(uint64(ev.ClassUID), 10),
+		"category_uid": strconv.FormatUint(uint64(ev.CategoryUID), 10),
+		"activity_id":  strconv.FormatUint(uint64(ev.ActivityID), 10),
+		"severity_id":  strconv.FormatUint(uint64(ev.SeverityID), 10),
+		// fieldmap.go's own "EventID" -> "metadata.event_id" entry,
+		// honoured here even though no rule in today's corpus uses it yet.
+		"metadata.event_id": ev.EventID,
+	}
+	for k, v := range ev.Metadata {
+		flat["metadata."+k] = v
+	}
+	for k, v := range ev.Unmapped {
+		flat["unmapped."+k] = v
+	}
+	return flat
+}
+
+// dlqEnvelope is what actually lands on signals.dlq — enough for a human
+// to tell what failed and go look at the source event, mirroring
+// services/eventwriter's own DLQ payload shape (log the cause, keep the
+// raw bytes, don't invent a second parse of something that already failed
+// to parse once).
+type dlqEnvelope struct {
+	Stage    string          `json:"stage"`
+	Error    string          `json:"error"`
+	RuleID   string          `json:"rule_id,omitempty"`
+	RawEvent json.RawMessage `json:"raw_event"`
+}
+
+// Metrics are all optional (nil-safe) — the same pattern every other Go
+// service in this repo uses for its own metrics (e.g.
+// go/sentinelconnector.Scheduler, services/detect/internal/dispatch.Tree).
+type Metrics struct {
+	SignalsEmitted metric.Int64Counter
+	EvalErrors     metric.Int64Counter
+	PartitionLag   metric.Int64Gauge
+}
+
+type Options struct {
+	// Group is this worker's consumer-group id — also the group
+	// runLagReporter describes to compute per-partition lag.
+	Group string
+	Log   *slog.Logger
+	Metrics
+}
+
+// Worker evaluates events.normalized against tree and publishes matches to
+// `signals`. consumer must be joined to a group over events.normalized
+// with auto-commit disabled; producer must not be joined to any group —
+// it publishes to both `signals` and `signals.dlq`, the same "a dedicated
+// client for publishing, separate from the grouped consumer" split
+// services/eventwriter's own DLQ client already uses.
+type Worker struct {
+	tree     *dispatch.Tree
+	consumer *kgo.Client
+	producer *kgo.Client
+	group    string
+	log      *slog.Logger
+	metrics  Metrics
+}
+
+func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Worker {
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Worker{
+		tree:     tree,
+		consumer: consumer,
+		producer: producer,
+		group:    opts.Group,
+		log:      log,
+		metrics:  opts.Metrics,
+	}
+}
+
+// Run polls until ctx is cancelled. Offsets commit once per poll, after
+// every record fetched in that poll has been handed either a published
+// signal, a DLQ entry, or (a decode failure) a log line — never before, so
+// a crash between fetch and commit simply re-delivers the same records to
+// whichever worker instance resumes the group next (T2: "replays without
+// losing signals" — a possible duplicate signal is an acceptable cost of
+// that guarantee, a lost one is not).
+func (w *Worker) Run(ctx context.Context) error {
+	pollInterval := 1 * time.Second
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		pollCtx, cancel := context.WithTimeout(ctx, pollInterval)
+		fetches := w.consumer.PollFetches(pollCtx)
+		cancel()
+
+		if errs := fetches.Errors(); len(errs) > 0 {
+			for _, e := range errs {
+				if e.Err != nil && e.Err != context.DeadlineExceeded && e.Err != context.Canceled {
+					w.log.Error("fetch error", "topic", e.Topic, "partition", e.Partition, "err", e.Err)
+				}
+			}
+		}
+
+		n := 0
+		fetches.EachRecord(func(r *kgo.Record) {
+			n++
+			w.handleRecord(ctx, r)
+		})
+
+		if n > 0 {
+			if err := w.consumer.CommitUncommittedOffsets(ctx); err != nil {
+				w.log.Error("committing offsets, will retry next poll", "err", err)
+			}
+		}
+	}
+}
+
+func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
+	var wev wireEvent
+	if err := json.Unmarshal(r.Value, &wev); err != nil {
+		w.log.Error("skipping malformed record", "topic", r.Topic, "partition", r.Partition, "offset", r.Offset, "err", err)
+		w.toDLQ(ctx, "decode", err, "", r.Value)
+		return
+	}
+
+	signals, failures := evaluate(ctx, w.tree, wev)
+
+	for _, f := range failures {
+		w.log.Error("rule evaluation failed, routing to DLQ", "rule_id", f.RuleID, "event_id", wev.EventID, "err", f.Err)
+		if w.metrics.EvalErrors != nil {
+			w.metrics.EvalErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", f.RuleID)))
+		}
+		w.toDLQ(ctx, "evaluate", f.Err, f.RuleID, r.Value)
+	}
+
+	for _, sig := range signals {
+		if err := w.publishSignal(ctx, sig); err != nil {
+			w.log.Error("publishing signal failed, routing to DLQ", "rule_id", sig.RuleID, "event_id", wev.EventID, "err", err)
+			w.toDLQ(ctx, "publish", err, sig.RuleID, r.Value)
+			continue
+		}
+		if w.metrics.SignalsEmitted != nil {
+			w.metrics.SignalsEmitted.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", sig.RuleID)))
+		}
+	}
+}
+
+// ruleFailure is one candidate rule's evaluation panic, carried out of
+// evaluate so the caller decides what to do with it (log, metric, DLQ) —
+// evaluate itself touches no I/O, which is what makes it unit-testable
+// without a broker (T4).
+type ruleFailure struct {
+	RuleID string
+	Err    error
+}
+
+// evaluate is handleRecord's pure core: flatten the event, narrow to
+// candidates via the dispatch tree, and call each candidate's compiled
+// predicate. Deliberately free of any Kafka/DLQ/metrics side effect so
+// T4 ("an evaluation panic is recovered, routed to DLQ, and the worker
+// continues") can be proven directly against a tree and an event, with no
+// broker involved — handleRecord is the thin, integration-tested layer
+// that turns this function's output into wire effects.
+func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent) (signals []sentinelsignal.Signal, failures []ruleFailure) {
+	flat := flatten(wev)
+	for _, c := range tree.Candidates(ctx, flat) {
+		// This is the IN-STREAM worker (P2-04's own title) — a "windowed"
+		// rule's compiled predicate only checks its base selection, never
+		// the count/within clause (that's the separate windowed engine's
+		// own job, ADR-0004 §3.5, not yet built). Evaluating it here would
+		// emit a premature signal on the FIRST qualifying event rather than
+		// the Nth within the window. The dispatch tree itself stays
+		// engine-agnostic on purpose (tree.go's own doc comment) so that
+		// future windowed worker can reuse it — this filter is this
+		// worker's concern, not the tree's.
+		if c.Engine != engineInStream {
+			continue
+		}
+		matched, err := safeMatch(c, flat)
+		if err != nil {
+			failures = append(failures, ruleFailure{RuleID: c.ID, Err: err})
+			continue
+		}
+		if !matched {
+			continue
+		}
+		signals = append(signals, sentinelsignal.Signal{
+			SignalID:   uuid.NewString(),
+			EventID:    wev.EventID,
+			TenantID:   wev.TenantID,
+			RuleID:     c.ID,
+			RuleTitle:  c.Title,
+			MitreIDs:   c.MitreIDs,
+			Severity:   c.Level,
+			Engine:     c.Engine,
+			DetectedAt: time.Now().UTC(),
+		})
+	}
+	return signals, failures
+}
+
+// safeMatch recovers a panicking predicate (T4) at the single-rule
+// granularity — a bug in one rule's compiled Matches must not prevent
+// every OTHER candidate rule from still being checked against the same
+// event, and must never propagate up into Run's own poll loop (which
+// would stop the whole worker, not just skip one rule).
+func safeMatch(c detectgen.CompiledRule, ev map[string]string) (matched bool, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("rule %s panicked: %v", c.ID, p)
+		}
+	}()
+	return c.Matches(ev), nil
+}
+
+func (w *Worker) publishSignal(ctx context.Context, sig sentinelsignal.Signal) error {
+	payload, err := json.Marshal(sig)
+	if err != nil {
+		return err
+	}
+	// tenant_id:event_id stands in for signals' declared tenant_id:entity_id
+	// key (go/sentinelstream.TopicSpec) until an actual entity concept
+	// exists — that resolution is the correlation plane's own job (P3),
+	// not this ticket's. This at least keeps every signal for the same
+	// event on one partition, in order.
+	key := sig.TenantID + ":" + sig.EventID
+	res := w.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.Signals, Key: []byte(key), Value: payload})
+	return res.FirstErr()
+}
+
+func (w *Worker) toDLQ(ctx context.Context, stage string, cause error, ruleID string, raw []byte) {
+	env := dlqEnvelope{Stage: stage, Error: cause.Error(), RuleID: ruleID, RawEvent: json.RawMessage(raw)}
+	payload, err := json.Marshal(env)
+	if err != nil {
+		w.log.Error("marshalling DLQ envelope", "stage", stage, "err", err)
+		return
+	}
+	dlqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res := w.producer.ProduceSync(dlqCtx, &kgo.Record{Topic: sentinelstream.SignalsDLQ, Value: payload})
+	if err := res.FirstErr(); err != nil {
+		w.log.Error("publishing to DLQ failed", "stage", stage, "err", err)
+	}
+}
+
+// RunLagReporter polls the consumer group's own per-partition lag on a
+// ticker and records it — AC: "consumer lag is exported per partition".
+// Run as its own goroutine alongside Run; returns when ctx is cancelled.
+func (w *Worker) RunLagReporter(ctx context.Context, topic string, interval time.Duration) {
+	if w.metrics.PartitionLag == nil {
+		return
+	}
+	adm := kadm.NewClient(w.consumer)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			lags, err := adm.Lag(ctx, w.group)
+			if err != nil {
+				w.log.Error("fetching consumer lag", "group", w.group, "err", err)
+				continue
+			}
+			gl, ok := lags[w.group]
+			if !ok || gl.Error() != nil {
+				continue
+			}
+			for partition, memberLag := range gl.Lag[topic] {
+				w.metrics.PartitionLag.Record(ctx, memberLag.Lag, metric.WithAttributes(
+					attribute.String("topic", topic),
+					attribute.Int("partition", int(partition)),
+				))
+			}
+		}
+	}
+}

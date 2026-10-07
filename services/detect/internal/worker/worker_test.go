@@ -1,0 +1,210 @@
+package worker
+
+import (
+	"context"
+	"testing"
+
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
+)
+
+func TestFlatten(t *testing.T) {
+	wev := wireEvent{
+		TenantID:    "tenant-1",
+		EventID:     "evt-1",
+		ClassUID:    3002,
+		CategoryUID: 3,
+		ActivityID:  1,
+		SeverityID:  2,
+		Metadata:    map[string]string{"product": "m365", "operation": "New-InboxRule"},
+		Unmapped:    map[string]string{"UserId": "user@example.com"},
+	}
+
+	flat := flatten(wev)
+
+	want := map[string]string{
+		"tenant_id":          "tenant-1",
+		"class_uid":          "3002",
+		"category_uid":       "3",
+		"activity_id":        "1",
+		"severity_id":        "2",
+		"metadata.event_id":  "evt-1",
+		"metadata.product":   "m365",
+		"metadata.operation": "New-InboxRule",
+		"unmapped.UserId":    "user@example.com",
+	}
+	if len(flat) != len(want) {
+		t.Fatalf("flatten() produced %d keys, want %d: %v", len(flat), len(want), flat)
+	}
+	for k, v := range want {
+		if flat[k] != v {
+			t.Errorf("flat[%q] = %q, want %q", k, flat[k], v)
+		}
+	}
+}
+
+// buildTestTree builds a two-rule tree: one ordinary rule that matches on
+// class_uid "3001", and one whose compiled predicate always panics —
+// synthesized by hand the same way
+// services/detect/internal/dispatch's own load_test.go builds synthetic
+// rules, so this test needs no real corpus or fixtures.
+func buildTestTree(t *testing.T) *dispatch.Tree {
+	t.Helper()
+
+	okRule := &sigmac.Rule{
+		ID:       "ok-rule",
+		Slug:     "ok-rule",
+		Title:    "OK rule",
+		Level:    "medium",
+		MitreIDs: []string{"attack.t1078"},
+		LogSource: sigmac.LogSource{
+			Product: "m365",
+		},
+		Selections: map[string]sigmac.Selection{
+			"selection": {
+				Name: "selection",
+				Fields: []sigmac.FieldMatch{
+					{SigmaField: "class_uid", OCSFPath: "class_uid", Modifier: sigmac.ModEquals, Values: []string{"3001"}},
+				},
+			},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+		Engine:    sigmac.EngineInStream,
+	}
+	panicRule := &sigmac.Rule{
+		ID:       "panic-rule",
+		Slug:     "panic-rule",
+		Title:    "Panic rule",
+		Level:    "high",
+		MitreIDs: []string{"attack.t1078"},
+		LogSource: sigmac.LogSource{
+			Product: "m365",
+		},
+		Selections: map[string]sigmac.Selection{
+			"selection": {
+				Name: "selection",
+				Fields: []sigmac.FieldMatch{
+					{SigmaField: "class_uid", OCSFPath: "class_uid", Modifier: sigmac.ModEquals, Values: []string{"3001"}},
+				},
+			},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+		Engine:    sigmac.EngineInStream,
+	}
+
+	compiled := []detectgen.CompiledRule{
+		{
+			ID: "ok-rule", Title: "OK rule", Level: "medium", MitreIDs: []string{"attack.t1078"}, Engine: "in-stream",
+			Matches: func(ev map[string]string) bool { return ev["class_uid"] == "3001" },
+		},
+		{
+			ID: "panic-rule", Title: "Panic rule", Level: "high", MitreIDs: []string{"attack.t1078"}, Engine: "in-stream",
+			Matches: func(ev map[string]string) bool { panic("boom") },
+		},
+	}
+
+	tree, err := dispatch.Build([]*sigmac.Rule{okRule, panicRule}, compiled, dispatch.Options{})
+	if err != nil {
+		t.Fatalf("dispatch.Build: %v", err)
+	}
+	return tree
+}
+
+// T4: an evaluation panic is recovered, routed to a failure the caller can
+// DLQ, and the worker continues — proven here by checking the OTHER
+// candidate rule (ok-rule) still runs and still matches against the same
+// event the panicking rule was also a candidate for.
+func TestEvaluate_RecoversPanicAndContinues(t *testing.T) {
+	tree := buildTestTree(t)
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
+
+	signals, failures := evaluate(context.Background(), tree, wev)
+
+	if len(failures) != 1 || failures[0].RuleID != "panic-rule" {
+		t.Fatalf("failures = %v, want exactly one failure for panic-rule", failures)
+	}
+	if failures[0].Err == nil {
+		t.Fatal("failures[0].Err is nil, want the recovered panic wrapped as an error")
+	}
+
+	if len(signals) != 1 || signals[0].RuleID != "ok-rule" {
+		t.Fatalf("signals = %v, want exactly one signal for ok-rule", signals)
+	}
+}
+
+func TestEvaluate_SignalCarriesEventRuleAndTenant(t *testing.T) {
+	tree := buildTestTree(t)
+	wev := wireEvent{TenantID: "tenant-42", EventID: "evt-99", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
+
+	signals, _ := evaluate(context.Background(), tree, wev)
+
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+	sig := signals[0]
+	if sig.EventID != "evt-99" {
+		t.Errorf("EventID = %q, want evt-99", sig.EventID)
+	}
+	if sig.TenantID != "tenant-42" {
+		t.Errorf("TenantID = %q, want tenant-42", sig.TenantID)
+	}
+	if sig.RuleID != "ok-rule" {
+		t.Errorf("RuleID = %q, want ok-rule", sig.RuleID)
+	}
+	if sig.Severity != "medium" {
+		t.Errorf("Severity = %q, want medium", sig.Severity)
+	}
+	if len(sig.MitreIDs) != 1 || sig.MitreIDs[0] != "attack.t1078" {
+		t.Errorf("MitreIDs = %v, want [attack.t1078]", sig.MitreIDs)
+	}
+	if sig.SignalID == "" {
+		t.Error("SignalID is empty, want a generated id")
+	}
+}
+
+// evaluate must never surface a "windowed"-engine rule's own match as a
+// signal — that rule's compiled predicate only checks its base selection,
+// not the count/within clause the separate windowed engine (not yet
+// built) is responsible for; firing here would be a premature signal on
+// the first qualifying event rather than the Nth within the window.
+func TestEvaluate_SkipsWindowedEngineRules(t *testing.T) {
+	windowedRule := &sigmac.Rule{
+		ID: "windowed-rule", Slug: "windowed-rule", Title: "Windowed rule", Level: "high",
+		MitreIDs:  []string{"attack.t1530"},
+		LogSource: sigmac.LogSource{Product: "m365"},
+		Selections: map[string]sigmac.Selection{
+			"selection": {Name: "selection", Fields: []sigmac.FieldMatch{
+				{SigmaField: "class_uid", OCSFPath: "class_uid", Modifier: sigmac.ModEquals, Values: []string{"3001"}},
+			}},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+		Engine:    sigmac.EngineWindowed,
+	}
+	compiled := []detectgen.CompiledRule{
+		{ID: "windowed-rule", Title: "Windowed rule", Level: "high", MitreIDs: []string{"attack.t1530"}, Engine: "windowed",
+			Matches: func(ev map[string]string) bool { return ev["class_uid"] == "3001" }},
+	}
+	tree, err := dispatch.Build([]*sigmac.Rule{windowedRule}, compiled, dispatch.Options{})
+	if err != nil {
+		t.Fatalf("dispatch.Build: %v", err)
+	}
+
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
+	signals, failures := evaluate(context.Background(), tree, wev)
+
+	if len(signals) != 0 || len(failures) != 0 {
+		t.Fatalf("signals=%v failures=%v, want both empty — windowed rule must be skipped by the in-stream worker", signals, failures)
+	}
+}
+
+func TestEvaluate_NoCandidateProducesNoSignalsOrFailures(t *testing.T) {
+	tree := buildTestTree(t)
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-2", ClassUID: 9999, Metadata: map[string]string{"product": "m365"}}
+
+	signals, failures := evaluate(context.Background(), tree, wev)
+
+	if len(signals) != 0 || len(failures) != 0 {
+		t.Fatalf("signals=%v failures=%v, want both empty for a non-matching class_uid", signals, failures)
+	}
+}
