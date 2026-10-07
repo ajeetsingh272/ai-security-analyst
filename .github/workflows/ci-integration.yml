@@ -131,6 +131,21 @@ jobs:
       - name: Go integration tests
         run: pnpm go:test:integration
 
+      # P2-11's own CI-enforced regression gate — a reduced-scale,
+      # CI-feasible load-test run compared against a committed baseline
+      # (services/detect/internal/loadtest/baseline.json), failing the
+      # build on a >10% regression. Its own `loadtest` build tag (not
+      # `integration`) keeps it OUT of the step above and run here
+      # instead, sequentially, after that step has already finished —
+      # this test's own sustained ~2,000 EPS production is enough
+      # concurrent load against the shared Redpanda to make the
+      # integration suite's unrelated tests intermittently see
+      # duplicate/delayed signals when the two run at the same time
+      # (confirmed directly during development), so it deliberately
+      # does not share a `go test ./...` pass with anything else.
+      - name: Detection engine load-test regression gate
+        run: cd services/detect && go test -tags=loadtest ./internal/loadtest/...
+
       - name: Stack logs on failure
         if: failure()
         run: docker compose -f infra/docker/docker-compose.dev.yml logs --tail=200
