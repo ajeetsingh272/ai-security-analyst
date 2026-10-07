@@ -15,12 +15,19 @@ import { TenantConcurrencyLimiter } from './tenant-concurrency.js';
 import { withRetry, PermanentError, type RetryOptions } from './retry.js';
 import type { InvestigationModel, CaseContext } from './investigation-model.js';
 import { GroundingFailedError } from './investigation-model.js';
+import type { TriageModel } from './triage.js';
 
 export interface AnalystWorkerOptions {
   consumer: Consumer;
   producer: Producer;
   pool: Pool;
   investigationModel: InvestigationModel;
+  /** P4-05: triages every non-critical case before it reaches
+   * `investigationModel` (AC1/AC2). Required, not optional — a worker
+   * that silently sent every case straight to the expensive model would
+   * defeat this ticket's own cost guarantee by omission; a test that
+   * truly doesn't care can pass a trivial "always escalate" fake. */
+  triageModel: TriageModel;
   logger: Logger;
   concurrencyPerTenant: number;
   partitionsConsumedConcurrently: number;
@@ -35,6 +42,7 @@ export class AnalystWorker {
   private readonly producer: Producer;
   private readonly pool: Pool;
   private readonly investigationModel: InvestigationModel;
+  private readonly triageModel: TriageModel;
   private readonly logger: Logger;
   private readonly limiter: TenantConcurrencyLimiter;
   private readonly retryOpts: RetryOptions;
@@ -47,6 +55,7 @@ export class AnalystWorker {
     this.producer = opts.producer;
     this.pool = opts.pool;
     this.investigationModel = opts.investigationModel;
+    this.triageModel = opts.triageModel;
     this.logger = opts.logger;
     this.limiter = new TenantConcurrencyLimiter(opts.concurrencyPerTenant);
     this.retryOpts = { ...opts.retry, isRetryable: opts.isRetryable };
@@ -102,6 +111,19 @@ export class AnalystWorker {
         if (!ctx) {
           this.logger.warn({ tenant_id: tenantId, case_id: caseId }, 'case no longer exists; dropping');
           return;
+        }
+
+        // P4-05 AC5: critical severity bypasses triage entirely — a
+        // case already known to be severe gains nothing from a
+        // cheap-model opinion, only latency. AC2: every OTHER case must
+        // go through triage, and only an escalate decision reaches the
+        // expensive model below.
+        if (ctx.severity !== 'critical') {
+          const decision = await this.tracer.startActiveSpan('case.triage', (triageSpan) =>
+            withRetry(() => this.triageModel.triage(ctx!), this.retryOpts).finally(() => triageSpan.end()),
+          );
+          this.logger.info({ tenant_id: tenantId, case_id: caseId, triage_decision: decision.decision, triage_reason: decision.reason }, 'triage decided');
+          if (decision.decision === 'dismiss') return;
         }
 
         const verdict = await this.tracer.startActiveSpan('case.llm_investigation', (llmSpan) =>

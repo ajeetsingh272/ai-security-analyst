@@ -97,6 +97,28 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
     expect(toolResultBlock.content).toContain('"configured":false');
   });
 
+  it('P4-05 AC3: the system prompt carries the shared, cacheable tenant-context block', async () => {
+    const create = vi.fn().mockResolvedValueOnce(finalTextResponse(CANNED_VERDICT_TEXT));
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+    const calls = { add: vi.fn() };
+    const hits = { add: vi.fn() };
+
+    const model = new AnthropicInvestigationModel({
+      apiKey: 'unused',
+      model: 'test-model',
+      client: fakeClient,
+      tools: fakeDeps(),
+      cacheMetrics: { calls: calls as never, hits: hits as never },
+    });
+    await model.investigate({ caseId: 'case-1', tenantId: 'tenant-cache-probe', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
+
+    const callArgs = create.mock.calls[0]![0] as { system: Array<{ text: string; cache_control?: unknown }> };
+    const cachedBlock = callArgs.system.find((b) => b.cache_control !== undefined);
+    expect(cachedBlock?.text).toContain('tenant-cache-probe');
+    expect(calls.add).toHaveBeenCalledTimes(1);
+    expect(hits.add).not.toHaveBeenCalled(); // the fake response has no cache_read_input_tokens
+  });
+
   it('never calls a tool when no ToolDependencies were provided, even if asked', async () => {
     const create = vi.fn().mockResolvedValueOnce(finalTextResponse(CANNED_VERDICT_TEXT));
     const fakeClient = { messages: { create } } as unknown as Anthropic;

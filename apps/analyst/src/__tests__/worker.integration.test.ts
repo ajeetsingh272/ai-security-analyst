@@ -23,6 +23,7 @@ import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey } from '../kafka.js';
 import { PermanentError } from '../retry.js';
 import type { InvestigationModel, CaseContext } from '../investigation-model.js';
 import { GroundingFailedError } from '../investigation-model.js';
+import type { TriageModel, TriageDecision } from '../triage.js';
 
 const BROKERS = [process.env.REDPANDA_BROKERS ?? 'localhost:19092'];
 const JAEGER_URL = 'http://localhost:16686';
@@ -76,7 +77,7 @@ async function asAdmin<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T>
   }
 }
 
-async function createTenantAndCase(): Promise<{ tenantId: string; caseId: string }> {
+async function createTenantAndCase(severity: string = 'critical'): Promise<{ tenantId: string; caseId: string }> {
   const tenantId = await asAdmin(async (c) => {
     const { rows } = await c.query<{ id: string }>(
       `INSERT INTO tenants (name, plan) VALUES ($1, 'trial') RETURNING id`,
@@ -88,8 +89,8 @@ async function createTenantAndCase(): Promise<{ tenantId: string; caseId: string
     await c.query('SELECT set_config($1, $2, true)', ['app.tenant_id', tenantId]);
     const { rows } = await c.query<{ id: string }>(
       `INSERT INTO cases (tenant_id, severity, title, window_start, signal_count, score)
-       VALUES ($1, 'critical', 'P4-01 probe case', now(), 2, 50) RETURNING id`,
-      [tenantId],
+       VALUES ($1, $2, 'P4-01 probe case', now(), 2, 50) RETURNING id`,
+      [tenantId, severity],
     );
     return rows[0]!.id;
   });
@@ -123,6 +124,20 @@ class FakeInvestigationModel implements InvestigationModel {
   async investigate(ctx: CaseContext): Promise<Verdict> {
     this.calls.push(ctx);
     return this.behavior(ctx);
+  }
+}
+
+/** P4-05: defaults to always-escalate, which is a no-op for every
+ * pre-P4-05 test here (`createTenantAndCase`'s own fixture always uses
+ * severity='critical', which bypasses triage entirely per AC5) — this
+ * double only matters for THIS ticket's own dedicated triage tests
+ * below, which construct it directly with a non-default decision. */
+class FakeTriageModel implements TriageModel {
+  calls: CaseContext[] = [];
+  constructor(private readonly decision: TriageDecision = { decision: 'escalate', reason: 'default' }) {}
+  async triage(ctx: CaseContext): Promise<TriageDecision> {
+    this.calls.push(ctx);
+    return this.decision;
   }
 }
 
@@ -195,6 +210,7 @@ describe('AnalystWorker', () => {
       producer: harness.kafka.producer(),
       pool,
       investigationModel: model,
+      triageModel: new FakeTriageModel(),
       logger,
       concurrencyPerTenant: 5,
       partitionsConsumedConcurrently: 4,
@@ -220,6 +236,82 @@ describe('AnalystWorker', () => {
     // startActiveSpan was called (see waitForSpans' own doc comment
     // for why that distinction matters and was caught directly).
     await waitForSpans(['case.investigate', 'case.fetch', 'case.llm_investigation'], 10_000);
+  });
+
+  it('P4-05 T1: a benign (non-critical) case is dismissed at triage without reaching the investigation model', async () => {
+    const { tenantId, caseId } = await createTenantAndCase('low');
+    cleanupTenants.push(tenantId);
+    const harness = newKafkaHarness();
+    activeConsumers.push(harness.consumer);
+    activeProducers.push(harness.producer);
+
+    const triage = new FakeTriageModel({ decision: 'dismiss', reason: 'no genuine threat indicator' });
+    const investigationModel = new FakeInvestigationModel(async () => {
+      throw new Error('AC2 violation: the investigation model must never be called for a case dismissed at triage');
+    });
+    const { logger, lines } = capturingLogger();
+    const worker = new AnalystWorker({
+      consumer: harness.consumer,
+      producer: harness.kafka.producer(),
+      pool,
+      investigationModel,
+      triageModel: triage,
+      logger,
+      concurrencyPerTenant: 5,
+      partitionsConsumedConcurrently: 4,
+      retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
+      isRetryable: () => false,
+    });
+    activeWorkers.push(worker);
+    await worker.start();
+
+    await publishCaseEvent(harness.producer, tenantId, caseId);
+
+    await waitUntil(() => triage.calls.length > 0, 10_000, 'triage to be called');
+    expect(triage.calls[0]).toMatchObject({ caseId, tenantId, severity: 'low' });
+
+    await waitUntil(
+      () => lines.some((l) => l.msg === 'triage decided' && l.case_id === caseId && l.triage_decision === 'dismiss'),
+      5_000,
+      'the triage-decided log line',
+    );
+
+    // Give the investigation model a fair chance to have been (wrongly)
+    // called before asserting it never was.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(investigationModel.calls).toHaveLength(0);
+  });
+
+  it('P4-05 T2: a critical case bypasses triage entirely', async () => {
+    const { tenantId, caseId } = await createTenantAndCase('critical');
+    cleanupTenants.push(tenantId);
+    const harness = newKafkaHarness();
+    activeConsumers.push(harness.consumer);
+    activeProducers.push(harness.producer);
+
+    const triage = new FakeTriageModel({ decision: 'dismiss', reason: 'should never be asked' });
+    const investigationModel = new FakeInvestigationModel(async () => CANNED_VERDICT);
+    const { logger } = capturingLogger();
+    const worker = new AnalystWorker({
+      consumer: harness.consumer,
+      producer: harness.kafka.producer(),
+      pool,
+      investigationModel,
+      triageModel: triage,
+      logger,
+      concurrencyPerTenant: 5,
+      partitionsConsumedConcurrently: 4,
+      retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
+      isRetryable: () => false,
+    });
+    activeWorkers.push(worker);
+    await worker.start();
+
+    await publishCaseEvent(harness.producer, tenantId, caseId);
+
+    await waitUntil(() => investigationModel.calls.length > 0, 10_000, 'investigation model to be called');
+    expect(investigationModel.calls[0]).toMatchObject({ caseId, tenantId, severity: 'critical' });
+    expect(triage.calls).toHaveLength(0);
   });
 
   it('T3: a permanently failing case reaches the DLQ and raises an alert', async () => {
@@ -249,6 +341,7 @@ describe('AnalystWorker', () => {
       producer: harness.kafka.producer(),
       pool,
       investigationModel: model,
+      triageModel: new FakeTriageModel(),
       logger,
       concurrencyPerTenant: 5,
       partitionsConsumedConcurrently: 4,
@@ -305,6 +398,7 @@ describe('AnalystWorker', () => {
       producer: harness.kafka.producer(),
       pool,
       investigationModel: model,
+      triageModel: new FakeTriageModel(),
       logger,
       concurrencyPerTenant: 5,
       partitionsConsumedConcurrently: 4,
@@ -351,6 +445,7 @@ describe('AnalystWorker', () => {
       producer: harness.kafka.producer(),
       pool,
       investigationModel: model,
+      triageModel: new FakeTriageModel(),
       logger,
       concurrencyPerTenant: 5,
       partitionsConsumedConcurrently: 4,

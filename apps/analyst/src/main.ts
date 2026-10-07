@@ -12,6 +12,7 @@ import { createKafkaClients } from './kafka.js';
 import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { AnalystWorker } from './worker.js';
 import { AnthropicInvestigationModel } from './investigation-model.js';
+import { AnthropicTriageModel } from './triage.js';
 import { PermanentError } from './retry.js';
 
 function envOr(key: string, fallback: string): string {
@@ -39,6 +40,13 @@ async function main(): Promise<void> {
     attempts: meterHandle.meter.createCounter('analyst.grounding.attempts', { description: 'Investigations that reached a grounding verdict (pass or fail)' }),
     rejections: meterHandle.meter.createCounter('analyst.grounding.rejections', { description: 'Investigations whose evidence failed grounding even after one repair attempt' }),
   };
+  // P4-05 AC3: "cache hit rate is measured" — shared by both tiers,
+  // since the SAME tenant-context block (triage.ts's own
+  // tenantContextBlock) is cached across triage AND investigation calls.
+  const cacheMetrics = {
+    calls: meterHandle.meter.createCounter('analyst.prompt_cache.calls', { description: 'Anthropic calls (triage + investigation) eligible for a cached tenant-context block' }),
+    hits: meterHandle.meter.createCounter('analyst.prompt_cache.hits', { description: 'Those calls where cache_read_input_tokens > 0' }),
+  };
 
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
@@ -55,6 +63,15 @@ async function main(): Promise<void> {
     maxTokens: Number(envOr('ANTHROPIC_MAX_TOKENS', '8192')),
     tools: { ch, pool, logger },
     groundingMetrics,
+    cacheMetrics,
+  });
+  // AC4: the triage model identifier is its own configuration knob,
+  // independent of the investigation model's — the whole point of this
+  // ticket is that these are two DIFFERENT models (cheap vs expensive).
+  const triageModel = new AnthropicTriageModel({
+    apiKey,
+    model: envOr('ANTHROPIC_TRIAGE_MODEL', 'claude-haiku-4-5-20251001'),
+    cacheMetrics,
   });
 
   const worker = new AnalystWorker({
@@ -62,6 +79,7 @@ async function main(): Promise<void> {
     producer,
     pool,
     investigationModel,
+    triageModel,
     logger,
     concurrencyPerTenant: Number(envOr('CONCURRENCY_PER_TENANT', '5')),
     partitionsConsumedConcurrently: Number(envOr('PARTITIONS_CONSUMED_CONCURRENTLY', '16')),
