@@ -312,6 +312,8 @@ part of the control and not merely a description of it.
 | `entity_ids` | `text[]` | no | `'{}'::text[]` |
 | `signal_count` | `integer` | no | `0` |
 | `created_at` | `timestamptz` | no | `now()` |
+| `escalated_at` | `timestamptz` | yes | — |
+| `escalated_published_at` | `timestamptz` | yes | — |
 
 **Primary key**
 
