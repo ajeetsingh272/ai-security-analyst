@@ -1,0 +1,77 @@
+name: Golden-case eval suite (analyst)
+
+# P4-08 AC3/AC4: "runs in CI against pinned model versions. A
+# regression beyond the configured tolerance fails the build." Model
+# identifiers are pinned here, not left to apps/analyst/src/main.ts's
+# own env defaults, so a provider-side default-model change can never
+# silently alter what this suite is actually grading.
+#
+# Nightly rather than per-PR, mirroring noise-ratio-nightly.yml's own
+# reasoning: 50 real Anthropic calls (investigation calls may run
+# several tool-use round trips each) cost real money and take real
+# time on every push, for a suite whose own golden-case fixtures don't
+# change anywhere near that often. A regression introduced during the
+# day is still caught the same night it ships.
+#
+# Requires the ANTHROPIC_API_KEY repository secret to be configured.
+# Without it, this job fails fast at the "Check ANTHROPIC_API_KEY is
+# configured" step with a clear message, rather than silently skipping
+# (vitest's own `it.skipIf` inside the suite is for local development
+# without a key — CI running this workflow at all is a statement that
+# the key is expected to be present).
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: eval-golden-cases
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ANTHROPIC_INVESTIGATION_MODEL: claude-opus-5
+  ANTHROPIC_TRIAGE_MODEL: claude-haiku-4-5-20251001
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+
+      - name: Check ANTHROPIC_API_KEY is configured
+        run: |
+          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "::error::ANTHROPIC_API_KEY repository secret is not configured — the golden-case suite cannot evaluate a real model without it."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait postgres clickhouse
+
+      - name: Migrate
+        run: bash scripts/migrate.sh
+
+      - name: Run the golden-case eval suite
+        run: pnpm --filter @sentinel/analyst test:eval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs postgres clickhouse --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v
