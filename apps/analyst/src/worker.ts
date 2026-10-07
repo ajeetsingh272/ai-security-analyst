@@ -16,6 +16,7 @@ import { withRetry, PermanentError, type RetryOptions } from './retry.js';
 import type { InvestigationModel, CaseContext } from './investigation-model.js';
 import { GroundingFailedError } from './investigation-model.js';
 import type { TriageModel } from './triage.js';
+import { checkBudget } from './cost-budget.js';
 
 export interface AnalystWorkerOptions {
   consumer: Consumer;
@@ -113,6 +114,35 @@ export class AnalystWorker {
           return;
         }
 
+        // P4-06 AC3/AC4: checked BEFORE spending anything on this case —
+        // using whatever the tenant already spent on EARLIER cases
+        // today, not including this one. A hard cap degrades this case
+        // immediately, without ever calling either model again; a soft
+        // breach raises an alert but this case still proceeds normally.
+        const budget = await checkBudget(this.pool, tenantId);
+        if (budget.status === 'hard_exceeded') {
+          await this.degradeToRuleOnlyAlert(
+            tenantId,
+            caseId,
+            ctx,
+            'cost_hard_cap_exceeded',
+            `tenant has spent $${budget.spentUsd.toFixed(2)} today, at or above its $${budget.budget.hardCapUsd} hard cap`,
+          );
+          return;
+        }
+        if (budget.status === 'soft_exceeded') {
+          this.logger.error(
+            {
+              tenant_id: tenantId,
+              case_id: caseId,
+              spent_usd: budget.spentUsd,
+              allowance_usd: budget.budget.allowanceUsd,
+              cost_alert: true,
+            },
+            'tenant has exceeded 1.5x its daily cost allowance',
+          );
+        }
+
         // P4-05 AC5: critical severity bypasses triage entirely — a
         // case already known to be severe gains nothing from a
         // cheap-model opinion, only latency. AC2: every OTHER case must
@@ -142,7 +172,7 @@ export class AnalystWorker {
         // is caught below rather than this method re-checking anything.
       } catch (err) {
         if (err instanceof GroundingFailedError) {
-          await this.degradeToRuleOnlyAlert(tenantId, caseId, ctx, err);
+          await this.degradeToRuleOnlyAlert(tenantId, caseId, ctx, 'grounding_failed_twice', err.message);
         } else {
           await this.handleFailure(tenantId, caseId, err);
         }
@@ -167,31 +197,31 @@ export class AnalystWorker {
     });
   }
 
-  /** P4-04 AC4: "on failure [...] degrade to a rule-only alert and page
-   * on-call" — the SECOND consecutive grounding failure (the model's
-   * own `investigate` already gave it one repair attempt) is not
-   * treated as a DLQ-worthy failure the way `handleFailure` treats
-   * everything else. It is a deliberate, successful-in-its-own-right
-   * outcome: the AI's own claims could not be verified, so this alert
-   * carries ONLY the case's deterministic fields (never the unverified
-   * verdict content) — honestly scoped the same way this codebase
-   * scopes every alert that has no dedicated delivery channel yet (no
-   * WhatsApp/Slack/email integration exists before P5's response
-   * plane): a real, structured, paged log line, not a fabricated send.
-   * The offset still commits normally afterward — this is not a
-   * failure needing reprocessing. */
-  private async degradeToRuleOnlyAlert(tenantId: string, caseId: string, ctx: CaseContext | null, err: GroundingFailedError): Promise<void> {
+  /** P4-04 AC4 / P4-06 AC4: "degrade to a rule-only alert and page" —
+   * two independent reasons route here (a second consecutive grounding
+   * failure, or a tenant's cost hard cap), neither treated as a
+   * DLQ-worthy failure the way `handleFailure` treats everything else.
+   * Both are deliberate, successful-in-their-own-right outcomes, so
+   * this alert carries ONLY the case's deterministic fields (never
+   * unverified verdict content) — honestly scoped the same way this
+   * codebase scopes every alert that has no dedicated delivery channel
+   * yet (no WhatsApp/Slack/email integration exists before P5's
+   * response plane): a real, structured, paged log line, not a
+   * fabricated send. The offset still commits normally afterward —
+   * this is not a failure needing reprocessing. */
+  private async degradeToRuleOnlyAlert(tenantId: string, caseId: string, ctx: CaseContext | null, reason: string, detail: string): Promise<void> {
     this.logger.error(
       {
         tenant_id: tenantId,
         case_id: caseId,
         severity: ctx?.severity ?? 'unknown',
         title: ctx?.title ?? 'untitled',
-        grounding_errors: err.message,
+        degrade_reason: reason,
+        detail,
         page: true,
         rule_only_alert: true,
       },
-      'evidence grounding failed twice; degraded to a rule-only alert',
+      `degraded to a rule-only alert: ${reason}`,
     );
   }
 

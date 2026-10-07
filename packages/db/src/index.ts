@@ -37,6 +37,7 @@ export {
   type CaseSignalRow,
   type CaseTransitionRow,
 } from './repositories/cases-repository.js';
+export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
 export {
   ConnectorsRepository,
   type ConnectorHealth,

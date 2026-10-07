@@ -587,6 +587,27 @@ is a deploy-time change. Cache hit rate is a real counter pair
 (`analyst.prompt_cache.calls`/`.hits`, incremented from the Anthropic response's own
 `cache_read_input_tokens`), not a derived guess.
 
+**Per-tenant cost budgets (P4-06).** Enforces the unit economics constraint directly: every
+real Anthropic call (`cost-budget.ts`'s `recordUsage`) writes a durable `llm_usage` row — one
+per call, not a pre-aggregated rollup, so T1's own "token accounting matches the provider's
+reported usage" can be checked against an actual row — and increments a real `analyst.llm.cost_usd`
+counter in the same place, so the two can never drift apart. Cost itself comes from a
+configurable price table (`config/model-prices.json`, USD per million tokens, matching how
+providers publish their own pricing) with its own per-token-kind rate, so a cache read's real
+discount (P4-05) is visible in the number that matters most: the bill. `PLAN_BUDGETS` mirrors
+`services/correlate/internal/scoring/threshold.go`'s own `PlanTier` map almost exactly — the
+same four real plan values, the same "an unrecognised tier degrades to the most conservative
+configured budget" shape, learned from that Go file's own documented mistake of inventing
+fictional tier names that silently never matched the schema. Checked once per case, BEFORE
+either model is called, using only what the tenant already spent on earlier cases today: at
+1.5x the plan's allowance, an operational alert fires but the case still proceeds normally; at
+the hard cap, the case never reaches either model at all and degrades straight to the SAME
+rule-only-alert-and-page path P4-04's grounding failures use — reusing that mechanism rather
+than building a second one. Cost per tenant is visible on a real Grafana dashboard
+(`infra/docker/grafana-provisioning/dashboards/json/llm-cost.json`), alongside the prompt-cache
+hit rate and grounding rejection rate it sits next to for the same reason: all three move
+together when a tenant's behavior actually changes.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

@@ -1,0 +1,108 @@
+{
+  "title": "Sentinel — LLM Cost",
+  "uid": "sentinel-llm-cost",
+  "description": "P4-06 AC5: cost per tenant, the operations half of this ticket's own cost-budget guard (apps/analyst/src/cost-budget.ts). analyst_llm_cost_usd_total is incremented in the exact same place (cost-budget.ts's own recordUsage) the durable llm_usage Postgres row is written, so this panel and the budget check it mirrors can never drift apart. Panels query the metric names the otel-collector's Prometheus exporter actually produces for an OTel counter named analyst.llm.cost_usd (dots to underscores, _total appended) — the same naming convention golden-signals.json's own dashboard comment already confirmed live for http.server.*.",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Today's spend by tenant",
+      "description": "sum(increase(analyst_llm_cost_usd_total[24h])) by (tenant_id) — the same rolling-24h figure cost-budget.ts's own checkBudget compares against each plan's allowance/hard cap, so a tenant approaching its own cap is visible here before it ever degrades.",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "currencyUSD" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(analyst_llm_cost_usd_total[24h])) by (tenant_id)",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Cost over time by tenant",
+      "description": "sum(rate(analyst_llm_cost_usd_total[1h])) by (tenant_id) * 3600 — hourly spend rate, so a sudden cost spike for one tenant is visible as a shape, not just a cumulative total.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "currencyUSD" },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(analyst_llm_cost_usd_total[1h])) by (tenant_id) * 3600",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Prompt cache hit rate",
+      "description": "P4-05's own cache-hit metric, shown alongside cost since caching is the single largest lever on the number above: sum(increase(analyst_prompt_cache_hits_total[1h])) / sum(increase(analyst_prompt_cache_calls_total[1h])).",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(analyst_prompt_cache_hits_total[1h])) / sum(increase(analyst_prompt_cache_calls_total[1h]))",
+          "legendFormat": "cache hit rate"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Grounding rejection rate",
+      "description": "P4-04's own metric, shown here too since a degraded tenant (rule-only alerts) spends differently than a normal one: sum(increase(analyst_grounding_rejections_total[1h])) / sum(increase(analyst_grounding_attempts_total[1h])).",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.02 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(analyst_grounding_rejections_total[1h])) / sum(increase(analyst_grounding_attempts_total[1h]))",
+          "legendFormat": "grounding rejection rate"
+        }
+      ]
+    }
+  ]
+}

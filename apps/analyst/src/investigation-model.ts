@@ -20,7 +20,9 @@ import { TOOL_DEFINITIONS, executeTool, type ToolDependencies } from './tools/in
 import { validateVerdict, formatValidationErrors } from './verdict-validation.js';
 import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
 import { validateGrounding, formatGroundingErrors, type GroundingError } from './grounding.js';
-import { tenantContextBlock, type CacheMetrics } from './triage.js';
+import { tenantContextBlock, type CacheMetrics, type CostRecording } from './triage.js';
+import { recordUsage } from './cost-budget.js';
+import { usageFromAnthropic } from './pricing.js';
 
 export interface CaseContext {
   caseId: string;
@@ -99,6 +101,9 @@ export interface AnthropicInvestigationModelOptions {
    * shares — real cost savings on the EXPENSIVE model, not just the
    * cheap one, depend on this being wired. */
   cacheMetrics?: CacheMetrics;
+  /** P4-06 AC1: records every real call's own token usage and cost —
+   * the SAME seam triage.ts's own `costRecording` option is. */
+  costRecording?: CostRecording;
 }
 
 /** AC: a case this far into tool use without a final answer is itself an
@@ -114,6 +119,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
   private readonly tools: ToolDependencies | undefined;
   private readonly groundingMetrics: GroundingMetrics | undefined;
   private readonly cacheMetrics: CacheMetrics | undefined;
+  private readonly costRecording: CostRecording | undefined;
 
   constructor(opts: AnthropicInvestigationModelOptions) {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
@@ -122,6 +128,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
     this.tools = opts.tools;
     this.groundingMetrics = opts.groundingMetrics;
     this.cacheMetrics = opts.cacheMetrics;
+    this.costRecording = opts.costRecording;
   }
 
   async investigate(ctx: CaseContext): Promise<Verdict> {
@@ -156,6 +163,18 @@ export class AnthropicInvestigationModel implements InvestigationModel {
       this.cacheMetrics?.calls.add(1, { tenant_id: ctx.tenantId });
       if ((response.usage.cache_read_input_tokens ?? 0) > 0) {
         this.cacheMetrics?.hits.add(1, { tenant_id: ctx.tenantId });
+      }
+      if (this.costRecording) {
+        await recordUsage(
+          this.costRecording.pool,
+          ctx.tenantId,
+          ctx.caseId,
+          this.model,
+          'investigation',
+          usageFromAnthropic(response.usage),
+          this.costRecording.priceTable,
+          this.costRecording.costMetric,
+        );
       }
 
       if (response.stop_reason === 'tool_use' && this.tools) {
