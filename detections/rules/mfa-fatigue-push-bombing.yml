@@ -1,0 +1,29 @@
+title: Repeated MFA prompt failures for one account
+id: 8f1a2b3c-0001-4a00-9000-000000000019
+status: experimental
+description: >
+  Detects an unusual number of MfaDenied results for one UserId within a
+  short window — the signature of push-bombing, where an attacker who
+  already has valid credentials repeatedly triggers the MFA prompt hoping
+  the real user eventually approves one by mistake or fatigue.
+owner_description: >
+  One account received an unusual number of sign-in approval requests in
+  a short time that were all turned down. Attackers sometimes send a
+  flood of these requests, hoping the real owner will approve one by
+  accident.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1621
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'UserLoginFailed'
+    ResultStatus: 'MfaDenied'
+  condition: selection | count() by UserId > 5 within 10m
+falsepositives:
+  - A user's own MFA app repeatedly failing to reach the server due to a flaky connection
+level: high

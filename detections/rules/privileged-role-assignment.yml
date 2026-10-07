@@ -5,6 +5,10 @@ description: >
   Detects a user being added to a privileged Azure AD / Entra directory
   role — expected during normal admin operations, but worth surfacing for
   review given the blast radius of a mistaken or malicious grant.
+owner_description: >
+  Someone was given admin-level access to the company's Microsoft 365
+  setup. This is normal when IT does it on purpose, but worth a second
+  look if it was not expected.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

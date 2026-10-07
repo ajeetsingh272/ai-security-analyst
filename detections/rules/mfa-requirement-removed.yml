@@ -1,0 +1,28 @@
+title: Multi-factor authentication disabled for a user
+id: 8f1a2b3c-0001-4a00-9000-000000000016
+status: stable
+description: >
+  Detects strong authentication being disabled for an account — the
+  mirror image of mfa-method-registration.yml's own "a new factor was
+  added" signal, this one is "an existing requirement was removed",
+  which an attacker with admin rights can do to a victim account to make
+  it easier to keep using a stolen password.
+owner_description: >
+  The extra sign-in approval step, beyond just a password, was turned
+  off for an account. Attackers do this to make it easier to keep using
+  a stolen password without that second check getting in the way.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1556.006
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Disable Strong Authentication.'
+  condition: selection
+falsepositives:
+  - IT temporarily relaxing a requirement while helping a locked-out user re-enrol
+level: high

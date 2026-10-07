@@ -136,17 +136,26 @@ type Aggregation struct {
 // the only entry points, so every Rule in existence has already passed
 // every AC this ticket requires.
 type Rule struct {
-	ID          string
-	Title       string
-	Level       string
-	MitreIDs    []string
-	LogSource   LogSource
-	Selections  map[string]Selection
-	Condition   ConditionExpr
-	Engine      Engine
-	Aggregation *Aggregation
-	SpecVersion string
-	SourceFile  string
+	ID        string
+	Title     string
+	Level     string
+	MitreIDs  []string
+	LogSource LogSource
+	// OwnerDescription is P2-06's AC4: a plain-English description of
+	// what this rule detects, written for a non-technical mailbox/tenant
+	// owner to read in an alert — never the engineer-facing rationale a
+	// rule's own Sigma `description:` field carries (see fieldmap.go-
+	// style doc comments throughout this corpus for what THAT voice
+	// sounds like). Validated non-empty and jargon-free at parse time
+	// (AC4/T4), the same "a gap here is a build error" doctrine this
+	// package already applies to MITRE tags and field mappings.
+	OwnerDescription string
+	Selections       map[string]Selection
+	Condition        ConditionExpr
+	Engine           Engine
+	Aggregation      *Aggregation
+	SpecVersion      string
+	SourceFile       string
 	// Slug is SourceFile's basename with its extension stripped — e.g.
 	// "anonymous-proxy-signin" for detections/rules/anonymous-proxy-signin.yml.
 	// This, not ID (the YAML's own internal `id:` UUID), is what fixture

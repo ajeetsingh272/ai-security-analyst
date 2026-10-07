@@ -1,0 +1,28 @@
+title: Member added to a privileged group
+id: 8f1a2b3c-0001-4a00-9000-000000000037
+status: experimental
+description: >
+  Detects a new group membership — groups that themselves carry a
+  directory role grant privilege through membership rather than a direct
+  role assignment, so this rule exists alongside
+  privileged-role-assignment.yml's own direct-assignment check rather
+  than in place of it.
+owner_description: >
+  Someone was added to a company group. Some groups automatically carry
+  admin-level access, so a new member in one of those groups deserves
+  the same attention as being made an admin directly.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add member to group.'
+  condition: selection
+falsepositives:
+  - Routine onboarding into a non-privileged distribution or team group
+level: low

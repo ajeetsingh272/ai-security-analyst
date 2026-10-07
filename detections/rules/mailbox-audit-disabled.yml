@@ -1,0 +1,27 @@
+title: Mailbox audit logging disabled
+id: 8f1a2b3c-0001-4a00-9000-000000000011
+status: stable
+description: >
+  Detects AuditEnabled being set to false on a mailbox — a direct
+  defense-evasion step that removes the record an investigator would
+  otherwise use to reconstruct what an attacker did inside the mailbox.
+owner_description: >
+  Someone turned off the activity record-keeping for a mailbox.
+  Attackers do this so their actions inside an account cannot be
+  reviewed later.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1562.008
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Set-Mailbox'
+    AuditEnabled: 'False'
+  condition: selection
+falsepositives:
+  - IT deliberately disabling audit on a test or service mailbox
+level: high

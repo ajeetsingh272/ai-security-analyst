@@ -35,6 +35,22 @@ var fieldMap = map[string]string{
 	"CommandLine":            "unmapped.CommandLine",
 	"Image":                  "unmapped.Image",
 
+	// P2-06 additions — one new field per new rule that needs a raw M365
+	// audit-log attribute this table didn't carry yet. Same convention as
+	// every entry above: a value the rule's own selection compares
+	// against, not something this package derives or infers.
+	"ClientAppUsed":           "unmapped.ClientAppUsed",
+	"AuditEnabled":            "unmapped.AuditEnabled",
+	"MarkAsRead":              "unmapped.MarkAsRead",
+	"PolicyState":             "unmapped.PolicyState",
+	"ConsentType":             "unmapped.ConsentType",
+	"UserType":                "unmapped.UserType",
+	"TargetUserOrGroupType":   "unmapped.TargetUserOrGroupType",
+	"AuditBypassEnabled":      "unmapped.AuditBypassEnabled",
+	"PasswordNeverExpires":    "unmapped.PasswordNeverExpires",
+	"EnableSafeAttachments":   "unmapped.EnableSafeAttachments",
+	"RemotePowerShellEnabled": "unmapped.RemotePowerShellEnabled",
+
 	"class_uid":    "class_uid",
 	"category_uid": "category_uid",
 	"activity_id":  "activity_id",

@@ -1,0 +1,28 @@
+title: External guest granted access to a SharePoint site
+id: 8f1a2b3c-0001-4a00-9000-000000000028
+status: stable
+description: >
+  Detects a sharing grant where the target is an external guest — a
+  SharePoint-specific variant of the same "unexpected external access"
+  signal mass-file-download.yml's own windowed rule exists to catch the
+  volume side of.
+owner_description: >
+  Someone outside the company was given access to a company site or
+  folder. This is normal for working with partners, but worth checking
+  if it was not expected.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: sharepoint
+detection:
+  selection:
+    Operation: 'SharingSet'
+    TargetUserOrGroupType: 'Guest'
+  condition: selection
+falsepositives:
+  - A project site intentionally shared with an external partner
+level: medium

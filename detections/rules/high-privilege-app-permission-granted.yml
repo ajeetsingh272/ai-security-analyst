@@ -1,0 +1,28 @@
+title: High-privilege permission granted to a user-assigned application
+id: 8f1a2b3c-0001-4a00-9000-000000000033
+status: experimental
+description: >
+  Detects a new app role assignment granted directly to a user — a less
+  obvious persistence/privilege-escalation path than
+  oauth-app-high-privilege-scope-granted.yml's own service-principal
+  variant, since the grant is attached to a specific person rather than
+  an application-wide role.
+owner_description: >
+  A person was given a powerful level of access through a connected
+  app, rather than directly. This is a less obvious way to grant broad
+  access, so it is worth checking if it was intended.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add app role assignment grant to user.'
+  condition: selection
+falsepositives:
+  - IT granting a specific user elevated access to a reviewed internal tool
+level: medium

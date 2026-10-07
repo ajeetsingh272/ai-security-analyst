@@ -270,8 +270,8 @@ level: high
 
 // AC5: "Parse errors identify the file, line and construct."
 func TestParse_ErrorIdentifiesSourceLine(t *testing.T) {
-	y := "title: Test rule\nid: test-rule-id\nstatus: stable\ntags:\n  - attack.t1078\ndetection:\n  selection:\n    Operation: 'Foo'\n    BadField|frobnicate: 'Bar'\n  condition: selection\nlevel: low\n"
-	// BadField|frobnicate is on line 9 (1-indexed) of the string above.
+	y := "title: Test rule\nid: test-rule-id\nstatus: stable\nowner_description: A test rule.\ntags:\n  - attack.t1078\ndetection:\n  selection:\n    Operation: 'Foo'\n    BadField|frobnicate: 'Bar'\n  condition: selection\nlevel: low\n"
+	// BadField|frobnicate is on line 10 (1-indexed) of the string above.
 	_, err := Parse("test.yml", []byte(y))
 	if err == nil {
 		t.Fatal("expected a parse error")
@@ -280,8 +280,8 @@ func TestParse_ErrorIdentifiesSourceLine(t *testing.T) {
 	if !asParseError(err, &pe) {
 		t.Fatalf("expected a *ParseError, got %T", err)
 	}
-	if pe.Line != 9 {
-		t.Errorf("Line = %d, want 9 (full error: %v)", pe.Line, err)
+	if pe.Line != 10 {
+		t.Errorf("Line = %d, want 10 (full error: %v)", pe.Line, err)
 	}
 	if pe.File != "test.yml" {
 		t.Errorf("File = %q", pe.File)
@@ -298,7 +298,7 @@ func baseRuleYAML(t *testing.T, mitreTag, detectionAndLevel string) string {
 	if mitreTag != "" {
 		tags = "tags:\n  - " + mitreTag + "\n"
 	}
-	return "title: Test rule\nid: test-rule-id\nstatus: stable\n" + tags + detectionAndLevel
+	return "title: Test rule\nid: test-rule-id\nstatus: stable\nowner_description: A test rule.\n" + tags + detectionAndLevel
 }
 
 // asParseError is a tiny errors.As wrapper kept local to avoid an extra

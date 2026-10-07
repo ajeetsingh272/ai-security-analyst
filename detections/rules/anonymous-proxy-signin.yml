@@ -6,6 +6,10 @@ description: >
   node or anonymising proxy — threat-intel enrichment populates this flag
   (P2-09); this rule's own job is purely the field match once that
   enrichment exists.
+owner_description: >
+  Someone signed in to this account through a service that hides where
+  they are really connecting from. Attackers commonly use this trick to
+  hide their real location when they are using a stolen password.
 author: Sentinel detection engineering
 date: 2026/10/06
 tags:

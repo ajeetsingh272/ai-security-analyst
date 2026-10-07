@@ -1,0 +1,28 @@
+title: Safe attachments protection disabled
+id: 8f1a2b3c-0001-4a00-9000-000000000040
+status: experimental
+description: >
+  Detects EnableSafeAttachments being set to false on an ATP policy —
+  removes an automated malware-scanning control for attachments, a
+  plausible defense-evasion step immediately before a malicious
+  attachment is sent.
+owner_description: >
+  A protection that automatically checks email attachments for harmful
+  content was turned off. Someone may disable this right before sending
+  a harmful file by email.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1562.001
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Set-AtpPolicyForO365'
+    EnableSafeAttachments: 'False'
+  condition: selection
+falsepositives:
+  - IT temporarily disabling scanning while diagnosing a false-positive quarantine issue
+level: high

@@ -80,6 +80,9 @@ func Parse(file string, data []byte) (*Rule, error) {
 	if len(mitreIDs) == 0 {
 		return nil, &ParseError{File: file, Rule: raw.Title, Construct: "MITRE ATT&CK tag", Err: fmt.Errorf("every rule must declare at least one attack.<technique-id> tag (ADR-0004)")}
 	}
+	if strings.TrimSpace(raw.OwnerDescription) == "" {
+		return nil, &ParseError{File: file, Rule: raw.Title, Construct: "required field 'owner_description'", Err: fmt.Errorf("every rule needs a plain-English description written for a non-technical owner (P2-06 AC4)")}
+	}
 
 	if raw.Detection == nil {
 		return nil, &ParseError{File: file, Rule: raw.Title, Construct: "required field 'detection'", Err: fmt.Errorf("missing")}
@@ -135,18 +138,19 @@ func Parse(file string, data []byte) (*Rule, error) {
 	}
 
 	return &Rule{
-		ID:          raw.ID,
-		Title:       raw.Title,
-		Level:       raw.Level,
-		MitreIDs:    mitreIDs,
-		LogSource:   LogSource{Category: raw.LogSource.Category, Product: raw.LogSource.Product, Service: raw.LogSource.Service},
-		Selections:  selections,
-		Condition:   cond,
-		Engine:      engine,
-		Aggregation: agg,
-		SpecVersion: SpecVersion,
-		SourceFile:  file,
-		Slug:        slugFromFile(file),
+		ID:               raw.ID,
+		Title:            raw.Title,
+		Level:            raw.Level,
+		MitreIDs:         mitreIDs,
+		LogSource:        LogSource{Category: raw.LogSource.Category, Product: raw.LogSource.Product, Service: raw.LogSource.Service},
+		OwnerDescription: raw.OwnerDescription,
+		Selections:       selections,
+		Condition:        cond,
+		Engine:           engine,
+		Aggregation:      agg,
+		SpecVersion:      SpecVersion,
+		SourceFile:       file,
+		Slug:             slugFromFile(file),
 	}, nil
 }
 

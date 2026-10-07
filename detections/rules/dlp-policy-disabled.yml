@@ -1,0 +1,28 @@
+title: Data loss prevention policy disabled
+id: 8f1a2b3c-0001-4a00-9000-000000000025
+status: stable
+description: >
+  Detects a DLP-style policy's state being set to Disabled — removing a
+  control that otherwise blocks sensitive data from leaving the tenant,
+  a plausible defense-evasion step immediately before an exfiltration
+  attempt.
+owner_description: >
+  A rule that normally blocks sensitive company information, like
+  customer data, from leaving the company was turned off. Someone may
+  do this right before trying to send data outside the company.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1562.001
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Update policy.'
+    PolicyState: 'Disabled'
+  condition: selection
+falsepositives:
+  - IT retiring a DLP policy as part of a planned replacement
+level: high

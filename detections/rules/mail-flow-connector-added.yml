@@ -1,0 +1,26 @@
+title: Inbound or outbound mail connector added
+id: 8f1a2b3c-0001-4a00-9000-000000000035
+status: experimental
+description: >
+  Detects creation of a new inbound mail connector — a tenant-wide
+  mail-routing object that, misused, can redirect or expose mail flow
+  for every mailbox the connector applies to, not just one.
+owner_description: >
+  A new route was set up for how email flows into the company. A
+  connector added without IT's knowledge could be used to secretly
+  redirect or copy company email.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1114
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-InboundConnector'
+  condition: selection
+falsepositives:
+  - IT configuring a legitimate mail connector for a partner organisation
+level: medium

@@ -37,6 +37,15 @@ type rawRule struct {
 	Tags        []string       `yaml:"tags"`
 	LogSource   rawLogSource   `yaml:"logsource"`
 	Detection   map[string]any `yaml:"detection"`
+	// OwnerDescription is P2-06's own addition — AC4: "every rule has a
+	// plain-English description written for a non-technical owner",
+	// deliberately a SEPARATE field from Description above, which stays
+	// the engineer's own rationale (why this is worth detecting, which
+	// later ticket owns a gap, etc. — several existing rules' own
+	// Description already reference ADR numbers and internal component
+	// names, exactly the jargon AC4 exists to keep OUT of what an owner
+	// reads).
+	OwnerDescription string `yaml:"owner_description"`
 }
 
 type rawLogSource struct {
