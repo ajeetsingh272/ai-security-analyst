@@ -569,6 +569,24 @@ reaching Prometheus by querying it directly rather than trusting the counter cal
 Grafana alert (`infra/docker/grafana-provisioning/alerting/grounding-rejection-rate.yml`) firing
 per-tenant above a 2% rejection rate, mirroring the already-proven `reduction-ratio.yml` pattern.
 
+**Tiered model routing and prompt caching (P4-05).** "The single largest cost lever in the
+system," per the ticket's own description. Every non-critical case is triaged on a cheap model
+(`triage.ts`'s `AnthropicTriageModel`) before the expensive investigation model ever sees it —
+a `dismiss` decision ends the case right there, never reaching `investigate()` at all. A
+malformed or unparseable triage response fails safe to `escalate`, never to dismiss: this
+file's whole job is cheaply filtering out noise, and the worst outcome of a parsing bug here
+would be silently dropping a real case, which is strictly worse than one unnecessary
+investigation. Critical-severity cases bypass triage entirely (`worker.ts`'s own routing, before
+either model is called) — a case already known to be severe gains nothing from a cheap-model
+opinion, only latency. Both tiers share one `tenantContextBlock(tenantId)` function as a
+`cache_control: {type: 'ephemeral'}` system-prompt block — the SAME function, not two copies
+that could silently drift apart and stop matching byte-for-byte, which is what an Anthropic
+prompt cache actually requires to hit. Model identifiers for both tiers are env-configured
+(`ANTHROPIC_TRIAGE_MODEL`/`ANTHROPIC_INVESTIGATION_MODEL`), never hardcoded, so swapping either
+is a deploy-time change. Cache hit rate is a real counter pair
+(`analyst.prompt_cache.calls`/`.hits`, incremented from the Anthropic response's own
+`cache_read_input_tokens`), not a derived guess.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

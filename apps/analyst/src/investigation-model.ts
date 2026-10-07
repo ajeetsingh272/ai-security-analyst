@@ -20,6 +20,7 @@ import { TOOL_DEFINITIONS, executeTool, type ToolDependencies } from './tools/in
 import { validateVerdict, formatValidationErrors } from './verdict-validation.js';
 import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
 import { validateGrounding, formatGroundingErrors, type GroundingError } from './grounding.js';
+import { tenantContextBlock, type CacheMetrics } from './triage.js';
 
 export interface CaseContext {
   caseId: string;
@@ -94,6 +95,10 @@ export interface AnthropicInvestigationModelOptions {
    * none in this sandbox without real infra) still compiles and runs. */
   tools?: ToolDependencies;
   groundingMetrics?: GroundingMetrics;
+  /** P4-05 AC3: the same per-tenant cache_control block triage.ts
+   * shares — real cost savings on the EXPENSIVE model, not just the
+   * cheap one, depend on this being wired. */
+  cacheMetrics?: CacheMetrics;
 }
 
 /** AC: a case this far into tool use without a final answer is itself an
@@ -108,6 +113,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
   private readonly maxTokens: number;
   private readonly tools: ToolDependencies | undefined;
   private readonly groundingMetrics: GroundingMetrics | undefined;
+  private readonly cacheMetrics: CacheMetrics | undefined;
 
   constructor(opts: AnthropicInvestigationModelOptions) {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
@@ -115,6 +121,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
     this.maxTokens = opts.maxTokens ?? 8192;
     this.tools = opts.tools;
     this.groundingMetrics = opts.groundingMetrics;
+    this.cacheMetrics = opts.cacheMetrics;
   }
 
   async investigate(ctx: CaseContext): Promise<Verdict> {
@@ -135,10 +142,21 @@ export class AnthropicInvestigationModel implements InvestigationModel {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: this.maxTokens,
-        system: SYSTEM_PROMPT,
+        system: [
+          { type: 'text', text: SYSTEM_PROMPT },
+          // P4-05 AC3: the IDENTICAL per-tenant block triage.ts caches —
+          // sharing the one function, not a second copy of this text,
+          // is what guarantees a byte-for-byte match (and therefore an
+          // actual cache hit) across both tiers for the same tenant.
+          { type: 'text', text: tenantContextBlock(ctx.tenantId), cache_control: { type: 'ephemeral' } },
+        ],
         messages,
         ...(this.tools ? { tools: TOOL_DEFINITIONS } : {}),
       });
+      this.cacheMetrics?.calls.add(1, { tenant_id: ctx.tenantId });
+      if ((response.usage.cache_read_input_tokens ?? 0) > 0) {
+        this.cacheMetrics?.hits.add(1, { tenant_id: ctx.tenantId });
+      }
 
       if (response.stop_reason === 'tool_use' && this.tools) {
         messages.push({ role: 'assistant', content: response.content });
