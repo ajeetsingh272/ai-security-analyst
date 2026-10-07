@@ -34,62 +34,12 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSchema } from './parse-schema.mjs';
+import { findBreakingChanges, isMajorBump } from './classify-schema-diff.mjs';
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = join(PKG_ROOT, 'src', 'index.ts');
 const SNAPSHOT_PATH = join(PKG_ROOT, 'schema.snapshot.json');
 const CHECK = process.argv.includes('--check');
-
-function parseVersion(v) {
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
-  if (!m) throw new Error(`check-compatibility: "${v}" is not a semver MAJOR.MINOR.PATCH string.`);
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) };
-}
-
-/** Every breaking difference between two schema shapes, as human-readable
- * strings. Empty means the diff is additive-or-identical — safe. */
-function findBreakingChanges(before, after) {
-  const breaks = [];
-
-  for (const [name, values] of Object.entries(before.unions)) {
-    const nowValues = after.unions[name];
-    if (!nowValues) {
-      breaks.push(`union "${name}" was removed`);
-      continue;
-    }
-    for (const v of values) {
-      if (!nowValues.includes(v)) breaks.push(`union "${name}" lost the value "${v}"`);
-    }
-  }
-
-  for (const [name, iface] of Object.entries(before.interfaces)) {
-    const nowIface = after.interfaces[name];
-    if (!nowIface) {
-      breaks.push(`interface "${name}" was removed`);
-      continue;
-    }
-    const nowFields = new Map(nowIface.fields.map((f) => [f.name, f]));
-    for (const field of iface.fields) {
-      const nowField = nowFields.get(field.name);
-      if (!nowField) {
-        breaks.push(`"${name}.${field.name}" was removed`);
-        continue;
-      }
-      if (JSON.stringify(nowField.type) !== JSON.stringify(field.type)) {
-        breaks.push(
-          `"${name}.${field.name}" changed type (${JSON.stringify(field.type)} -> ${JSON.stringify(nowField.type)})`,
-        );
-      }
-      // A required field becoming optional is additive (existing callers
-      // that always set it still work); only the reverse is breaking.
-      if (field.optional && !nowField.optional) {
-        breaks.push(`"${name}.${field.name}" changed from optional to required`);
-      }
-    }
-  }
-
-  return breaks;
-}
 
 const current = parseSchema(SOURCE);
 
@@ -105,9 +55,7 @@ if (!existsSync(SNAPSHOT_PATH)) {
 
 const baseline = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
 const breaking = findBreakingChanges(baseline, current);
-const before = parseVersion(baseline.version);
-const after = parseVersion(current.version);
-const majorBumped = after.major > before.major;
+const majorBumped = isMajorBump(baseline.version, current.version);
 
 // This is T3, and it applies identically in both modes: a breaking change
 // without a major bump is wrong regardless of who runs the check.

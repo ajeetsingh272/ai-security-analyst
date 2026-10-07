@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "unions": {
     "Severity": [
       "critical",
@@ -24,6 +24,92 @@
     ]
   },
   "interfaces": {
+    "Case": {
+      "fields": [
+        {
+          "name": "id",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "tenantId",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "severity",
+          "optional": true,
+          "type": {
+            "kind": "ref",
+            "name": "Severity"
+          }
+        },
+        {
+          "name": "title",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "score",
+          "optional": true,
+          "type": {
+            "kind": "number"
+          }
+        },
+        {
+          "name": "state",
+          "optional": false,
+          "type": {
+            "kind": "ref",
+            "name": "CaseState"
+          }
+        },
+        {
+          "name": "windowStart",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "windowEnd",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "entityIds",
+          "optional": false,
+          "type": {
+            "kind": "array",
+            "of": {
+              "kind": "string"
+            }
+          }
+        },
+        {
+          "name": "signalCount",
+          "optional": false,
+          "type": {
+            "kind": "number"
+          }
+        },
+        {
+          "name": "createdAt",
+          "optional": false,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "Claim": {
       "fields": [
         {
