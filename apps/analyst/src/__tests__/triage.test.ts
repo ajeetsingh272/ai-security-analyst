@@ -41,6 +41,16 @@ describe('parseTriageDecision', () => {
     const result = parseTriageDecision('{"decision":"maybe","reason":"unsure"}');
     expect(result.decision).toBe('escalate');
   });
+
+  it('P4-12 AC1: fails safe to escalate on a dismiss decision with no reason, never a silent dismissal', () => {
+    expect(parseTriageDecision('{"decision":"dismiss","reason":""}').decision).toBe('escalate');
+    expect(parseTriageDecision('{"decision":"dismiss"}').decision).toBe('escalate');
+    expect(parseTriageDecision('{"decision":"dismiss","reason":"   "}').decision).toBe('escalate');
+  });
+
+  it('an escalate decision with no reason is still a valid escalate — only dismiss requires one', () => {
+    expect(parseTriageDecision('{"decision":"escalate","reason":""}').decision).toBe('escalate');
+  });
 });
 
 describe('tenantContextBlock', () => {

@@ -57,8 +57,18 @@ export interface CaseHistory {
 }
 
 export interface DismissalDigestRow {
-  /** Machine-readable (services/correlate/internal/lifecycle.DismissalReason) —
-   * e.g. "below_escalation_threshold" — never free prose (AC1). */
+  /** 'system' for a rule-based dismissal (services/correlate/internal/
+   * lifecycle's own writer), 'ai' for a triage dismissal (P4-05's
+   * worker.ts) — P4-12 AC3's own "distinguishes rule-based from
+   * AI-based dismissals." */
+  actorType: string;
+  /** For 'system': machine-readable (services/correlate/internal/
+   * lifecycle.DismissalReason), e.g. "below_escalation_threshold". For
+   * 'ai': the model's own stated reason (P4-12 AC1) — free prose, so
+   * two AI dismissals only group together when their stated reasons
+   * happen to match exactly; that is the correct behaviour, not a
+   * limitation to work around with clustering this ticket never asked
+   * for. */
   reason: string;
   caseCount: number;
   signalCount: number;
@@ -68,6 +78,14 @@ export class DismissalChallengeEmptyReasonError extends Error {
   constructor() {
     super('A reason is required to challenge a dismissal and cannot be blank.');
     this.name = 'DismissalChallengeEmptyReasonError';
+  }
+}
+
+/** P4-12 T3: "a dismissal recorded without a reason fails validation." */
+export class AiDismissalEmptyReasonError extends Error {
+  constructor() {
+    super('An AI dismissal requires the model\'s own stated reason and cannot be blank.');
+    this.name = 'AiDismissalEmptyReasonError';
   }
 }
 
@@ -125,22 +143,51 @@ export class CasesRepository extends TenantScopedRepository {
    */
   async dailyDismissalDigest(day: Date): Promise<DismissalDigestRow[]> {
     return this.withTransaction(async (client) => {
-      const { rows } = await client.query<{ reason: string; case_count: string; signal_count: string }>(
-        `SELECT ct.reason, count(DISTINCT ct.case_id) AS case_count, sum(c.signal_count) AS signal_count
+      const { rows } = await client.query<{ actor_type: string; reason: string; case_count: string; signal_count: string }>(
+        `SELECT ct.actor_type, ct.reason, count(DISTINCT ct.case_id) AS case_count, sum(c.signal_count) AS signal_count
            FROM case_transitions ct
            JOIN cases c ON c.id = ct.case_id
           WHERE ct.to_state = 'dismissed'
             AND ct.occurred_at >= $1
             AND ct.occurred_at < $1::timestamptz + INTERVAL '1 day'
-          GROUP BY ct.reason
+          GROUP BY ct.actor_type, ct.reason
           ORDER BY case_count DESC`,
         [day.toISOString()],
       );
       return rows.map((r) => ({
+        actorType: r.actor_type,
         reason: r.reason,
         caseCount: Number(r.case_count),
         signalCount: Number(r.signal_count),
       }));
+    });
+  }
+
+  /**
+   * P4-12 AC1: "every AI dismissal records the model's stated reason."
+   * Mirrors `challengeDismissal`'s own shape (read the current state,
+   * write one transition) but for the OPPOSITE edge — triaging (or
+   * whatever state the case was already in) to dismissed, with
+   * `actor_type = 'ai'` so `dailyDismissalDigest` can tell it apart
+   * from a rule-based dismissal (AC3). Called from `worker.ts`'s own
+   * triage step the moment a case is dismissed, never from inside the
+   * model itself — the model only ever RETURNS a reason string; this
+   * repository is what turns that into a durable, auditable fact.
+   */
+  async recordAiDismissal(caseId: string, reason: string): Promise<void> {
+    if (reason.trim().length === 0) {
+      throw new AiDismissalEmptyReasonError();
+    }
+    await this.withTransaction(async (client) => {
+      const current = await client.query<{ to_state: string | null }>(
+        'SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1',
+        [caseId],
+      );
+      await client.query(
+        `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+         VALUES ($1, $2, $3, 'dismissed', 'ai', 'sentinel-analyst', $4)`,
+        [this.tenantId, caseId, current.rows[0]?.to_state ?? null, reason],
+      );
     });
   }
 

@@ -31,6 +31,7 @@ export {
 export {
   CasesRepository,
   DismissalChallengeEmptyReasonError,
+  AiDismissalEmptyReasonError,
   type CaseRow,
   type DismissalDigestRow,
   type CaseHistory,

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { withTenantContext } from '../tenant-context.js';
-import { CasesRepository, DismissalChallengeEmptyReasonError } from '../repositories/cases-repository.js';
+import { CasesRepository, DismissalChallengeEmptyReasonError, AiDismissalEmptyReasonError } from '../repositories/cases-repository.js';
 
 const fakePool = {} as Pool;
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
@@ -31,6 +31,22 @@ describe('CasesRepository.challengeDismissal reason validation', () => {
       await expect(repo.challengeDismissal(CASE_ID, USER_ID, '   ')).rejects.toThrow(
         DismissalChallengeEmptyReasonError,
       );
+    });
+  });
+});
+
+describe('CasesRepository.recordAiDismissal reason validation (P4-12 T3)', () => {
+  it('rejects an empty reason — checked before withTransaction is ever called', async () => {
+    await withTenantContext(TENANT_ID, async () => {
+      const repo = new CasesRepository(fakePool);
+      await expect(repo.recordAiDismissal(CASE_ID, '')).rejects.toThrow(AiDismissalEmptyReasonError);
+    });
+  });
+
+  it('rejects a whitespace-only reason', async () => {
+    await withTenantContext(TENANT_ID, async () => {
+      const repo = new CasesRepository(fakePool);
+      await expect(repo.recordAiDismissal(CASE_ID, '   ')).rejects.toThrow(AiDismissalEmptyReasonError);
     });
   });
 });
