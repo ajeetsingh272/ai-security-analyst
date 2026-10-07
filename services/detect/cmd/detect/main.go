@@ -129,14 +129,21 @@ func main() {
 		log.Error("creating detect.consumer_lag gauge", "err", err)
 		os.Exit(1)
 	}
+	criticalAlertsEmitted, err := otel.Meter(serviceName).Int64Counter("detect.critical_alerts_emitted",
+		metric.WithDescription("Critical signals published directly to alerts.critical (P2-08/TG4 bypass), independent of the normal signals path"))
+	if err != nil {
+		log.Error("creating detect.critical_alerts_emitted counter", "err", err)
+		os.Exit(1)
+	}
 
 	w := worker.New(tree, consumerClient, producerClient, worker.Options{
 		Group: group,
 		Log:   log,
 		Metrics: worker.Metrics{
-			SignalsEmitted: signalsEmitted,
-			EvalErrors:     evalErrors,
-			PartitionLag:   partitionLag,
+			SignalsEmitted:        signalsEmitted,
+			EvalErrors:            evalErrors,
+			PartitionLag:          partitionLag,
+			CriticalAlertsEmitted: criticalAlertsEmitted,
 		},
 	})
 
@@ -184,12 +191,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	windowedCriticalAlertsEmitted, err := otel.Meter(serviceName).Int64Counter("detect.windowed_critical_alerts_emitted",
+		metric.WithDescription("Critical signals published directly to alerts.critical by a windowed rule (P2-08/TG4 bypass)"))
+	if err != nil {
+		log.Error("creating detect.windowed_critical_alerts_emitted counter", "err", err)
+		os.Exit(1)
+	}
+
 	windowedScheduler, err := windowed.New(rules, chConn, producerClient, windowed.Options{
 		Log: log,
 		Metrics: windowed.Metrics{
-			SignalsEmitted: windowedSignalsEmitted,
-			QueryErrors:    windowedQueryErrors,
-			QueryKilled:    windowedQueryKilled,
+			SignalsEmitted:        windowedSignalsEmitted,
+			QueryErrors:           windowedQueryErrors,
+			QueryKilled:           windowedQueryKilled,
+			CriticalAlertsEmitted: windowedCriticalAlertsEmitted,
 		},
 	})
 	if err != nil {

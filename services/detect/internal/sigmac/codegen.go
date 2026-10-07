@@ -64,8 +64,8 @@ func GenerateSource(rules []*Rule, fixturesDir string) (ruleCode, testCode []byt
 
 		fmt.Fprintf(&funcs, "func %s(ev map[string]string) bool {\n%s\n}\n\n", funcName, body)
 
-		fmt.Fprintf(&registry, "\t{ID: %s, Title: %s, Level: %s, MitreIDs: %s, Engine: %s, Matches: %s},\n",
-			strconv.Quote(r.ID), strconv.Quote(r.Title), strconv.Quote(r.Level), goStringSlice(r.MitreIDs), strconv.Quote(r.Engine.String()), funcName)
+		fmt.Fprintf(&registry, "\t{ID: %s, Title: %s, Level: %s, MitreIDs: %s, Engine: %s, OwnerDescription: %s, Matches: %s},\n",
+			strconv.Quote(r.ID), strconv.Quote(r.Title), strconv.Quote(r.Level), goStringSlice(r.MitreIDs), strconv.Quote(r.Engine.String()), strconv.Quote(r.OwnerDescription), funcName)
 
 		f := fixtures[r.Slug]
 		fmt.Fprintf(&tests, "func TestRule_%s(t *testing.T) {\n", sanitizeIdent(r.Slug))
@@ -91,12 +91,13 @@ func GenerateSource(rules []*Rule, fixturesDir string) (ruleCode, testCode []byt
 		"package " + GenGoPackage + "\n\n" +
 		ruleImports.String() +
 		"type CompiledRule struct {\n" +
-		"\tID       string\n" +
-		"\tTitle    string\n" +
-		"\tLevel    string\n" +
-		"\tMitreIDs []string\n" +
-		"\tEngine   string\n" +
-		"\tMatches  func(ev map[string]string) bool\n" +
+		"\tID               string\n" +
+		"\tTitle            string\n" +
+		"\tLevel            string\n" +
+		"\tMitreIDs         []string\n" +
+		"\tEngine           string\n" +
+		"\tOwnerDescription string\n" +
+		"\tMatches          func(ev map[string]string) bool\n" +
 		"}\n\n" +
 		"var Rules = []CompiledRule{\n" + registry.String() + "}\n\n" +
 		"func boolToInt(b bool) int {\n\tif b {\n\t\treturn 1\n\t}\n\treturn 0\n}\n\n" +

@@ -55,6 +55,13 @@ var MainTopics = []TopicSpec{
 	{Name: "signals", Key: KeyTenantEntity, Partitions: 32, Retention: 7 * 24 * time.Hour, DLQ: "signals.dlq"},
 	{Name: "cases", Key: KeyTenantCase, Partitions: 16, Retention: 30 * 24 * time.Hour, DLQ: "cases.dlq"},
 	{Name: "actions", Key: KeyTenantCase, Partitions: 8, Retention: 30 * 24 * time.Hour, DLQ: "actions.dlq"},
+	// alerts.critical is P2-08/TG4's own direct customer-alert path — a
+	// critical-severity signal publishes here in parallel with `signals`,
+	// never conditional on anything correlation or the AI analyst plane
+	// does. Low partition count on purpose: this topic carries only
+	// critical-severity signals, which by design are rare — the opposite
+	// of events.normalized's own high-fan-out partitioning.
+	{Name: "alerts.critical", Key: KeyTenant, Partitions: 8, Retention: 30 * 24 * time.Hour, DLQ: "alerts.critical.dlq"},
 }
 
 // EventsRaw is the one topic P1-01's connector scheduler actually publishes
@@ -86,3 +93,13 @@ const Signals = "signals"
 // rather than being silently dropped (P2-04 AC: "evaluation errors route
 // to DLQ without halting the worker").
 const SignalsDLQ = "signals.dlq"
+
+// CriticalAlerts is P2-08/TG4's own direct alert path — "the rule engine
+// owns a direct alert path that bypasses the analyst" (SECURITY.md
+// guarantee #4). Published to in parallel with Signals, by the same
+// worker, for the same signal — never downstream of correlation, never
+// conditional on it.
+const CriticalAlerts = "alerts.critical"
+
+// CriticalAlertsDLQ is alerts.critical's own dead-letter topic.
+const CriticalAlertsDLQ = "alerts.critical.dlq"

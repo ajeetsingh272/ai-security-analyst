@@ -25,4 +25,4 @@ detection:
   condition: selection
 falsepositives:
   - IT deliberately rolling out a reviewed line-of-business app tenant-wide
-level: high
+level: critical

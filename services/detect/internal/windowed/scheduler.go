@@ -23,10 +23,19 @@ import (
 // services/detect/internal/worker.Metrics and every other optional
 // capability in this repo already uses.
 type Metrics struct {
-	SignalsEmitted metric.Int64Counter
-	QueryErrors    metric.Int64Counter
-	QueryKilled    metric.Int64Counter
+	SignalsEmitted        metric.Int64Counter
+	QueryErrors           metric.Int64Counter
+	QueryKilled           metric.Int64Counter
+	CriticalAlertsEmitted metric.Int64Counter
 }
+
+// levelCritical is the one rule Level value that triggers the direct
+// alert bypass (P2-08, SECURITY.md guarantee #4) — see
+// services/detect/internal/worker's own identical constant; duplicated
+// rather than shared, the same "no cross-engine coupling for one string"
+// reasoning that constant's own doc comment already explains for
+// engineInStream.
+const levelCritical = "critical"
 
 type Options struct {
 	Log *slog.Logger
@@ -175,10 +184,21 @@ func (s *Scheduler) runOnce(ctx context.Context, sr scheduledRule) {
 	for _, sig := range signals {
 		if err := s.publishSignal(ctx, sig); err != nil {
 			s.log.Error("publishing windowed signal failed", "rule_id", sr.query.Rule.ID, "tenant_id", sig.TenantID, "err", err)
-			continue
-		}
-		if s.metrics.SignalsEmitted != nil {
+		} else if s.metrics.SignalsEmitted != nil {
 			s.metrics.SignalsEmitted.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", sr.query.Rule.ID)))
+		}
+
+		// P2-08/TG4: the critical bypass — see
+		// services/detect/internal/worker's identical logic for the
+		// in-stream engine. Unconditional on the signals publish above,
+		// and makes no call of any kind into correlation, the analyst,
+		// or an LLM provider.
+		if sig.Severity == levelCritical {
+			if err := s.publishCriticalAlert(ctx, sig); err != nil {
+				s.log.Error("publishing windowed critical alert failed", "rule_id", sr.query.Rule.ID, "tenant_id", sig.TenantID, "err", err)
+			} else if s.metrics.CriticalAlertsEmitted != nil {
+				s.metrics.CriticalAlertsEmitted.Add(ctx, 1, metric.WithAttributes(attribute.String("rule_id", sr.query.Rule.ID)))
+			}
 		}
 	}
 }
@@ -209,17 +229,19 @@ func scanSignals(rows driver.Rows, r *sigmac.Rule, now time.Time) ([]sentinelsig
 			continue
 		}
 		signals = append(signals, sentinelsignal.Signal{
-			SignalID:   uuid.NewString(),
-			EventIDs:   eventIDs,
-			TenantID:   tenantID,
-			RuleID:     r.ID,
-			RuleTitle:  r.Title,
-			MitreIDs:   r.MitreIDs,
-			Severity:   r.Level,
-			Engine:     "windowed",
-			EntityType: entityType,
-			EntityID:   groupKey,
-			DetectedAt: now,
+			SignalID:         uuid.NewString(),
+			EventIDs:         eventIDs,
+			TenantID:         tenantID,
+			RuleID:           r.ID,
+			RuleTitle:        r.Title,
+			MitreIDs:         r.MitreIDs,
+			Severity:         r.Level,
+			Engine:           "windowed",
+			EntityType:       entityType,
+			EntityID:         groupKey,
+			OwnerDescription: r.OwnerDescription,
+			DedupeKey:        sentinelsignal.NewDedupeKey(tenantID, r.ID, groupKey, eventIDs),
+			DetectedAt:       now,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -239,6 +261,21 @@ func (s *Scheduler) publishSignal(ctx context.Context, sig sentinelsignal.Signal
 	// declares (go/sentinelstream.TopicSpec), not a stand-in.
 	key := sig.TenantID + ":" + sig.EntityID
 	res := s.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.Signals, Key: []byte(key), Value: payload})
+	return res.FirstErr()
+}
+
+// publishCriticalAlert is P2-08/TG4's direct alert path for the windowed
+// engine — the identical Signal already published to `signals`,
+// published a second time to `alerts.critical` over the same producer
+// client, with no dependency of any kind on correlation, the analyst,
+// or an LLM provider (AC2).
+func (s *Scheduler) publishCriticalAlert(ctx context.Context, sig sentinelsignal.Signal) error {
+	payload, err := json.Marshal(sig)
+	if err != nil {
+		return err
+	}
+	key := sig.TenantID + ":" + sig.DedupeKey
+	res := s.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.CriticalAlerts, Key: []byte(key), Value: payload})
 	return res.FirstErr()
 }
 

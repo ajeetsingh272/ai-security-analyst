@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
 )
 
 func TestLevelInterval(t *testing.T) {
@@ -150,6 +151,51 @@ func TestScanSignals_BuildsOneSignalPerRow(t *testing.T) {
 	b := signals[1]
 	if b.TenantID != "tenant-b" || b.EntityID != "bob" {
 		t.Errorf("signal 1 = %+v, want tenant-b/bob", b)
+	}
+}
+
+// P2-08/TG4: scanSignals carries a critical rule's level through to
+// Signal.Severity verbatim — the data this ticket's runOnce own bypass
+// check (`sig.Severity == levelCritical`) depends on. No rule in today's
+// real windowed corpus happens to be level: critical (all three are
+// high), so this is proven against a synthetic rule built the same way
+// load_test.go's own synthesizeRules already does, rather than skipping
+// the case entirely.
+func TestScanSignals_CriticalLevelCarriesThroughToSeverity(t *testing.T) {
+	r := &sigmac.Rule{
+		ID: "synthetic-critical", Slug: "synthetic-critical", Title: "Synthetic critical rule", Level: "critical",
+		MitreIDs:         []string{"attack.t1078"},
+		OwnerDescription: "A synthetic critical rule for testing.",
+		Selections: map[string]sigmac.Selection{
+			"selection": {Name: "selection", Fields: []sigmac.FieldMatch{
+				{SigmaField: "Operation", OCSFPath: "metadata.operation", Modifier: sigmac.ModEquals, Values: []string{"X"}},
+			}},
+		},
+		Condition: sigmac.SelectionRef{Name: "selection"},
+		Engine:    sigmac.EngineWindowed,
+		Aggregation: &sigmac.Aggregation{
+			GroupBy: []string{"UserId"}, Op: "count", Comparator: ">", Threshold: 1, Window: 10 * time.Minute,
+		},
+	}
+	rows := &fakeRows{rows: []fakeRow{
+		{tenantID: "tenant-a", groupKey: "alice", aggValue: 5, eventIDs: []string{"evt-1"}},
+	}}
+
+	signals, err := scanSignals(rows, r, time.Now())
+	if err != nil {
+		t.Fatalf("scanSignals: %v", err)
+	}
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+	if signals[0].Severity != levelCritical {
+		t.Fatalf("Severity = %q, want %q — runOnce's own bypass check depends on this", signals[0].Severity, levelCritical)
+	}
+	if signals[0].OwnerDescription == "" {
+		t.Error("OwnerDescription is empty — AC3 needs it for the bypass alert's own body")
+	}
+	if signals[0].DedupeKey == "" {
+		t.Error("DedupeKey is empty — AC4 needs it to match the same signal published on both paths")
 	}
 }
 
