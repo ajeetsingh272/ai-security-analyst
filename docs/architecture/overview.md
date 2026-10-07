@@ -705,6 +705,32 @@ once, with its original degrade alert never duplicated. Circuit state is a live 
 own metrics already share (`llm-cost.json`), confirmed live via Grafana's own API after this
 dashboard's update auto-provisioned.
 
+**Investigation replay and debugging tooling (P4-11).** "Re-run a past investigation with full
+prompt, tool-call and response capture, so 'why did it say that' is answerable months later."
+`investigation-model.ts` records a full transcript (`investigation_transcripts`, Postgres) at
+the end of every real investigation — `messages` alone already carries every tool call in its
+natural order (Anthropic's own format interleaves `tool_use`/`tool_result` directly into the
+conversation), so there is no separate tool-call log to keep in sync with it. Captured through
+`@sentinel/observability`'s own `redact` — the SAME function already wired into every log call
+(P0-10 AC3), not a second redaction mechanism invented here that could drift from what the rest
+of this codebase already trusts — before it ever reaches SQL, so the table is not itself a
+place a secret could leak from, by construction. `replay.ts`'s `replayInvestigation` re-sends a
+captured transcript's own `system`/`messages` to a DIFFERENT model/prompt version with no
+`tools` field at all: the captured `tool_result` turns are replayed verbatim, never
+re-executed, which is what makes "replay never emits a real alert or executes a real action"
+true by construction rather than by a separate guard — there is no code path in this file that
+could call a tool or produce to Kafka even if it tried. `verdict-diff.ts`'s `diffVerdicts`
+structurally compares two verdicts (severity, claims by text, actions by playbook+urgency) for
+AC5's own "diffing two replays is supported." Retention (AC3) is a daily sweep
+(`purgeExpiredTranscripts`, cross-tenant by construction like
+`DegradedQueueRepository`'s own sweep) against a configurable window, default 90 days. A
+dedicated test captures a real investigation into real Postgres, reads the transcript back, and
+replays it against a second fake model — proving capture, storage, retrieval, and replay all
+work together, which caught a second real bug the same session: the original recording call was
+fire-and-forget, so a test reading the transcript back immediately after `investigate()`
+returned sometimes raced the write; recording is now awaited (still error-tolerant) since AC1 is
+this ticket's own primary deliverable, not best-effort telemetry.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

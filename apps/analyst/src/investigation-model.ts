@@ -22,6 +22,7 @@ import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
 import { validateGrounding, formatGroundingErrors, type GroundingError } from './grounding.js';
 import { tenantContextBlock, type CacheMetrics, type CostRecording } from './triage.js';
 import { wrapUntrustedData, UNTRUSTED_DATA_INSTRUCTION } from './injection-defense.js';
+import type { TranscriptRecorder } from './transcript.js';
 import { recordUsage } from './cost-budget.js';
 import { usageFromAnthropic } from './pricing.js';
 
@@ -107,6 +108,11 @@ export interface AnthropicInvestigationModelOptions {
   /** P4-06 AC1: records every real call's own token usage and cost —
    * the SAME seam triage.ts's own `costRecording` option is. */
   costRecording?: CostRecording;
+  /** P4-11 AC1: records the full prompt/tool-call/response history for
+   * every real investigation. Optional for the same reason every other
+   * dependency here is — a caller without a Postgres pool wired yet
+   * still compiles and runs. */
+  transcriptRecorder?: TranscriptRecorder;
 }
 
 /** AC: a case this far into tool use without a final answer is itself an
@@ -123,6 +129,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
   private readonly groundingMetrics: GroundingMetrics | undefined;
   private readonly cacheMetrics: CacheMetrics | undefined;
   private readonly costRecording: CostRecording | undefined;
+  private readonly transcriptRecorder: TranscriptRecorder | undefined;
 
   constructor(opts: AnthropicInvestigationModelOptions) {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
@@ -132,6 +139,7 @@ export class AnthropicInvestigationModel implements InvestigationModel {
     this.groundingMetrics = opts.groundingMetrics;
     this.cacheMetrics = opts.cacheMetrics;
     this.costRecording = opts.costRecording;
+    this.transcriptRecorder = opts.transcriptRecorder;
   }
 
   async investigate(ctx: CaseContext): Promise<Verdict> {
@@ -152,19 +160,37 @@ export class AnthropicInvestigationModel implements InvestigationModel {
     // different problems with different corrective prompts.
     let repairAttempted = false;
     let groundingRepairAttempted = false;
+    // P4-11: identical across every iteration (nothing in it depends
+    // on loop state), hoisted once so the transcript recorded at the
+    // end captures exactly what was actually sent, without rebuilding
+    // it a second time from scratch after the fact.
+    const systemBlocks: Anthropic.TextBlockParam[] = [
+      { type: 'text', text: SYSTEM_PROMPT },
+      // P4-05 AC3: the IDENTICAL per-tenant block triage.ts caches —
+      // sharing the one function, not a second copy of this text,
+      // is what guarantees a byte-for-byte match (and therefore an
+      // actual cache hit) across both tiers for the same tenant.
+      { type: 'text', text: tenantContextBlock(ctx.tenantId), cache_control: { type: 'ephemeral' } },
+    ];
+    // Awaited, unlike the metrics dependencies above — AC1 ("every
+    // investigation records...") is this ticket's primary deliverable,
+    // not best-effort telemetry, so the investigation genuinely waits
+    // for the write before returning. Still error-tolerant: a
+    // transcript-store outage must not fail the investigation itself.
+    const recordTranscript = async (finalResponseContent: Anthropic.ContentBlock[], verdict: Verdict): Promise<void> => {
+      if (!this.transcriptRecorder) return;
+      try {
+        await this.transcriptRecorder.record(ctx.tenantId, ctx.caseId, { model: this.model, system: systemBlocks, messages, finalResponseContent, verdict });
+      } catch {
+        // best-effort — see above.
+      }
+    };
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: this.maxTokens,
-        system: [
-          { type: 'text', text: SYSTEM_PROMPT },
-          // P4-05 AC3: the IDENTICAL per-tenant block triage.ts caches —
-          // sharing the one function, not a second copy of this text,
-          // is what guarantees a byte-for-byte match (and therefore an
-          // actual cache hit) across both tiers for the same tenant.
-          { type: 'text', text: tenantContextBlock(ctx.tenantId), cache_control: { type: 'ephemeral' } },
-        ],
+        system: systemBlocks,
         messages,
         ...(this.tools ? { tools: TOOL_DEFINITIONS } : {}),
       });
@@ -216,11 +242,15 @@ export class AnthropicInvestigationModel implements InvestigationModel {
       // P4-04/TG1: deterministic re-verification against the real event
       // store, never a model self-check — skipped only when no
       // ClickHouse client is wired at all (same seam tool use shares).
-      if (!this.tools) return verdict;
+      if (!this.tools) {
+        await recordTranscript(response.content, verdict);
+        return verdict;
+      }
 
       const grounding = await validateGrounding(this.tools.ch, ctx.tenantId, { start: ctx.windowStart, end: ctx.windowEnd }, verdict);
       if (grounding.ok) {
         this.groundingMetrics?.attempts.add(1, { tenant_id: ctx.tenantId });
+        await recordTranscript(response.content, verdict);
         return verdict;
       }
 

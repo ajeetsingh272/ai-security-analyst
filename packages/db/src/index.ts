@@ -40,6 +40,12 @@ export {
 export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
 export { DegradedQueueRepository, listTenantsWithPendingDegradedCases, type DegradedQueueRow } from './repositories/degraded-queue-repository.js';
 export {
+  InvestigationTranscriptRepository,
+  purgeExpiredTranscripts,
+  type TranscriptInput,
+  type TranscriptRow,
+} from './repositories/investigation-transcript-repository.js';
+export {
   ConnectorsRepository,
   type ConnectorHealth,
   type ConnectorApiStatus,

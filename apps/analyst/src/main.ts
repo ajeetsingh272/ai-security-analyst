@@ -15,6 +15,8 @@ import { AnthropicInvestigationModel } from './investigation-model.js';
 import { AnthropicTriageModel } from './triage.js';
 import { loadPriceTable } from './pricing.js';
 import { CircuitBreaker, type CircuitState } from './circuit-breaker.js';
+import { PostgresTranscriptRecorder } from './transcript.js';
+import { purgeExpiredTranscripts } from '@sentinel/db';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PermanentError } from './retry.js';
@@ -87,6 +89,7 @@ async function main(): Promise<void> {
     groundingMetrics,
     cacheMetrics,
     costRecording: { pool, priceTable, costMetric },
+    transcriptRecorder: new PostgresTranscriptRecorder(pool),
   });
   // AC4: the triage model identifier is its own configuration knob,
   // independent of the investigation model's — the whole point of this
@@ -116,11 +119,26 @@ async function main(): Promise<void> {
   await worker.start();
   logger.info({}, 'analyst worker started');
 
+  // P4-11 AC3: "subject to retention policy" — a fixed daily sweep,
+  // the same `setInterval`-based shape this file's own dev-facing
+  // periodic tasks use (mirrors cmd/correlate/main.go's own
+  // time.NewTicker sweeps, translated to Node's timer API).
+  const retentionDays = Number(envOr('TRANSCRIPT_RETENTION_DAYS', '90'));
+  const purgeIntervalMs = Number(envOr('TRANSCRIPT_PURGE_INTERVAL_MS', String(24 * 60 * 60 * 1000)));
+  const purgeTimer = setInterval(() => {
+    purgeExpiredTranscripts(pool, retentionDays)
+      .then((purged) => {
+        if (purged > 0) logger.info({ purged, retention_days: retentionDays }, 'purged expired investigation transcripts');
+      })
+      .catch((err) => logger.error({ err: err instanceof Error ? err.message : String(err) }, 'purging expired investigation transcripts failed'));
+  }, purgeIntervalMs);
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'draining in-flight investigations before exit');
+    clearInterval(purgeTimer);
     await worker.stop();
     await disconnect();
     await ch.close();
