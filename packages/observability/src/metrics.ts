@@ -8,7 +8,7 @@ import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
-import type { Counter, Histogram } from '@opentelemetry/api';
+import type { Counter, Histogram, Meter } from '@opentelemetry/api';
 
 export interface GoldenSignalMetrics {
   requestCount: Counter;
@@ -58,4 +58,30 @@ export function startMetrics({
   };
 
   return { metrics, shutdown: () => provider.shutdown() };
+}
+
+export interface MeterHandle {
+  meter: Meter;
+  shutdown: () => Promise<void>;
+}
+
+/**
+ * The same MeterProvider/OTLP-exporter bootstrap `startMetrics` uses
+ * above, factored out for a caller that needs its OWN custom
+ * counters/histograms rather than the fixed golden-signal HTTP set —
+ * `apps/analyst`'s grounding-rejection-rate metric (P4-04) is the first
+ * such caller. Exists so that caller doesn't have to duplicate the
+ * MeterProvider/exporter wiring itself.
+ */
+export function createMeter({ serviceName, otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'localhost:4317' }: StartMetricsOptions): MeterHandle {
+  const provider = new MeterProvider({
+    resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: serviceName }),
+    readers: [
+      new PeriodicExportingMetricReader({
+        exportIntervalMillis: 5000,
+        exporter: new OTLPMetricExporter({ url: `http://${otlpEndpoint}` }),
+      }),
+    ],
+  });
+  return { meter: provider.getMeter(serviceName), shutdown: () => provider.shutdown() };
 }

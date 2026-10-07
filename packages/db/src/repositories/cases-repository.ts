@@ -28,6 +28,8 @@ export interface CaseRow {
   title: string | null;
   signalCount: number;
   createdAt: string;
+  windowStart: string;
+  windowEnd: string | null;
 }
 
 export interface CaseSignalRow {
@@ -77,6 +79,8 @@ function mapRow(row: Record<string, unknown>): CaseRow {
     title: (row['title'] as string | null) ?? null,
     signalCount: Number(row['signal_count']),
     createdAt: String(row['created_at']),
+    windowStart: String(row['window_start']),
+    windowEnd: (row['window_end'] as string | null) ?? null,
   };
 }
 
@@ -94,7 +98,7 @@ export class CasesRepository extends TenantScopedRepository {
   async findAll(): Promise<CaseRow[]> {
     return this.withTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases ORDER BY created_at DESC',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases ORDER BY created_at DESC',
       );
       return rows.map(mapRow);
     });
@@ -103,7 +107,7 @@ export class CasesRepository extends TenantScopedRepository {
   async findById(id: string): Promise<CaseRow | null> {
     return this.withTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
         [id],
       );
       return rows.length > 0 ? mapRow(rows[0]) : null;
@@ -168,7 +172,7 @@ export class CasesRepository extends TenantScopedRepository {
   async history(caseId: string, limit: number): Promise<CaseHistory> {
     return this.withTransaction(async (client) => {
       const caseResult = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
         [caseId],
       );
       const signalResult = await client.query<{
@@ -258,7 +262,7 @@ export class CasesRepository extends TenantScopedRepository {
       });
 
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
         [caseId],
       );
       return rows.length > 0 ? mapRow(rows[0]) : null;

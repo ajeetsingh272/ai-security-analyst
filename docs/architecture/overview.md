@@ -547,6 +547,28 @@ corrected attempt — the failure is fed back as a plain-language message listin
 found in one pass — before the investigation fails outright; a second consecutive failure is
 treated the same as `UnparsableVerdictError` always has been, non-retryable.
 
+**Evidence grounding (P4-04, TG1).** "The mechanism the entire product promise rests on," per
+the ticket's own description, and deliberately deterministic code, never a model self-check:
+every `evidenceRef` a schema-valid Verdict cites is re-queried against `sentinel.events`
+(`grounding.ts`), through the exact same `sentinel_query_user` row-policy mechanism `query_events`
+(P4-02) uses — a fabricated id and a REAL id belonging to a different tenant produce the
+identical "not found" outcome, which is correct: this code must never even hint that a
+cross-tenant id exists. Each resolved event's time is also checked against the case's own
+`window_start`/`window_end` (open cases have no upper bound yet, so only the lower bound is
+enforced). A single unresolvable or out-of-window reference fails the WHOLE report, not just
+that claim, and gives the model exactly one more chance — a separate repair budget from
+P4-03's own schema repair, since they're different problems. A second consecutive grounding
+failure throws a distinguished `GroundingFailedError` that `worker.ts` catches specially: rather
+than the DLQ every other failure gets, it degrades to a rule-only alert and pages — honestly
+scoped the same way every alert in this codebase is before a real delivery channel exists (no
+WhatsApp/Slack/email integration exists before P5's response plane): a real, structured, paged
+log line carrying only the case's own deterministic fields, never the verdict's own unverified
+claims. The rejection rate itself is a real OTel counter pair (`analyst.grounding.attempts` /
+`.rejections`, via `packages/observability`'s new `createMeter`), independently confirmed
+reaching Prometheus by querying it directly rather than trusting the counter call site, with a
+Grafana alert (`infra/docker/grafana-provisioning/alerting/grounding-rejection-rate.yml`) firing
+per-tenant above a 2% rejection rate, mirroring the already-proven `reduction-ratio.yml` pattern.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

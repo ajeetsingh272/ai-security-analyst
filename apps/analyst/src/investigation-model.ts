@@ -14,10 +14,12 @@
  * — a minimal prompt, no caching, no tiering yet.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import type { Counter } from '@opentelemetry/api';
 import type { Verdict } from '@sentinel/schema';
 import { TOOL_DEFINITIONS, executeTool, type ToolDependencies } from './tools/index.js';
 import { validateVerdict, formatValidationErrors } from './verdict-validation.js';
 import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
+import { validateGrounding, formatGroundingErrors, type GroundingError } from './grounding.js';
 
 export interface CaseContext {
   caseId: string;
@@ -25,6 +27,12 @@ export interface CaseContext {
   severity?: string;
   title?: string;
   score?: number;
+  /** The case's own time window (`cases.window_start`/`window_end`) —
+   * P4-04's grounding validator checks every cited event's time
+   * against this, not against "now". `windowEnd` is null for a case
+   * still open/accumulating. */
+  windowStart: string;
+  windowEnd: string | null;
 }
 
 export interface InvestigationModel {
@@ -48,6 +56,29 @@ export class UnparsableVerdictError extends Error {
   }
 }
 
+/** Thrown when the model's evidence still fails grounding after the one
+ * repair attempt AC4 allows (P4-04, TG1) — deliberately a DIFFERENT
+ * error type from `UnparsableVerdictError`: `worker.ts` catches this one
+ * specifically to degrade to a rule-only alert and page, rather than
+ * routing it to the DLQ the way every other investigation failure is. */
+export class GroundingFailedError extends Error {
+  constructor(
+    message: string,
+    readonly errors: readonly GroundingError[],
+  ) {
+    super(message);
+    this.name = 'GroundingFailedError';
+  }
+}
+
+/** AC5: "grounding rejection rate is exported as a metric." Optional —
+ * omitted entirely when no MeterProvider is wired (same pattern as
+ * `tools` above), so this still compiles and runs without it. */
+export interface GroundingMetrics {
+  attempts: Counter;
+  rejections: Counter;
+}
+
 const SYSTEM_PROMPT = `You are a security analyst investigating an escalated case. You may call the available tools to gather evidence before answering. When you are done, respond with ONLY a JSON object matching this exact shape, no other text:
 {"severity": "critical"|"high"|"medium"|"low"|"info", "title": string, "claims": [{"text": string, "evidenceRef": string[] (non-empty, every claim must cite at least one piece of evidence)}], "attackChain": string[], "recommendedActions": [{"playbook": one of [${PLAYBOOK_REGISTRY.join(', ')}], "urgency": "now"|"today"|"later", "blastRadius": string}]}`;
 
@@ -62,6 +93,7 @@ export interface AnthropicInvestigationModelOptions {
    * a caller that hasn't wired a ClickHouse client/pool yet (there is
    * none in this sandbox without real infra) still compiles and runs. */
   tools?: ToolDependencies;
+  groundingMetrics?: GroundingMetrics;
 }
 
 /** AC: a case this far into tool use without a final answer is itself an
@@ -75,12 +107,14 @@ export class AnthropicInvestigationModel implements InvestigationModel {
   private readonly model: string;
   private readonly maxTokens: number;
   private readonly tools: ToolDependencies | undefined;
+  private readonly groundingMetrics: GroundingMetrics | undefined;
 
   constructor(opts: AnthropicInvestigationModelOptions) {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
     this.model = opts.model;
     this.maxTokens = opts.maxTokens ?? 8192;
     this.tools = opts.tools;
+    this.groundingMetrics = opts.groundingMetrics;
   }
 
   async investigate(ctx: CaseContext): Promise<Verdict> {
@@ -90,11 +124,12 @@ export class AnthropicInvestigationModel implements InvestigationModel {
         content: `Case ${ctx.caseId} (tenant ${ctx.tenantId}): severity=${ctx.severity ?? 'unknown'}, title=${ctx.title ?? 'untitled'}, score=${ctx.score ?? 'unknown'}.`,
       },
     ];
-    // AC3: "a schema violation triggers one repair attempt, then fails
-    // the investigation" — exactly one chance across the WHOLE
-    // investigation, not one per malformed response, so this is a
-    // single flag, not a counter with a higher budget.
+    // AC3 (P4-03) / AC4 (P4-04): each is exactly one chance across the
+    // WHOLE investigation, not one per malformed response — two
+    // separate flags because a schema repair and a grounding repair are
+    // different problems with different corrective prompts.
     let repairAttempted = false;
+    let groundingRepairAttempted = false;
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const response = await this.client.messages.create({
@@ -119,8 +154,9 @@ export class AnthropicInvestigationModel implements InvestigationModel {
 
       const block = response.content.find((b) => b.type === 'text');
       const text = block && block.type === 'text' ? block.text : '';
+      let verdict: Verdict;
       try {
-        return parseVerdict(text);
+        verdict = parseVerdict(text);
       } catch (err) {
         if (!(err instanceof UnparsableVerdictError) || repairAttempted) throw err;
         repairAttempted = true;
@@ -129,7 +165,31 @@ export class AnthropicInvestigationModel implements InvestigationModel {
           role: 'user',
           content: `Your previous response could not be used: ${err.message}. Respond again with ONLY a corrected JSON object matching the required shape — no other text.`,
         });
+        continue;
       }
+
+      // P4-04/TG1: deterministic re-verification against the real event
+      // store, never a model self-check — skipped only when no
+      // ClickHouse client is wired at all (same seam tool use shares).
+      if (!this.tools) return verdict;
+
+      const grounding = await validateGrounding(this.tools.ch, ctx.tenantId, { start: ctx.windowStart, end: ctx.windowEnd }, verdict);
+      if (grounding.ok) {
+        this.groundingMetrics?.attempts.add(1, { tenant_id: ctx.tenantId });
+        return verdict;
+      }
+
+      if (groundingRepairAttempted) {
+        this.groundingMetrics?.attempts.add(1, { tenant_id: ctx.tenantId });
+        this.groundingMetrics?.rejections.add(1, { tenant_id: ctx.tenantId });
+        throw new GroundingFailedError(formatGroundingErrors(grounding.errors), grounding.errors);
+      }
+      groundingRepairAttempted = true;
+      messages.push({ role: 'assistant', content: response.content });
+      messages.push({
+        role: 'user',
+        content: `Your evidence could not be verified: ${formatGroundingErrors(grounding.errors)}. Revise your claims so every evidenceRef resolves to a real event within this case's time window, or remove the unverifiable claim. Respond again with ONLY the corrected JSON object.`,
+      });
     }
 
     throw new UnparsableVerdictError(`model did not produce a valid Verdict within ${MAX_TOOL_ITERATIONS} iterations`, '');

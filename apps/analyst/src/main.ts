@@ -7,7 +7,7 @@
  */
 import { Pool } from 'pg';
 import Anthropic from '@anthropic-ai/sdk';
-import { createLogger, startTracing } from '@sentinel/observability';
+import { createLogger, startTracing, createMeter } from '@sentinel/observability';
 import { createKafkaClients } from './kafka.js';
 import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { AnalystWorker } from './worker.js';
@@ -31,6 +31,14 @@ function isRetryableAnthropicError(err: unknown): boolean {
 async function main(): Promise<void> {
   const logger = createLogger({ service: 'sentinel-analyst' });
   const tracingHandle = startTracing({ serviceName: 'sentinel-analyst' });
+  const meterHandle = createMeter({ serviceName: 'sentinel-analyst' });
+  // P4-04 AC5: "grounding rejection rate is exported as a metric with
+  // an alert above 2%" — infra/docker/grafana-provisioning/alerting/
+  // grounding-rejection-rate.yml is the alert rule half.
+  const groundingMetrics = {
+    attempts: meterHandle.meter.createCounter('analyst.grounding.attempts', { description: 'Investigations that reached a grounding verdict (pass or fail)' }),
+    rejections: meterHandle.meter.createCounter('analyst.grounding.rejections', { description: 'Investigations whose evidence failed grounding even after one repair attempt' }),
+  };
 
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
@@ -46,6 +54,7 @@ async function main(): Promise<void> {
     model: envOr('ANTHROPIC_INVESTIGATION_MODEL', 'claude-opus-5'),
     maxTokens: Number(envOr('ANTHROPIC_MAX_TOKENS', '8192')),
     tools: { ch, pool, logger },
+    groundingMetrics,
   });
 
   const worker = new AnalystWorker({
@@ -72,6 +81,7 @@ async function main(): Promise<void> {
     await disconnect();
     await ch.close();
     await pool.end();
+    await meterHandle.shutdown();
     await tracingHandle.shutdown();
     logger.info({}, 'analyst worker stopped');
     process.exit(0);
