@@ -13,6 +13,7 @@ import type { Pool } from 'pg';
 import type { CaseContext } from './investigation-model.js';
 import { recordUsage } from './cost-budget.js';
 import { usageFromAnthropic, type PriceTable } from './pricing.js';
+import { wrapUntrustedData, UNTRUSTED_DATA_INSTRUCTION } from './injection-defense.js';
 
 export type TriageDecisionKind = 'dismiss' | 'escalate';
 
@@ -39,7 +40,9 @@ export function tenantContextBlock(tenantId: string): string {
   return `Tenant context: you are evaluating cases for tenant ${tenantId}. Apply this tenant's own standards consistently across every case you see for it.`;
 }
 
-const TRIAGE_SYSTEM_PROMPT = `You are a security triage analyst. Given a case summary, decide whether it should be DISMISSED (no genuine threat, safe to close without full investigation) or ESCALATED (uncertain, suspicious, or clearly malicious — needs full investigation). Respond with ONLY a JSON object: {"decision": "dismiss"|"escalate", "reason": string}. When genuinely uncertain, escalate — a missed investigation is far worse than an unnecessary one.`;
+const TRIAGE_SYSTEM_PROMPT = `You are a security triage analyst. Given a case summary, decide whether it should be DISMISSED (no genuine threat, safe to close without full investigation) or ESCALATED (uncertain, suspicious, or clearly malicious — needs full investigation). Respond with ONLY a JSON object: {"decision": "dismiss"|"escalate", "reason": string}. When genuinely uncertain, escalate — a missed investigation is far worse than an unnecessary one.
+
+${UNTRUSTED_DATA_INSTRUCTION}`;
 
 export interface CacheMetrics {
   calls: Counter;
@@ -98,7 +101,7 @@ export class AnthropicTriageModel implements TriageModel {
       messages: [
         {
           role: 'user',
-          content: `Case ${ctx.caseId}: severity=${ctx.severity ?? 'unknown'}, title=${ctx.title ?? 'untitled'}, score=${ctx.score ?? 'unknown'}.`,
+          content: `Case ${ctx.caseId}: severity=${ctx.severity ?? 'unknown'}, score=${ctx.score ?? 'unknown'}. ${wrapUntrustedData('case.title', ctx.title ?? 'untitled')}`,
         },
       ],
     });
