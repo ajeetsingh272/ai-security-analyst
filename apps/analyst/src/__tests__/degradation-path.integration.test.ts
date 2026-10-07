@@ -17,19 +17,27 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Kafka, logLevel, type Consumer, type Producer } from 'kafkajs';
 import pg, { type Pool } from 'pg';
 import { createLogger } from '@sentinel/observability';
 import type { Verdict } from '@sentinel/schema';
 import { AnalystWorker } from '../worker.js';
-import { CASES_TOPIC, tenantCaseKey } from '../kafka.js';
+import { CASES_TOPIC, tenantCaseKey, provisionCasesTopics } from '../kafka.js';
 import type { InvestigationModel, CaseContext } from '../investigation-model.js';
 import type { TriageModel, TriageDecision } from '../triage.js';
 import { CircuitBreaker } from '../circuit-breaker.js';
 
 const BROKERS = [process.env.REDPANDA_BROKERS ?? 'localhost:19092'];
 const pool: Pool = new pg.Pool({ connectionString: process.env.POSTGRES_URL ?? 'postgres://sentinel:sentinel@localhost:5434/sentinel' });
+
+// Explicit, ahead of every newKafkaHarness() in this file — see kafka.ts's
+// own comment: without it, kafkajs's default auto-topic-creation on
+// subscribe/send can win the race and leave `cases` stuck at the broker's
+// default partition count for the life of this CI run's Redpanda.
+beforeAll(async () => {
+  await provisionCasesTopics(new Kafka({ clientId: 'analyst-test-provision', brokers: BROKERS, logLevel: logLevel.NOTHING }));
+});
 
 async function asAdmin<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();

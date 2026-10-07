@@ -19,7 +19,7 @@ import pg, { type Pool } from 'pg';
 import { createLogger, startTracing, type TracingHandle } from '@sentinel/observability';
 import type { Verdict } from '@sentinel/schema';
 import { AnalystWorker } from '../worker.js';
-import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey } from '../kafka.js';
+import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey, provisionCasesTopics } from '../kafka.js';
 import { PermanentError } from '../retry.js';
 import type { InvestigationModel, CaseContext } from '../investigation-model.js';
 import { GroundingFailedError } from '../investigation-model.js';
@@ -201,7 +201,12 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, label: str
 }
 
 let tracingHandle: TracingHandle;
-beforeAll(() => {
+beforeAll(async () => {
+  // Explicit, ahead of every newKafkaHarness() in this file — without it,
+  // kafkajs's own subscribe-time auto-topic-creation can win the race and
+  // leave `cases` stuck at the broker's default partition count for the
+  // life of this CI run's Redpanda (see kafka.ts's own comment).
+  await provisionCasesTopics(new Kafka({ clientId: 'analyst-test-provision', brokers: BROKERS, logLevel: logLevel.NOTHING }));
   tracingHandle = startTracing({ serviceName: TRACING_SERVICE_NAME });
 });
 

@@ -75,7 +75,7 @@ async function main(): Promise<void> {
 
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
-  const { consumer, producer, disconnect } = createKafkaClients(brokers, envOr('CONSUMER_GROUP', 'analyst'));
+  const { consumer, producer, disconnect } = await createKafkaClients(brokers, envOr('CONSUMER_GROUP', 'analyst'));
   const ch = createTenantScopedClickHouseClient(envOr('CLICKHOUSE_URL', 'http://localhost:8123'));
 
   const apiKey = envOr('ANTHROPIC_API_KEY', '');
