@@ -18,9 +18,11 @@
  *
  * This route only decides and records APPROVAL — it does not execute
  * the underlying playbook (P5-05's own job, consuming an action once
- * its status is 'approved') and does not yet enforce step-up
- * authentication for destructive playbooks (P5-04, which extends this
- * file additively once it lands).
+ * its status is 'approved'). P5-04: a destructive playbook
+ * (step-up.ts's own DESTRUCTIVE_PLAYBOOKS) additionally requires a
+ * correct `stepUpPassword` in the POST body — a valid token alone is
+ * refused (401) for these, and the refusal is itself audited, same as
+ * every other rejection kind.
  *
  * Rendering an actual human-friendly confirmation PAGE (as opposed to
  * this JSON response) is dashboard/frontend scope — every other route
@@ -31,6 +33,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { AuditLogWriter, ActionsRepository, withTenantContext } from '@sentinel/db';
 import { verifyApprovalTokenShape, verifyAndConsume, type ApprovalTokenVerifyError, type ApprovalTokenVerifyResult, type NonceStore } from '@sentinel/approval-tokens';
+import { requiresStepUp, verifyStepUpPassword } from '../approvals/step-up.js';
 
 export interface ApprovalsConfig {
   tokenSecret: string;
@@ -92,10 +95,11 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
       blastRadius: action.blastRadius,
       status: action.status,
       alreadyDecided: action.status !== 'proposed',
+      requiresStepUp: requiresStepUp(action.playbook),
     });
   });
 
-  fastify.post<{ Params: { token: string } }>('/approvals/:token', async (request, reply) => {
+  fastify.post<{ Params: { token: string }; Body: { stepUpPassword?: string } }>('/approvals/:token', async (request, reply) => {
     if (!config) return reply.code(503).send({ error: 'approvals_not_configured' });
 
     const result = await verifyAndConsume(request.params.token, config.tokenSecret, nonceStore);
@@ -108,12 +112,35 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
     const outcome = await withTenantContext(payload.tenantId, async () => {
       const actions = new ActionsRepository(pool);
       const action = await actions.findById(payload.actionId);
-      if (!action || action.caseId !== payload.caseId) return { found: false as const };
-      const approved = await actions.approve(payload.actionId, payload.caseId, payload.approverId);
-      return { found: true as const, approved };
+      if (!action || action.caseId !== payload.caseId) return { kind: 'not_found' as const };
+
+      if (requiresStepUp(action.playbook)) {
+        // T2: enforced here, server-side, regardless of what called this
+        // endpoint — never only a UI-level gate.
+        const stepUpOk = request.body?.stepUpPassword ? await verifyStepUpPassword(pool, payload.approverId, request.body.stepUpPassword) : false;
+        if (!stepUpOk) {
+          // T4: the action is never touched — it stays exactly where it
+          // was (`proposed`), not transitioned and then reverted.
+          await new AuditLogWriter(pool).insert({
+            actorType: 'human',
+            actorId: payload.approverId,
+            action: 'step_up_failed',
+            subjectType: 'action',
+            subjectId: payload.actionId,
+            payload: { playbook: action.playbook },
+          });
+          return { kind: 'step_up_failed' as const };
+        }
+      }
+
+      const approved = await actions.approve(payload.actionId, payload.caseId, payload.approverId, requiresStepUp(action.playbook) ? true : undefined);
+      return { kind: 'decided' as const, approved };
     });
 
-    if (!outcome.found) return reply.code(404).send({ error: 'not_found', message: 'This action no longer exists.' });
+    if (outcome.kind === 'not_found') return reply.code(404).send({ error: 'not_found', message: 'This action no longer exists.' });
+    if (outcome.kind === 'step_up_failed') {
+      return reply.code(401).send({ error: 'step_up_failed', message: 'Re-authentication is required for this action. Provide stepUpPassword and try again.' });
+    }
     return reply.code(200).send({ ok: true, alreadyDecided: !outcome.approved });
   });
 }

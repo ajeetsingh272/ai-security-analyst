@@ -72,8 +72,14 @@ export class ActionsRepository extends TenantScopedRepository {
    * belongs to a different case, or was not in `proposed` — a second
    * approval attempt on an already-decided action must not re-fire the
    * audit entry or silently succeed twice.
+   *
+   * `stepUpVerified` (P5-04 AC4: "step-up completion is recorded in
+   * the audit entry for the action") is undefined for a playbook that
+   * never required it, and true for one that did and passed — approve()
+   * is never even called for one that required step-up and failed (the
+   * caller, approvals.ts, stops before reaching this method at all).
    */
-  async approve(actionId: string, caseId: string, approverId: string): Promise<boolean> {
+  async approve(actionId: string, caseId: string, approverId: string, stepUpVerified?: boolean): Promise<boolean> {
     return this.withTransaction(async (client) => {
       const result = await client.query(`UPDATE actions SET status = 'approved' WHERE id = $1 AND case_id = $2 AND status = 'proposed'`, [actionId, caseId]);
       if (result.rowCount !== 1) return false;
@@ -84,7 +90,7 @@ export class ActionsRepository extends TenantScopedRepository {
         action: 'approval_granted',
         subjectType: 'action',
         subjectId: actionId,
-        payload: { case_id: caseId },
+        payload: stepUpVerified === undefined ? { case_id: caseId } : { case_id: caseId, step_up_verified: stepUpVerified },
       });
       return true;
     });

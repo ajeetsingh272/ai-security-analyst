@@ -47,6 +47,18 @@ const PARAMS = { N: 2 ** 17, r: 8, p: 1, keyLength: 64 };
 const MAXMEM = 128 * PARAMS.N * PARAMS.r * 2;
 const SALT_LENGTH = 16;
 
+/**
+ * A well-formed, unreachable hash — verifying against this costs the
+ * same scrypt work as verifying against a real one, so a caller that
+ * always calls `verifyPassword` (real hash or this one) never leaks
+ * "this identifier doesn't exist" through a timing difference. Shared
+ * by every password-gated check in this app (sign-in, P5-04's own
+ * step-up) rather than each inlining its own copy, since the whole
+ * property depends on it being the exact same cost shape every time.
+ */
+export const DUMMY_PASSWORD_HASH =
+  'scrypt$131072$8$1$0000000000000000000000000000000000000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
+
 export class PasswordHashError extends Error {
   constructor(message: string) {
     super(message);
