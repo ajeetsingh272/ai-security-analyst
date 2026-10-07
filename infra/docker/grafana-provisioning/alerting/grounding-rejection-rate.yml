@@ -29,7 +29,7 @@ groups:
     folder: Sentinel Alerting
     interval: 1m
     rules:
-      - uid: p4-04-grounding-rejection-rate-above-2pct
+      - uid: p4-04-grounding-rejection-above-2pct
         title: 'Evidence grounding rejection rate above 2%'
         condition: Threshold
         for: 0s
