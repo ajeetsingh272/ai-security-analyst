@@ -635,6 +635,32 @@ against real production traffic, not only a unit-test fixture — and logs the r
 sending it, the same honestly-scoped pattern every other not-yet-delivered alert in this
 codebase already uses.
 
+**Golden-case eval suite (P4-08).** "How a model or prompt change is proven safe before it
+ships." 50 golden cases (`apps/analyst/src/eval/golden-cases.ts`) — generated from 10
+true-positive/false-positive/ambiguous templates each instantiated across 5
+entities/countries/scores, a standard parameterised-golden-set authoring technique rather than
+50 bespoke narratives — each seeding exactly what the real pipeline needs (a `cases` row, a
+handful of real `sentinel.events` rows the investigation model's own tools can discover and
+cite) to produce a verdict for real. Scoring (`eval/scoring.ts`) is pure and infra-free: triage
+correctness, severity accuracy, 100%-grounding (never a lower tolerance — a single unresolved
+reference is TG1's own "fails the whole report," not a statistic to average away), and action
+appropriateness (does ANY recommended playbook match the case's own expected set, not an
+exact-match requirement) are scored per case and aggregated; `checkTolerance` is the one
+function a CI exit code comes from, and `detectDrift` separately catches a suite sliding several
+points run over run even while still clearing every absolute floor. Results are written as
+timestamped snapshots plus a `latest.json` (AC5) so drift is visible without reparsing
+filenames. The harness (`eval/runner.ts`) is model-agnostic by construction — real
+Anthropic-backed models and a fake model share every line of seeding/scoring code — which is
+what let a fake "always dismiss" model prove the suite correctly fails a deliberately degraded
+prompt (AC4/T4), and a fake "oracle" model (looks up each case's own known-correct answer,
+grounds against a REAL resolved event id) prove the harness's own seeding/grounding/scoring
+plumbing at the full 50-case scale against real infra — both verified for real, in this
+sandbox, in a few seconds. What has NOT run here: the actual pinned model against all 50 cases
+(T1/T2/T3), which needs a real `ANTHROPIC_API_KEY` this sandbox does not have — those tests are
+`skipIf`-gated, visibly skipped rather than faked, and `.github/workflows/eval-golden-cases.yml`
+runs them for real nightly once that secret is configured, against model identifiers pinned in
+the workflow itself (AC3), never an env default that could silently drift.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.
