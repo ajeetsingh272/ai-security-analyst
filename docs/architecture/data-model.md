@@ -39,6 +39,7 @@ none of them has to be taken on trust:
 | `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
+| `investigation_transcripts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -654,6 +655,45 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `investigation_transcripts`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `model` | `text` | no | — |
+| `system` | `jsonb` | no | — |
+| `messages` | `jsonb` | no | — |
+| `final_response` | `jsonb` | no | — |
+| `verdict` | `jsonb` | yes | — |
+| `recorded_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `investigation_transcripts_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `investigation_transcripts_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `investigation_transcripts_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_investigation_transcripts_case` — `CREATE INDEX idx_investigation_transcripts_case ON public.investigation_transcripts USING btree (tenant_id, case_id, recorded_at DESC)`
+- `idx_investigation_transcripts_recorded` — `CREATE INDEX idx_investigation_transcripts_recorded ON public.investigation_transcripts USING btree (recorded_at)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
 - `sentinel_jobs`: SELECT
 
 ### `llm_usage`
