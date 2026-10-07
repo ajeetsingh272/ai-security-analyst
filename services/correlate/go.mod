@@ -32,6 +32,7 @@ require (
 )
 
 require (
+	github.com/ajeetsingh272/ai-security-analyst/go/sentinelattck v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelaudit v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector v0.0.0-00010101000000-000000000000 // indirect
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal v0.0.0-00010101000000-000000000000
@@ -54,3 +55,5 @@ replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal => ../../
 replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector => ../../go/sentinelconnector
 
 replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelaudit => ../../go/sentinelaudit
+
+replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelattck => ../../go/sentinelattck

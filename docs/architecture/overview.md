@@ -315,11 +315,30 @@ on case creation, `closed` on quiet timeout) now go through this same writer, so
 case transition in the system — not only ones added after this ticket — is legality-checked
 and audited.
 
-Cases are scored before the LLM sees them: entity criticality (is this the CFO?), signal
-count, highest constituent severity, MITRE kill-chain progression (a case spanning Initial
-Access *and* Persistence outranks two separate cases), and tenant baseline deviation. Only
-cases above a threshold are escalated to investigation; the rest are triaged by the cheap
-model or auto-closed by rule.
+**Case scoring (`services/correlate/internal/scoring`, P3-04).** Cases are scored
+deterministically before the LLM sees them, from five components that always sum to exactly
+the stored total (so a score is explainable after the fact, not just a number): entity
+criticality, signal count, highest constituent severity, MITRE kill-chain progression, and
+tenant baseline deviation. Kill-chain progression counts *distinct ATT&CK tactics* across a
+case's signals, via `go/sentinelattck` — a case spanning Initial Access *and* Persistence
+outranks two single-stage cases with the same signal count. `go/sentinelattck` is
+`services/detect/internal/attck`'s own pinned technique catalogue, moved to a standalone
+module in this ticket: Go's `internal/` visibility rule meant `services/correlate` could
+never import it directly, and duplicating an 8800-line pinned data file across two modules
+was the wrong fix — `services/detect/internal/attck` now re-exports this shared module's
+symbols under their original names, with zero behaviour change (its own full test suite
+passes unmodified). Entity criticality is a `high`/`normal` flag keyed by the same raw
+`(tenant_id, entity_type, entity_id)` pair `cases`/`case_signals` already use, not by
+`internal/entity`'s own resolved identity graph — unifying those two identity
+representations remains the separate, not-yet-done integration work P3-02's own notes
+already named. Tenant baseline deviation is a named component that always contributes 0 for
+now — a deliberate placeholder for P3-05 ("Entity baselines for anomaly context"), not a
+silent omission. The escalation threshold is a small, reviewable table keyed by tenant plan
+tier (enterprise tenants escalate sooner), not yet exposed as a per-tenant override. A
+case's score is recomputed from its *entire* current signal set every time a signal joins
+it, in the same transaction as that signal's own write — recomputing from scratch rather
+than patching incrementally is what keeps the stored score consistent with Score's own
+determinism guarantee, with no accumulated-drift path to get wrong.
 
 **The 10:1 SLO.** `signals_in / cases_escalated` is emitted as a metric per tenant per day
 and alerted on. If it degrades, that is a product incident, not a tuning task.

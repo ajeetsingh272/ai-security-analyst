@@ -4,6 +4,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -152,4 +153,94 @@ func TestPostgresStore_CloseQuietCasesRecordsTransition(t *testing.T) {
 	if auditCount != 2 { // one for the 'open' transition, one for 'closed'
 		t.Errorf("audit_log entries for case %s = %d, want 2", caseID, auditCount)
 	}
+}
+
+// P3-04: a case's stored score is recomputed, in the same transaction,
+// every time a signal joins it — real Postgres, not the pure
+// scoring.Score unit tests alone. A second signal in a different
+// ATT&CK tactic (credential-access, then persistence) must raise the
+// stored score; flagging the case's own entity as high-criticality
+// must raise it further.
+func TestPostgresStore_ScoreIsRecomputedAsSignalsJoinAndEntityIsFlagged(t *testing.T) {
+	pool := newTestPool(t)
+	tenantID := createTenant(t, pool)
+	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
+
+	caseID, err := c.Cluster(ctx, tenantID, Signal{
+		DedupeKey: tenantID + ":rule-1:s1", SignalID: "s1", RuleID: "rule-1",
+		EntityType: "user", EntityID: "dana", Severity: "medium",
+		EventIDs: []string{"evt-1"}, DetectedAt: base,
+		MitreIDs: []string{"T1110.003"}, // credential-access
+	})
+	if err != nil {
+		t.Fatalf("Cluster (first signal): %v", err)
+	}
+
+	scoreAfterFirst := readCaseScore(t, pool, caseID)
+
+	if _, err := c.Cluster(ctx, tenantID, Signal{
+		DedupeKey: tenantID + ":rule-2:s2", SignalID: "s2", RuleID: "rule-2",
+		EntityType: "user", EntityID: "dana", Severity: "medium",
+		EventIDs: []string{"evt-2"}, DetectedAt: base.Add(5 * time.Minute),
+		MitreIDs: []string{"T1136.003"}, // persistence — a second kill-chain stage
+	}); err != nil {
+		t.Fatalf("Cluster (second signal): %v", err)
+	}
+
+	scoreAfterSecond := readCaseScore(t, pool, caseID)
+	if scoreAfterSecond <= scoreAfterFirst {
+		t.Fatalf("score after a second kill-chain stage (%v) did not exceed the score after the first signal (%v)", scoreAfterSecond, scoreAfterFirst)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_criticality (tenant_id, entity_type, entity_id, criticality) VALUES ($1, 'user', 'dana', 'high')`,
+		tenantID,
+	); err != nil {
+		t.Fatalf("flagging entity criticality: %v", err)
+	}
+	if _, err := c.Cluster(ctx, tenantID, Signal{
+		DedupeKey: tenantID + ":rule-3:s3", SignalID: "s3", RuleID: "rule-3",
+		EntityType: "user", EntityID: "dana", Severity: "medium",
+		EventIDs: []string{"evt-3"}, DetectedAt: base.Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("Cluster (third signal, after flagging criticality): %v", err)
+	}
+
+	scoreAfterFlagged := readCaseScore(t, pool, caseID)
+	if scoreAfterFlagged <= scoreAfterSecond {
+		t.Fatalf("score after flagging the entity high-criticality (%v) did not exceed the score before (%v)", scoreAfterFlagged, scoreAfterSecond)
+	}
+
+	var componentsJSON []byte
+	if err := pool.QueryRow(ctx, `SELECT score_components FROM cases WHERE id = $1`, caseID).Scan(&componentsJSON); err != nil {
+		t.Fatalf("reading score_components: %v", err)
+	}
+	var components map[string]float64
+	if err := json.Unmarshal(componentsJSON, &components); err != nil {
+		t.Fatalf("unmarshalling score_components: %v", err)
+	}
+	var sum float64
+	for _, v := range components {
+		sum += v
+	}
+	if sum != scoreAfterFlagged {
+		t.Errorf("stored score_components sum to %v, want the stored score %v", sum, scoreAfterFlagged)
+	}
+	if components["entityCriticality"] == 0 {
+		t.Error("expected a non-zero entityCriticality component after flagging the entity high")
+	}
+	if components["killChainProgression"] == 0 {
+		t.Error("expected a non-zero killChainProgression component after the second kill-chain stage")
+	}
+}
+
+func readCaseScore(t *testing.T, pool *pgxpool.Pool, caseID string) float64 {
+	t.Helper()
+	var score float64
+	if err := pool.QueryRow(context.Background(), `SELECT score FROM cases WHERE id = $1`, caseID).Scan(&score); err != nil {
+		t.Fatalf("reading score for case %s: %v", caseID, err)
+	}
+	return score
 }
