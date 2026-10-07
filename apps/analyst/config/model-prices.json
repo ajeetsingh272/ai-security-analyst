@@ -1,0 +1,14 @@
+{
+  "claude-haiku-4-5-20251001": {
+    "inputPerMillion": 1.0,
+    "outputPerMillion": 5.0,
+    "cacheWritePerMillion": 1.25,
+    "cacheReadPerMillion": 0.1
+  },
+  "claude-opus-5": {
+    "inputPerMillion": 15.0,
+    "outputPerMillion": 75.0,
+    "cacheWritePerMillion": 18.75,
+    "cacheReadPerMillion": 1.5
+  }
+}

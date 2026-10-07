@@ -9,7 +9,10 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { Counter } from '@opentelemetry/api';
+import type { Pool } from 'pg';
 import type { CaseContext } from './investigation-model.js';
+import { recordUsage } from './cost-budget.js';
+import { usageFromAnthropic, type PriceTable } from './pricing.js';
 
 export type TriageDecisionKind = 'dismiss' | 'escalate';
 
@@ -43,12 +46,23 @@ export interface CacheMetrics {
   hits: Counter;
 }
 
+export interface CostRecording {
+  pool: Pool;
+  priceTable: PriceTable;
+  costMetric?: Counter;
+}
+
 export interface AnthropicTriageModelOptions {
   apiKey: string;
   model: string;
   maxTokens?: number;
   client?: Anthropic;
   cacheMetrics?: CacheMetrics;
+  /** P4-06 AC1: every real call records its own token usage and cost.
+   * Optional so a caller without a Postgres pool wired yet still
+   * compiles and runs — the same seam `tools`/`groundingMetrics` are
+   * in investigation-model.ts. */
+  costRecording?: CostRecording;
 }
 
 export class AnthropicTriageModel implements TriageModel {
@@ -56,6 +70,7 @@ export class AnthropicTriageModel implements TriageModel {
   private readonly model: string;
   private readonly maxTokens: number;
   private readonly cacheMetrics: CacheMetrics | undefined;
+  private readonly costRecording: CostRecording | undefined;
 
   constructor(opts: AnthropicTriageModelOptions) {
     this.client = opts.client ?? new Anthropic({ apiKey: opts.apiKey });
@@ -66,6 +81,7 @@ export class AnthropicTriageModel implements TriageModel {
     this.model = opts.model;
     this.maxTokens = opts.maxTokens ?? 512;
     this.cacheMetrics = opts.cacheMetrics;
+    this.costRecording = opts.costRecording;
   }
 
   async triage(ctx: CaseContext): Promise<TriageDecision> {
@@ -90,6 +106,18 @@ export class AnthropicTriageModel implements TriageModel {
     this.cacheMetrics?.calls.add(1, { tenant_id: ctx.tenantId });
     if ((response.usage.cache_read_input_tokens ?? 0) > 0) {
       this.cacheMetrics?.hits.add(1, { tenant_id: ctx.tenantId });
+    }
+    if (this.costRecording) {
+      await recordUsage(
+        this.costRecording.pool,
+        ctx.tenantId,
+        ctx.caseId,
+        this.model,
+        'triage',
+        usageFromAnthropic(response.usage),
+        this.costRecording.priceTable,
+        this.costRecording.costMetric,
+      );
     }
 
     const block = response.content.find((b) => b.type === 'text');

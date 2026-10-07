@@ -101,6 +101,21 @@ async function deleteTenant(tenantId: string): Promise<void> {
   await asAdmin((c) => c.query('DELETE FROM tenants WHERE id = $1', [tenantId]));
 }
 
+/** P4-06 T2/T3: seeds a prior day's... actually TODAY's spend directly,
+ * simulating earlier cases this same tenant already ran, so the next
+ * published case's own budget check sees it immediately rather than
+ * waiting on real token usage to accumulate from real Anthropic calls. */
+async function seedLlmUsage(tenantId: string, caseId: string, costUsd: number): Promise<void> {
+  await asAdmin(async (c) => {
+    await c.query('SELECT set_config($1, $2, true)', ['app.tenant_id', tenantId]);
+    await c.query(
+      `INSERT INTO llm_usage (tenant_id, case_id, model, stage, input_tokens, output_tokens, cost_usd)
+       VALUES ($1, $2, 'test-model', 'investigation', 1000, 1000, $3)`,
+      [tenantId, caseId, costUsd],
+    );
+  });
+}
+
 /** A fresh client/producer/consumer-group triple per test — the same
  * "never share Kafka state across tests" discipline the Go side's own
  * integration tests already follow throughout this project. */
@@ -314,6 +329,93 @@ describe('AnalystWorker', () => {
     expect(triage.calls).toHaveLength(0);
   });
 
+  it('P4-06 T2: exceeding the soft cost threshold raises an alert WITHOUT degrading service', async () => {
+    const { tenantId, caseId } = await createTenantAndCase('critical'); // bypasses triage, isolating this test to the budget check itself
+    cleanupTenants.push(tenantId);
+    // 'trial' plan: allowanceUsd=2, hardCapUsd=6 (cost-budget.ts's own
+    // PLAN_BUDGETS). $3.50 is 1.75x the allowance — soft-exceeded, well
+    // under the hard cap.
+    await seedLlmUsage(tenantId, caseId, 3.5);
+    const harness = newKafkaHarness();
+    activeConsumers.push(harness.consumer);
+    activeProducers.push(harness.producer);
+
+    const investigationModel = new FakeInvestigationModel(async () => CANNED_VERDICT);
+    const { logger, lines } = capturingLogger();
+    const worker = new AnalystWorker({
+      consumer: harness.consumer,
+      producer: harness.kafka.producer(),
+      pool,
+      investigationModel,
+      triageModel: new FakeTriageModel(),
+      logger,
+      concurrencyPerTenant: 5,
+      partitionsConsumedConcurrently: 4,
+      retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
+      isRetryable: () => false,
+    });
+    activeWorkers.push(worker);
+    await worker.start();
+
+    await publishCaseEvent(harness.producer, tenantId, caseId);
+
+    // Service is NOT degraded: the investigation still runs and
+    // produces a real verdict.
+    await waitUntil(() => investigationModel.calls.length > 0, 10_000, 'investigation model to be called despite the soft breach');
+    await waitUntil(
+      () => lines.some((l) => l.case_id === caseId && l.cost_alert === true),
+      5_000,
+      'the cost-alert log line',
+    );
+    const alertLine = lines.find((l) => l.case_id === caseId && l.cost_alert === true)!;
+    expect(alertLine).toMatchObject({ tenant_id: tenantId, spent_usd: 3.5, allowance_usd: 2 });
+    expect(lines.some((l) => l.rule_only_alert === true)).toBe(false);
+  });
+
+  it('P4-06 T3: exceeding the hard cap degrades the tenant to rule-only alerts', async () => {
+    const { tenantId, caseId } = await createTenantAndCase('critical');
+    cleanupTenants.push(tenantId);
+    // $10 is above the 'trial' plan's $6 hard cap.
+    await seedLlmUsage(tenantId, caseId, 10);
+    const harness = newKafkaHarness();
+    activeConsumers.push(harness.consumer);
+    activeProducers.push(harness.producer);
+
+    const triage = new FakeTriageModel();
+    const investigationModel = new FakeInvestigationModel(async () => {
+      throw new Error('AC4 violation: a tenant over its hard cap must never reach the investigation model');
+    });
+    const { logger, lines } = capturingLogger();
+    const worker = new AnalystWorker({
+      consumer: harness.consumer,
+      producer: harness.kafka.producer(),
+      pool,
+      investigationModel,
+      triageModel: triage,
+      logger,
+      concurrencyPerTenant: 5,
+      partitionsConsumedConcurrently: 4,
+      retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
+      isRetryable: () => false,
+    });
+    activeWorkers.push(worker);
+    await worker.start();
+
+    await publishCaseEvent(harness.producer, tenantId, caseId);
+
+    await waitUntil(
+      () => lines.some((l) => l.case_id === caseId && l.rule_only_alert === true && l.degrade_reason === 'cost_hard_cap_exceeded'),
+      10_000,
+      'the cost-hard-cap degrade log line',
+    );
+    const degradeLine = lines.find((l) => l.case_id === caseId && l.rule_only_alert === true)!;
+    expect(degradeLine).toMatchObject({ tenant_id: tenantId, page: true });
+
+    await new Promise((r) => setTimeout(r, 500));
+    expect(investigationModel.calls).toHaveLength(0);
+    expect(triage.calls).toHaveLength(0); // critical severity still bypasses triage, but never reaches it either way here
+  });
+
   it('T3: a permanently failing case reaches the DLQ and raises an alert', async () => {
     const { tenantId, caseId } = await createTenantAndCase();
     cleanupTenants.push(tenantId);
@@ -411,7 +513,7 @@ describe('AnalystWorker', () => {
     await publishCaseEvent(harness.producer, tenantId, caseId);
 
     await waitUntil(
-      () => lines.some((l) => l.msg === 'evidence grounding failed twice; degraded to a rule-only alert' && l.case_id === caseId),
+      () => lines.some((l) => l.case_id === caseId && l.rule_only_alert === true && l.degrade_reason === 'grounding_failed_twice'),
       10_000,
       'the rule-only-alert degrade log line',
     );

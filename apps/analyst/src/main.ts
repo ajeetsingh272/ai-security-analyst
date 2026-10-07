@@ -13,6 +13,9 @@ import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { AnalystWorker } from './worker.js';
 import { AnthropicInvestigationModel } from './investigation-model.js';
 import { AnthropicTriageModel } from './triage.js';
+import { loadPriceTable } from './pricing.js';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { PermanentError } from './retry.js';
 
 function envOr(key: string, fallback: string): string {
@@ -47,6 +50,10 @@ async function main(): Promise<void> {
     calls: meterHandle.meter.createCounter('analyst.prompt_cache.calls', { description: 'Anthropic calls (triage + investigation) eligible for a cached tenant-context block' }),
     hits: meterHandle.meter.createCounter('analyst.prompt_cache.hits', { description: 'Those calls where cache_read_input_tokens > 0' }),
   };
+  // P4-06 AC2: "configurable price table, not hardcoded rates."
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const priceTable = loadPriceTable(envOr('MODEL_PRICES_PATH', path.join(__dirname, '..', 'config', 'model-prices.json')));
+  const costMetric = meterHandle.meter.createCounter('analyst.llm.cost_usd', { description: 'LLM cost in USD, per tenant (AC5: operations dashboard)' });
 
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
@@ -64,6 +71,7 @@ async function main(): Promise<void> {
     tools: { ch, pool, logger },
     groundingMetrics,
     cacheMetrics,
+    costRecording: { pool, priceTable, costMetric },
   });
   // AC4: the triage model identifier is its own configuration knob,
   // independent of the investigation model's — the whole point of this
@@ -72,6 +80,7 @@ async function main(): Promise<void> {
     apiKey,
     model: envOr('ANTHROPIC_TRIAGE_MODEL', 'claude-haiku-4-5-20251001'),
     cacheMetrics,
+    costRecording: { pool, priceTable, costMetric },
   });
 
   const worker = new AnalystWorker({
