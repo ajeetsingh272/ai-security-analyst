@@ -81,7 +81,16 @@ function tenantContextPluginImpl(
   const publicPaths = new Set(options.publicPaths ?? DEFAULT_PUBLIC_PATHS);
 
   fastify.addHook('onRequest', async (request: FastifyRequest, reply) => {
-    if (publicPaths.has(request.url)) return;
+    // `request.url` is the raw request target and includes the query
+    // string (e.g. a WhatsApp webhook verification GET arrives as
+    // `/webhooks/whatsapp?hub.mode=subscribe&...`) — matching the full
+    // url against an exact-path allowlist would 401 that request before
+    // P5-02's own handler ever ran. Every existing publicPaths entry
+    // (`/health`, `/ready`, `/auth/sign-in`, `/auth/sign-out`) is also
+    // called with no query string today, so stripping it here changes
+    // nothing for them.
+    const pathname = request.url.split('?', 1)[0]!;
+    if (publicPaths.has(pathname)) return;
 
     const tenantId = request.session?.tenantId;
     if (!tenantId) {

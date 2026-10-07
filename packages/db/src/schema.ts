@@ -466,7 +466,7 @@ export const analystDegradedQueue = pgTable("analyst_degraded_queue", {
 
 export const tenantNotificationPreferences = pgTable("tenant_notification_preferences", {
 	tenantId: uuid("tenant_id").primaryKey().notNull(),
-	channelOrder: text("channel_order").array().default(["whatsapp", "slack", "email", "dashboard_banner"]).notNull(),
+	channelOrder: text("channel_order").array().default(["RAY['whatsapp'::text", "'slack'::text", "'email'::text", "'dashboard_banner'::tex"]).notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	foreignKey({
@@ -524,6 +524,22 @@ export const notificationDeliveries = pgTable("notification_deliveries", {
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 	check("notification_deliveries_channel_check", sql`channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])`),
 	check("notification_deliveries_status_check", sql`status = ANY (ARRAY['sent'::text, 'failed'::text])`),
+]);
+
+export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {
+	tenantId: uuid("tenant_id").notNull(),
+	channel: text().notNull(),
+	recipient: text().notNull(),
+	optedOutAt: timestamp("opted_out_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "notification_recipient_optouts_tenant_id_fkey"
+		}).onDelete("cascade"),
+	primaryKey({ columns: [table.tenantId, table.channel, table.recipient], name: "notification_recipient_optouts_pkey"}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("notification_recipient_optouts_channel_check", sql`channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])`),
 ]);
 
 export const connectorCursors = pgTable("connector_cursors", {

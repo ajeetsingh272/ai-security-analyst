@@ -23,6 +23,7 @@ import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-conne
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
+import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
 export interface BuildAppOptions {
@@ -41,6 +42,11 @@ export interface BuildAppOptions {
    * 503, not a crash). Overridable so tests can point it at a fixture
    * tenant instead. */
   opsTenantId?: string | undefined;
+  /** Defaults to reading WHATSAPP_VERIFY_TOKEN/WHATSAPP_APP_SECRET from
+   * the environment (undefined if unset, which routes/whatsapp-webhook.js
+   * handles with a 503, not a crash). Overridable so tests can use a
+   * fixed secret instead of real Meta credentials. */
+  whatsappConfig?: WhatsAppConfig | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -50,6 +56,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
+    whatsappConfig = whatsappConfigFromEnv(),
   } = options;
 
   const app = Fastify();
@@ -58,12 +65,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/ready', async (_request, reply) => reply.code(200).send({ ok: true }));
 
   await app.register(authPlugin, { pool, redis, cookieSecure });
-  await app.register(tenantContextPlugin, { publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out'] });
+  await app.register(tenantContextPlugin, {
+    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp'],
+  });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
+  await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
 
   return app;
 }

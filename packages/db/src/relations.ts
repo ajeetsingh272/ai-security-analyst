@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, connectors, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -37,6 +37,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	tenantNotificationPreferences: many(tenantNotificationPreferences),
 	investigationTranscripts: many(investigationTranscripts),
 	notificationDeliveries: many(notificationDeliveries),
+	notificationRecipientOptouts: many(notificationRecipientOptouts),
 	entityCriticalities: many(entityCriticality),
 }));
 
@@ -264,6 +265,13 @@ export const investigationTranscriptsRelations = relations(investigationTranscri
 export const notificationDeliveriesRelations = relations(notificationDeliveries, ({one}) => ({
 	tenant: one(tenants, {
 		fields: [notificationDeliveries.tenantId],
+		references: [tenants.id]
+	}),
+}));
+
+export const notificationRecipientOptoutsRelations = relations(notificationRecipientOptouts, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [notificationRecipientOptouts.tenantId],
 		references: [tenants.id]
 	}),
 }));

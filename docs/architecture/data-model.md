@@ -43,6 +43,7 @@ none of them has to be taken on trust:
 | `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `notification_deliveries` | NOT NULL | yes | yes | `tenant_isolation` |
+| `notification_recipient_optouts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -859,6 +860,37 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: INSERT, SELECT
+
+### `notification_recipient_optouts`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `channel` | `text` | no | — |
+| `recipient` | `text` | no | — |
+| `opted_out_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `notification_recipient_optouts_pkey` — `PRIMARY KEY (tenant_id, channel, recipient)`
+
+**Foreign keys**
+
+- `notification_recipient_optouts_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `notification_recipient_optouts_channel_check` — `CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT
 
 ### `schema_migrations`
 

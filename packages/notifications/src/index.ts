@@ -10,3 +10,12 @@ export {
 } from './types.js';
 export { NotificationDispatcher, type NotificationDispatcherDeps, staticChannelOrder } from './dispatcher.js';
 export { dashboardBannerChannel } from './channels/dashboard-banner-channel.js';
+export {
+  buildWhatsAppChannel,
+  RecipientOptedOutError,
+  TEMPLATES as WHATSAPP_TEMPLATES,
+  type WhatsAppTemplateName,
+  type WhatsAppMessageContent,
+  type WhatsAppConfig,
+  type OptoutChecker,
+} from './channels/whatsapp-channel.js';
