@@ -9,6 +9,7 @@ import { Pool } from 'pg';
 import Anthropic from '@anthropic-ai/sdk';
 import { createLogger, startTracing } from '@sentinel/observability';
 import { createKafkaClients } from './kafka.js';
+import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { AnalystWorker } from './worker.js';
 import { AnthropicInvestigationModel } from './investigation-model.js';
 import { PermanentError } from './retry.js';
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
   const { consumer, producer, disconnect } = createKafkaClients(brokers, envOr('CONSUMER_GROUP', 'analyst'));
+  const ch = createTenantScopedClickHouseClient(envOr('CLICKHOUSE_URL', 'http://localhost:8123'));
 
   const apiKey = envOr('ANTHROPIC_API_KEY', '');
   if (!apiKey) {
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
     apiKey,
     model: envOr('ANTHROPIC_INVESTIGATION_MODEL', 'claude-opus-5'),
     maxTokens: Number(envOr('ANTHROPIC_MAX_TOKENS', '8192')),
+    tools: { ch, pool, logger },
   });
 
   const worker = new AnalystWorker({
@@ -67,6 +70,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'draining in-flight investigations before exit');
     await worker.stop();
     await disconnect();
+    await ch.close();
     await pool.end();
     await tracingHandle.shutdown();
     logger.info({}, 'analyst worker stopped');

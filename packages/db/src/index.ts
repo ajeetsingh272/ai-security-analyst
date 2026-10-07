@@ -33,6 +33,9 @@ export {
   DismissalChallengeEmptyReasonError,
   type CaseRow,
   type DismissalDigestRow,
+  type CaseHistory,
+  type CaseSignalRow,
+  type CaseTransitionRow,
 } from './repositories/cases-repository.js';
 export {
   ConnectorsRepository,

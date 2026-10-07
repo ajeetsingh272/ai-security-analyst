@@ -30,6 +30,30 @@ export interface CaseRow {
   createdAt: string;
 }
 
+export interface CaseSignalRow {
+  signalId: string;
+  ruleId: string;
+  entityType: string;
+  entityId: string;
+  severity: string;
+  detectedAt: string;
+}
+
+export interface CaseTransitionRow {
+  fromState: string;
+  toState: string;
+  actorType: string;
+  actorId: string;
+  reason: string | null;
+  occurredAt: string;
+}
+
+export interface CaseHistory {
+  case: CaseRow | null;
+  signals: CaseSignalRow[];
+  transitions: CaseTransitionRow[];
+}
+
 export interface DismissalDigestRow {
   /** Machine-readable (services/correlate/internal/lifecycle.DismissalReason) —
    * e.g. "below_escalation_threshold" — never free prose (AC1). */
@@ -129,6 +153,67 @@ export class CasesRepository extends TenantScopedRepository {
         [caseId],
       );
       return rows[0]?.to_state ?? null;
+    });
+  }
+
+  /**
+   * get_case_history (P4-02 AC1): a case's full signal and transition
+   * history, newest first. `limit` is fetched as `limit + 1` so the
+   * caller (apps/analyst's own tool wrapper) can tell "there were exactly
+   * `limit` rows" apart from "there were more than `limit` rows" without a
+   * separate COUNT query — the same bounded-plus-one shape
+   * `findById`/`findAll` don't need but a tool with an explicit
+   * truncation marker (AC3) does.
+   */
+  async history(caseId: string, limit: number): Promise<CaseHistory> {
+    return this.withTransaction(async (client) => {
+      const caseResult = await client.query(
+        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        [caseId],
+      );
+      const signalResult = await client.query<{
+        signal_id: string;
+        rule_id: string;
+        entity_type: string;
+        entity_id: string;
+        severity: string;
+        detected_at: string;
+      }>(
+        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at
+           FROM case_signals WHERE case_id = $1 ORDER BY detected_at DESC LIMIT $2`,
+        [caseId, limit + 1],
+      );
+      const transitionResult = await client.query<{
+        from_state: string;
+        to_state: string;
+        actor_type: string;
+        actor_id: string;
+        reason: string | null;
+        occurred_at: string;
+      }>(
+        `SELECT from_state, to_state, actor_type, actor_id, reason, occurred_at
+           FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT $2`,
+        [caseId, limit + 1],
+      );
+      return {
+        case: caseResult.rows.length > 0 ? mapRow(caseResult.rows[0]) : null,
+        signals: signalResult.rows.map((r) => ({
+          signalId: r.signal_id,
+          ruleId: r.rule_id,
+          entityType: r.entity_type,
+          entityId: r.entity_id,
+          severity: r.severity,
+          detectedAt: r.detected_at,
+        })),
+        transitions: transitionResult.rows.map((r) => ({
+          fromState: r.from_state,
+          toState: r.to_state,
+          actorType: r.actor_type,
+          actorId: r.actor_id,
+          reason: r.reason,
+          occurredAt: r.occurred_at,
+        })),
+      };
     });
   }
 
