@@ -33,6 +33,11 @@ type Signal struct {
 	EntityID   string
 	Severity   string
 	EventIDs   []string
+	// MitreIDs carries the rule's own ATT&CK technique tags
+	// (go/sentinelsignal.Signal.MitreIDs) onto the signal this package
+	// clusters — P3-04's own kill-chain-stage scoring needs every
+	// technique a case's signals span, not just this one signal's.
+	MitreIDs []string
 	// DetectedAt is the signal's own EVENT time — every windowing
 	// decision in this package uses this, never wall-clock processing
 	// time, which is what AC5/T4 ("clustering is deterministic —

@@ -9,6 +9,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelaudit"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/lifecycle"
+	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/scoring"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -114,6 +115,9 @@ func (s *PostgresStore) CreateCaseWithSignal(ctx context.Context, tenantID strin
 		if err := insertCaseSignal(ctx, tx, tenantID, caseID, sig); err != nil {
 			return "", err
 		}
+		if err := scoring.Recompute(ctx, tx, tenantID, caseID); err != nil {
+			return "", err
+		}
 		return caseID, nil
 	})
 	if err != nil {
@@ -125,10 +129,10 @@ func (s *PostgresStore) CreateCaseWithSignal(ctx context.Context, tenantID strin
 func (s *PostgresStore) AddSignalToCase(ctx context.Context, tenantID, caseID string, sig Signal) (bool, error) {
 	added, err := sentineldb.WithTenantContext(ctx, s.pool, tenantID, func(ctx context.Context, tx pgx.Tx) (bool, error) {
 		tag, err := tx.Exec(ctx,
-			`INSERT INTO case_signals (tenant_id, case_id, dedupe_key, signal_id, rule_id, entity_type, entity_id, severity, event_ids, detected_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			`INSERT INTO case_signals (tenant_id, case_id, dedupe_key, signal_id, rule_id, entity_type, entity_id, severity, event_ids, detected_at, mitre_ids)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 ON CONFLICT (tenant_id, dedupe_key) DO NOTHING`,
-			tenantID, caseID, sig.DedupeKey, sig.SignalID, sig.RuleID, sig.EntityType, sig.EntityID, sig.Severity, sig.EventIDs, sig.DetectedAt,
+			tenantID, caseID, sig.DedupeKey, sig.SignalID, sig.RuleID, sig.EntityType, sig.EntityID, sig.Severity, sig.EventIDs, sig.DetectedAt, nonNil(sig.MitreIDs),
 		)
 		if err != nil {
 			return false, err
@@ -137,6 +141,9 @@ func (s *PostgresStore) AddSignalToCase(ctx context.Context, tenantID, caseID st
 			return false, nil // AC5/T4: already present, idempotent no-op
 		}
 		if _, err := tx.Exec(ctx, `UPDATE cases SET signal_count = signal_count + 1 WHERE id = $1`, caseID); err != nil {
+			return false, err
+		}
+		if err := scoring.Recompute(ctx, tx, tenantID, caseID); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -198,11 +205,22 @@ func (s *PostgresStore) CloseQuietCases(ctx context.Context, tenantID string, qu
 
 func insertCaseSignal(ctx context.Context, tx pgx.Tx, tenantID, caseID string, sig Signal) error {
 	_, err := tx.Exec(ctx,
-		`INSERT INTO case_signals (tenant_id, case_id, dedupe_key, signal_id, rule_id, entity_type, entity_id, severity, event_ids, detected_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		tenantID, caseID, sig.DedupeKey, sig.SignalID, sig.RuleID, sig.EntityType, sig.EntityID, sig.Severity, sig.EventIDs, sig.DetectedAt,
+		`INSERT INTO case_signals (tenant_id, case_id, dedupe_key, signal_id, rule_id, entity_type, entity_id, severity, event_ids, detected_at, mitre_ids)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		tenantID, caseID, sig.DedupeKey, sig.SignalID, sig.RuleID, sig.EntityType, sig.EntityID, sig.Severity, sig.EventIDs, sig.DetectedAt, nonNil(sig.MitreIDs),
 	)
 	return err
+}
+
+// nonNil coerces a nil slice to an empty one — pgx encodes a nil Go
+// slice as SQL NULL, not an empty array, which case_signals.mitre_ids'
+// own NOT NULL constraint rejects for the (common) case of a signal
+// with no MITRE tag at all.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // caseTitle is a placeholder human-readable label — P3-04 ("Case

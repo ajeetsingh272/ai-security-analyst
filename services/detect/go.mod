@@ -35,6 +35,7 @@ require (
 
 require (
 	github.com/ClickHouse/ch-go v0.61.5 // indirect
+	github.com/ajeetsingh272/ai-security-analyst/go/sentinelattck v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector v0.0.0-00010101000000-000000000000 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.32.6 // indirect
@@ -85,3 +86,5 @@ require (
 	google.golang.org/grpc v1.68.1 // indirect
 	google.golang.org/protobuf v1.35.2 // indirect
 )
+
+replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelattck => ../../go/sentinelattck

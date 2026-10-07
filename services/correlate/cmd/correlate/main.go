@@ -168,7 +168,7 @@ func runClusterLoop(ctx context.Context, log *slog.Logger, consumer *kgo.Client,
 			caseID, err := clusterer.Cluster(ctx, sig.TenantID, cluster.Signal{
 				DedupeKey: sig.DedupeKey, SignalID: sig.SignalID, RuleID: sig.RuleID,
 				EntityType: sig.EntityType, EntityID: sig.EntityID, Severity: sig.Severity,
-				EventIDs: sig.EventIDs, DetectedAt: sig.DetectedAt,
+				EventIDs: sig.EventIDs, DetectedAt: sig.DetectedAt, MitreIDs: sig.MitreIDs,
 			})
 			if err != nil {
 				log.Error("clustering signal failed", "signal_id", sig.SignalID, "err", err)
