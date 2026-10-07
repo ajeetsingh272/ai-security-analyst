@@ -98,6 +98,60 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
     expect(callArgs.tools).toBeUndefined();
   });
 
+  it('T2: a malformed verdict triggers exactly one repair attempt, then succeeds', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(finalTextResponse('not valid json at all'))
+      .mockResolvedValueOnce(finalTextResponse(CANNED_VERDICT_TEXT));
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+
+    const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+
+    expect(verdict.title).toBe('Investigated via tool use');
+    expect(create).toHaveBeenCalledTimes(2);
+    const secondCallArgs = create.mock.calls[1]![0] as { messages: Anthropic.MessageParam[] };
+    const repairPrompt = secondCallArgs.messages.at(-1)!;
+    expect(repairPrompt.role).toBe('user');
+    expect(String(repairPrompt.content)).toContain('could not be used');
+  });
+
+  it('T2: a SECOND consecutive malformed verdict fails the investigation rather than repairing again', async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(finalTextResponse('not valid json at all'))
+      .mockResolvedValueOnce(finalTextResponse('still not valid json'));
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+
+    const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
+
+    await expect(model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' })).rejects.toThrow(UnparsableVerdictError);
+    // Exactly one repair attempt: the call that would be a SECOND
+    // repair never happens.
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('T3 (via the loop): an unknown playbook is treated as a schema violation and triggers the repair path', async () => {
+    const badPlaybookVerdict = JSON.stringify({
+      severity: 'high',
+      title: 'Bad action',
+      claims: [{ text: 'x', evidenceRef: ['evt_1'] }],
+      attackChain: [],
+      recommendedActions: [{ playbook: 'launch_the_nukes', urgency: 'now', blastRadius: 'none' }],
+    });
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(finalTextResponse(badPlaybookVerdict))
+      .mockResolvedValueOnce(finalTextResponse(CANNED_VERDICT_TEXT));
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+
+    const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+
+    expect(verdict.title).toBe('Investigated via tool use');
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   it('bounds the loop: gives up with UnparsableVerdictError rather than looping forever', async () => {
     const create = vi.fn().mockResolvedValue(toolUseResponse('tool_x', 'lookup_threat_intel', { indicator: 'x', indicatorType: 'ip' }));
     const fakeClient = { messages: { create } } as unknown as Anthropic;
