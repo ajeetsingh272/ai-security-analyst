@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, entityAliases, entityMerges, connectorCursors } from "./schema";
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, caseSignals, entityAliases, entityMerges, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -28,6 +28,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	suppressions: many(suppressions),
 	tenantDeks: many(tenantDeks),
 	entities: many(entities),
+	caseSignals: many(caseSignals),
 	entityAliases: many(entityAliases),
 	entityMerges: many(entityMerges),
 }));
@@ -63,6 +64,7 @@ export const casesRelations = relations(cases, ({one, many}) => ({
 	}),
 	caseTransitions: many(caseTransitions),
 	actions: many(actions),
+	caseSignals: many(caseSignals),
 }));
 
 export const caseTransitionsRelations = relations(caseTransitions, ({one}) => ({
@@ -160,6 +162,17 @@ export const entitiesRelations = relations(entities, ({one, many}) => ({
 	}),
 	entityMerges_intoEntityId: many(entityMerges, {
 		relationName: "entityMerges_intoEntityId_entities_id"
+	}),
+}));
+
+export const caseSignalsRelations = relations(caseSignals, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [caseSignals.tenantId],
+		references: [tenants.id]
+	}),
+	case: one(cases, {
+		fields: [caseSignals.caseId],
+		references: [cases.id]
 	}),
 }));
 

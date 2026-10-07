@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
@@ -381,6 +382,7 @@ func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher 
 			continue
 		}
 		eventIDs := []string{wev.EventID}
+		entityType, entityID := entityFromFlatEvent(flat)
 		signals = append(signals, sentinelsignal.Signal{
 			SignalID:         uuid.NewString(),
 			EventIDs:         eventIDs,
@@ -390,9 +392,21 @@ func evaluate(ctx context.Context, tree *dispatch.Tree, wev wireEvent, enricher 
 			MitreIDs:         c.MitreIDs,
 			Severity:         c.Level,
 			Engine:           c.Engine,
+			EntityType:       entityType,
+			EntityID:         entityID,
 			OwnerDescription: c.OwnerDescription,
-			DedupeKey:        sentinelsignal.NewDedupeKey(wev.TenantID, c.ID, "", eventIDs),
-			DetectedAt:       time.Now().UTC(),
+			// Deliberately still "" here, not entityID — DedupeKey's own
+			// semantics (P2-08/TG4) are "the same ONGOING detection",
+			// which for an in-stream rule is each matching EVENT, not
+			// each matching ENTITY: two separate New-InboxRule events
+			// for the same person are two real, distinct detections,
+			// not repeated ticks of one. Changing this would silently
+			// alter the critical-bypass notifier-collapsing behaviour
+			// P2-08 already shipped, which is not this ticket's call to
+			// make. EntityType/EntityID above are new and purely
+			// additive (P3-02's own need); DedupeKey's inputs are not.
+			DedupeKey:  sentinelsignal.NewDedupeKey(wev.TenantID, c.ID, "", eventIDs),
+			DetectedAt: time.Now().UTC(),
 		})
 	}
 
@@ -445,6 +459,37 @@ func safeEvaluateHotfix(r *sigmac.Rule, ev sigmac.Event) (matched bool, err erro
 		}
 	}()
 	return sigmac.Evaluate(r, ev), nil
+}
+
+// entityCandidateFields is deliberately small and ordered, not a
+// maintained exhaustive table — the same heuristic spirit
+// windowed/scheduler.go's own entityTypeFromGroupField already uses,
+// just for the in-stream engine, which (unlike windowed) has no
+// aggregation GroupBy field to derive one from. P3-02's own
+// correlation plane is the first consumer that needs an in-stream
+// signal to carry an entity at all; P2-04 never needed one for its own
+// purposes. The first candidate present in the flattened event wins.
+var entityCandidateFields = []string{"unmapped.UserId"}
+
+// entityFromFlatEvent extracts an entity type/id from a flattened
+// in-stream event, if one of entityCandidateFields is present — ""/""
+// otherwise, which is not an error (correlation's own entity resolver
+// already treats "no entity" as a provisional entity, never a
+// failure). entityType mirrors entityTypeFromGroupField's own
+// "strip Id/ID, lowercase" convention so "UserId" produces "user" in
+// both engines identically.
+func entityFromFlatEvent(flat map[string]string) (entityType, entityID string) {
+	for _, field := range entityCandidateFields {
+		if v := flat[field]; v != "" {
+			name := strings.TrimPrefix(field, "unmapped.")
+			trimmed := strings.TrimSuffix(strings.TrimSuffix(name, "Id"), "ID")
+			if trimmed == "" {
+				trimmed = name
+			}
+			return strings.ToLower(trimmed), v
+		}
+	}
+	return "", ""
 }
 
 // safeMatch recovers a panicking predicate (T4) at the single-rule
