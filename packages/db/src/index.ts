@@ -73,6 +73,17 @@ export {
   type AuditEntryInput,
   type WrittenAuditEntry,
 } from './audit/audit-log-writer.js';
+export {
+  NotificationDeliveryRepository,
+  type NotificationChannelId,
+  type DeliveryStatus,
+  type RecordDeliveryAttemptInput,
+  type DeliveryAttemptRow,
+} from './repositories/notification-delivery-repository.js';
+export {
+  NotificationPreferencesRepository,
+  DEFAULT_CHANNEL_ORDER,
+} from './repositories/notification-preferences-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {
