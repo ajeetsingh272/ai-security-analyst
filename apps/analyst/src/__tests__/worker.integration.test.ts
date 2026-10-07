@@ -24,6 +24,7 @@ import { PermanentError } from '../retry.js';
 import type { InvestigationModel, CaseContext } from '../investigation-model.js';
 import { GroundingFailedError } from '../investigation-model.js';
 import type { TriageModel, TriageDecision } from '../triage.js';
+import { CircuitBreaker } from '../circuit-breaker.js';
 
 const BROKERS = [process.env.REDPANDA_BROKERS ?? 'localhost:19092'];
 const JAEGER_URL = 'http://localhost:16686';
@@ -156,6 +157,15 @@ class FakeTriageModel implements TriageModel {
   }
 }
 
+/** P4-10: a breaker that never opens — a high failureThreshold, so
+ * every pre-P4-10 test here (none of which throws anything shaped like
+ * a real provider failure) keeps exercising the normal, closed-circuit
+ * path unchanged. P4-10's own dedicated tests construct a real,
+ * low-threshold breaker instead. */
+function alwaysClosedCircuitBreaker(): CircuitBreaker {
+  return new CircuitBreaker({ failureThreshold: 1_000_000, openDurationMs: 1 });
+}
+
 const CANNED_VERDICT: Verdict = {
   severity: 'critical',
   title: 'Test verdict',
@@ -231,6 +241,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -276,6 +288,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -318,6 +332,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -353,6 +369,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -397,6 +415,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -449,6 +469,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => true, // irrelevant: PermanentError is never retried regardless
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -506,6 +528,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false, // GroundingFailedError is never retryable
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     activeWorkers.push(worker);
     await worker.start();
@@ -553,6 +577,8 @@ describe('AnalystWorker', () => {
       partitionsConsumedConcurrently: 4,
       retry: { maxAttempts: 1, baseDelayMs: 10, maxDelayMs: 100 },
       isRetryable: () => false,
+      circuitBreaker: alwaysClosedCircuitBreaker(),
+      isProviderFailure: () => false,
     });
     await worker.start();
 

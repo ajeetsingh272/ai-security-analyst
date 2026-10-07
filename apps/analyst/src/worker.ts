@@ -8,7 +8,7 @@
 import { trace, type Tracer } from '@opentelemetry/api';
 import type { Consumer, Producer, EachMessagePayload } from 'kafkajs';
 import type { Pool } from 'pg';
-import { withTenantContext, CasesRepository } from '@sentinel/db';
+import { withTenantContext, CasesRepository, DegradedQueueRepository, listTenantsWithPendingDegradedCases } from '@sentinel/db';
 import type { Logger } from '@sentinel/observability';
 import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey, parseCaseEventMessage } from './kafka.js';
 import { TenantConcurrencyLimiter } from './tenant-concurrency.js';
@@ -19,6 +19,7 @@ import type { TriageModel } from './triage.js';
 import { checkBudget } from './cost-budget.js';
 import { generateReport } from './report.js';
 import { renderForWhatsApp, renderForSlack, renderForEmail, renderForDashboard } from './report-channels.js';
+import { CircuitBreaker, CircuitOpenError, callThroughBreaker } from './circuit-breaker.js';
 
 export interface AnalystWorkerOptions {
   consumer: Consumer;
@@ -36,6 +37,18 @@ export interface AnalystWorkerOptions {
   partitionsConsumedConcurrently: number;
   retry: Pick<RetryOptions, 'maxAttempts' | 'baseDelayMs' | 'maxDelayMs'>;
   isRetryable: (err: unknown) => boolean;
+  /** P4-10: shared by both the triage and investigation calls, since
+   * both hit the same underlying provider — a 503 from one is exactly
+   * as much evidence the provider is down as a 503 from the other. */
+  circuitBreaker: CircuitBreaker;
+  /** Classifies a thrown error as evidence the PROVIDER itself is
+   * unavailable (a 503/overload/network error), as opposed to a
+   * malformed response or a grounding failure — neither of which
+   * means the provider is down and neither of which should trip the
+   * breaker. Conceptually distinct from `isRetryable` above even
+   * though real callers (main.ts) pass the identical function for
+   * both. */
+  isProviderFailure: (err: unknown) => boolean;
   /** Overridable for tests. Real callers never set this. */
   tracer?: Tracer;
 }
@@ -51,6 +64,8 @@ export class AnalystWorker {
   private readonly retryOpts: RetryOptions;
   private readonly partitionsConsumedConcurrently: number;
   private readonly tracer: Tracer;
+  private readonly circuitBreaker: CircuitBreaker;
+  private readonly isProviderFailure: (err: unknown) => boolean;
   private stopping = false;
 
   constructor(opts: AnalystWorkerOptions) {
@@ -64,6 +79,8 @@ export class AnalystWorker {
     this.retryOpts = { ...opts.retry, isRetryable: opts.isRetryable };
     this.partitionsConsumedConcurrently = opts.partitionsConsumedConcurrently;
     this.tracer = opts.tracer ?? trace.getTracer('sentinel-analyst');
+    this.circuitBreaker = opts.circuitBreaker;
+    this.isProviderFailure = opts.isProviderFailure;
   }
 
   async start(): Promise<void> {
@@ -152,14 +169,14 @@ export class AnalystWorker {
         // expensive model below.
         if (ctx.severity !== 'critical') {
           const decision = await this.tracer.startActiveSpan('case.triage', (triageSpan) =>
-            withRetry(() => this.triageModel.triage(ctx!), this.retryOpts).finally(() => triageSpan.end()),
+            withRetry(() => this.callModelThroughBreaker(() => this.triageModel.triage(ctx!)), this.retryOpts).finally(() => triageSpan.end()),
           );
           this.logger.info({ tenant_id: tenantId, case_id: caseId, triage_decision: decision.decision, triage_reason: decision.reason }, 'triage decided');
           if (decision.decision === 'dismiss') return;
         }
 
         const verdict = await this.tracer.startActiveSpan('case.llm_investigation', (llmSpan) =>
-          withRetry(() => this.investigationModel.investigate(ctx!), this.retryOpts).finally(() => llmSpan.end()),
+          withRetry(() => this.callModelThroughBreaker(() => this.investigationModel.investigate(ctx!)), this.retryOpts).finally(() => llmSpan.end()),
         );
 
         this.logger.info(
@@ -193,6 +210,17 @@ export class AnalystWorker {
       } catch (err) {
         if (err instanceof GroundingFailedError) {
           await this.degradeToRuleOnlyAlert(tenantId, caseId, ctx, 'grounding_failed_twice', err.message);
+        } else if (err instanceof CircuitOpenError || this.isProviderFailure(err)) {
+          // P4-10 AC2/AC3: whether the circuit was ALREADY open
+          // (CircuitOpenError, fn never even attempted) or just tripped
+          // DURING this call (the original provider error, already
+          // retried to exhaustion by withRetry above) — either way this
+          // is "the provider is unavailable," not a DLQ-worthy failure,
+          // so it degrades and gets queued for a real investigation once
+          // the provider recovers, instead of being lost to the DLQ.
+          const message = err instanceof Error ? err.message : String(err);
+          await this.degradeToRuleOnlyAlert(tenantId, caseId, ctx, 'llm_provider_unavailable', message);
+          await this.enqueueForReinvestigation(tenantId, caseId, 'llm_provider_unavailable');
         } else {
           await this.handleFailure(tenantId, caseId, err);
         }
@@ -215,6 +243,53 @@ export class AnalystWorker {
         span.end();
       }
     });
+  }
+
+  /** P4-10 AC1: runs a model call through the shared circuit breaker;
+   * when this call is the one that closes a previously open/half-open
+   * breaker, drains every tenant's own queued, not-yet-reinvestigated
+   * cases (AC3) — triggered exactly once per recovery, not on every
+   * ordinary successful call while already closed. */
+  private async callModelThroughBreaker<T>(fn: () => Promise<T>): Promise<T> {
+    const { value, recovered } = await callThroughBreaker(this.circuitBreaker, fn, this.isProviderFailure);
+    if (recovered) {
+      this.logger.info({ degraded_mode: false }, 'LLM provider circuit breaker recovered; draining the degraded-case queue');
+      await this.drainDegradedQueue().catch((err) => {
+        this.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'draining the degraded-case queue failed');
+      });
+    }
+    return value;
+  }
+
+  private async enqueueForReinvestigation(tenantId: string, caseId: string, reason: string): Promise<void> {
+    await withTenantContext(tenantId, () => new DegradedQueueRepository(this.pool).enqueue(caseId, reason));
+  }
+
+  /** P4-10 AC3/AC5: re-publishes every tenant's own pending degraded
+   * case back onto `cases` so the ordinary pipeline (this same
+   * worker, triage/investigate/grounding/report already tested
+   * elsewhere) re-investigates it for real — never duplicating the
+   * rule-only alert already sent, since that was logged once at
+   * degrade time and this path only ever produces a NEW, upgraded AI
+   * report, not a second copy of the old alert. Marks each row
+   * processed only after the publish itself succeeds, so a crash
+   * mid-drain leaves the row pending for the next recovery rather than
+   * silently losing it. */
+  private async drainDegradedQueue(): Promise<void> {
+    const tenantIds = await listTenantsWithPendingDegradedCases(this.pool);
+    for (const tenantId of tenantIds) {
+      // DegradedQueueRepository (TenantScopedRepository) reads the
+      // active tenant context AT CONSTRUCTION TIME — it must be built
+      // inside withTenantContext's own callback, never hoisted above it.
+      const pending = await withTenantContext(tenantId, () => new DegradedQueueRepository(this.pool).claimPending(100));
+      for (const row of pending) {
+        await this.producer.send({
+          topic: CASES_TOPIC,
+          messages: [{ key: tenantCaseKey(tenantId, row.caseId), value: JSON.stringify({ tenant_id: tenantId, case_id: row.caseId }) }],
+        });
+        await withTenantContext(tenantId, () => new DegradedQueueRepository(this.pool).markProcessed(row.id));
+      }
+    }
   }
 
   /** P4-04 AC4 / P4-06 AC4: "degrade to a rule-only alert and page" —

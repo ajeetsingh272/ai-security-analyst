@@ -26,6 +26,7 @@ none of them has to be taken on trust:
 | Table | `tenant_id` | RLS | FORCED | Policy |
 |---|---|---|---|---|
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
+| `analyst_degraded_queue` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
 | `baseline_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -106,6 +107,45 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `analyst_degraded_queue`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `reason` | `text` | no | — |
+| `queued_at` | `timestamptz` | no | `now()` |
+| `processed_at` | `timestamptz` | yes | — |
+
+**Primary key**
+
+- `analyst_degraded_queue_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `analyst_degraded_queue_tenant_id_case_id_key` — `UNIQUE (tenant_id, case_id)`
+
+**Foreign keys**
+
+- `analyst_degraded_queue_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `analyst_degraded_queue_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_analyst_degraded_queue_pending` — `CREATE INDEX idx_analyst_degraded_queue_pending ON public.analyst_degraded_queue USING btree (tenant_id, queued_at) WHERE (processed_at IS NULL)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
 ### `approval_nonces`

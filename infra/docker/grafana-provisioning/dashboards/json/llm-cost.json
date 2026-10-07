@@ -4,7 +4,7 @@
   "description": "P4-06 AC5: cost per tenant, the operations half of this ticket's own cost-budget guard (apps/analyst/src/cost-budget.ts). analyst_llm_cost_usd_total is incremented in the exact same place (cost-budget.ts's own recordUsage) the durable llm_usage Postgres row is written, so this panel and the budget check it mirrors can never drift apart. Panels query the metric names the otel-collector's Prometheus exporter actually produces for an OTel counter named analyst.llm.cost_usd (dots to underscores, _total appended) — the same naming convention golden-signals.json's own dashboard comment already confirmed live for http.server.*.",
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-7d", "to": "now" },
   "panels": [
@@ -101,6 +101,38 @@
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(increase(analyst_grounding_rejections_total[1h])) / sum(increase(analyst_grounding_attempts_total[1h]))",
           "legendFormat": "grounding rejection rate"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "LLM provider circuit breaker",
+      "description": "P4-10 AC1/AC4: analyst.circuit_breaker.state (apps/analyst/src/main.ts), a live gauge read from the real CircuitBreaker instance both the triage and investigation calls share. 0=closed (healthy), 1=half_open (testing recovery), 2=open (degraded -- cases are routing to rule-only alerts and queuing for re-investigation).",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "closed (healthy)" }, "1": { "text": "half-open (testing recovery)" }, "2": { "text": "open (degraded)" } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "analyst_circuit_breaker_state",
+          "legendFormat": "circuit state"
         }
       ]
     }
