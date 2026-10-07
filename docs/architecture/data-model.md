@@ -28,6 +28,7 @@ none of them has to be taken on trust:
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
+| `case_signals` | NOT NULL | yes | yes | `tenant_isolation` |
 | `case_transitions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `cases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -175,6 +176,52 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: INSERT, SELECT
+- `sentinel_jobs`: SELECT
+
+### `case_signals`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `dedupe_key` | `text` | no | — |
+| `signal_id` | `text` | no | — |
+| `rule_id` | `text` | no | — |
+| `entity_type` | `text` | no | — |
+| `entity_id` | `text` | no | — |
+| `severity` | `text` | no | — |
+| `event_ids` | `text[]` | no | `'{}'::text[]` |
+| `detected_at` | `timestamptz` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `case_signals_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `case_signals_tenant_id_dedupe_key_key` — `UNIQUE (tenant_id, dedupe_key)`
+
+**Foreign keys**
+
+- `case_signals_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `case_signals_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_case_signals_case` — `CREATE INDEX idx_case_signals_case ON public.case_signals USING btree (case_id)`
+- `idx_case_signals_tenant_entity_detected` — `CREATE INDEX idx_case_signals_tenant_entity_detected ON public.case_signals USING btree (tenant_id, entity_type, entity_id, detected_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
 ### `case_transitions`

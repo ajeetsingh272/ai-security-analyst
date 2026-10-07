@@ -310,6 +310,36 @@ export const entities = pgTable("entities", {
 	check("entities_status_check", sql`status = ANY (ARRAY['provisional'::text, 'resolved'::text])`),
 ]);
 
+export const caseSignals = pgTable("case_signals", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	caseId: uuid("case_id").notNull(),
+	dedupeKey: text("dedupe_key").notNull(),
+	signalId: text("signal_id").notNull(),
+	ruleId: text("rule_id").notNull(),
+	entityType: text("entity_type").notNull(),
+	entityId: text("entity_id").notNull(),
+	severity: text().notNull(),
+	eventIds: text("event_ids").array().default([""]).notNull(),
+	detectedAt: timestamp("detected_at", { withTimezone: true, mode: 'string' }).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_case_signals_case").using("btree", table.caseId.asc().nullsLast().op("uuid_ops")),
+	index("idx_case_signals_tenant_entity_detected").using("btree", table.tenantId.asc().nullsLast().op("text_ops"), table.entityType.asc().nullsLast().op("text_ops"), table.entityId.asc().nullsLast().op("timestamptz_ops"), table.detectedAt.desc().nullsFirst().op("uuid_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "case_signals_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.caseId],
+			foreignColumns: [cases.id],
+			name: "case_signals_case_id_fkey"
+		}).onDelete("cascade"),
+	unique("case_signals_tenant_id_dedupe_key_key").on(table.tenantId, table.dedupeKey),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
 export const entityAliases = pgTable("entity_aliases", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	tenantId: uuid("tenant_id").notNull(),

@@ -273,6 +273,25 @@ is exact rather than "undo everything currently on the target entity." Resolutio
 Postgres transaction per call (`FastResolver`) — proven directly at under 5ms p99 against real
 Postgres with a realistic 1-new-user-in-20 traffic mix, not assumed from the design alone.
 
+**Signal clustering (`services/correlate/internal/cluster`, P3-02).** Consumes `signals`
+directly (the first live consumer that topic has had) and clusters by `Signal.EntityType`/
+`EntityID` — deliberately not routed through the entity resolver above for this ticket: AC2's
+own wording is "signals sharing *any* entity", which the raw identifier `services/detect`
+already extracts and places on the signal (both engines now populate it — an in-stream
+signal's own `UserId`, when its event has one, not only a windowed rule's group-by key).
+Unifying different raw formats for the same person (a UPN and an object id) through the alias
+graph is real, separate integration work this ticket's own ACs do not require. A case's
+window is **sliding**, not fixed: it stays open as long as signals keep arriving within the
+window of the *most recent* one (not the first), closed only once a configurable quiet period
+elapses with nothing new — every decision uses the signal's own event time, never wall-clock
+processing time, which is what makes replay genuinely deterministic (AC5/T4): replaying the
+identical stream faster or slower, or twice, produces the identical case set, proven directly
+rather than assumed, including the real BEC scenario (impossible travel, then an inbox rule
+three minutes later, same person) collapsing into exactly one case. `cases`/`case_transitions`
+(`db/postgres/migrations/0001_foundation.sql`) already had the right shape for this ticket;
+only a new `case_signals` join table was needed, to know *which* signals are in a case at all
+— without it, idempotent replay has nothing to check a signal's membership against.
+
 A case has a lifecycle: `open → triaging → investigating → awaiting_approval → actioned →
 closed`, with `dismissed` reachable from triaging and investigating. State transitions are
 append-only events in Postgres, so the full history of a case is reconstructible — required

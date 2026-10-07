@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
@@ -340,5 +341,46 @@ func TestEvaluate_HotfixAndCompiledBothMatchSameEvent(t *testing.T) {
 	}
 	if len(signals) != 2 {
 		t.Fatalf("got %d signals, want 2 (one compiled from ok-rule, one hotfix): %+v", len(signals), signals)
+	}
+}
+
+// P3-02's own need: an in-stream signal must carry an entity when the
+// underlying event has one, mirroring windowed's own
+// entityTypeFromGroupField convention ("UserId" -> "user").
+func TestEntityFromFlatEvent_ExtractsUserIdWhenPresent(t *testing.T) {
+	entityType, entityID := entityFromFlatEvent(map[string]string{"unmapped.UserId": "priya@northwind.example"})
+	if entityType != "user" || entityID != "priya@northwind.example" {
+		t.Errorf("got (%q, %q), want (user, priya@northwind.example)", entityType, entityID)
+	}
+}
+
+func TestEntityFromFlatEvent_EmptyWhenNoCandidateFieldPresent(t *testing.T) {
+	entityType, entityID := entityFromFlatEvent(map[string]string{"metadata.operation": "New-InboxRule"})
+	if entityType != "" || entityID != "" {
+		t.Errorf("got (%q, %q), want (\"\", \"\") — no candidate field present", entityType, entityID)
+	}
+}
+
+// evaluate() itself must surface this on the Signal — the actual
+// integration point P3-02's own clustering depends on.
+func TestEvaluate_SignalCarriesEntityWhenEventHasUserId(t *testing.T) {
+	tree := buildTestTree(t)
+	wev := wireEvent{
+		TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001,
+		Metadata: map[string]string{"product": "m365"},
+		Unmapped: map[string]string{"UserId": "priya@northwind.example"},
+	}
+	signals, _ := evaluate(context.Background(), tree, wev, nil, nil)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+	if signals[0].EntityType != "user" || signals[0].EntityID != "priya@northwind.example" {
+		t.Errorf("EntityType/EntityID = %q/%q, want user/priya@northwind.example", signals[0].EntityType, signals[0].EntityID)
+	}
+	// DedupeKey must stay event-based, not switch to entity-based, for
+	// an in-stream signal — see evaluate()'s own comment for why
+	// (P2-08/TG4's existing notifier-collapsing semantics).
+	if signals[0].DedupeKey != sentinelsignal.NewDedupeKey("tenant-1", "ok-rule", "", []string{"evt-1"}) {
+		t.Errorf("DedupeKey = %q, want the event-based form unaffected by the new EntityID", signals[0].DedupeKey)
 	}
 }
