@@ -146,6 +146,7 @@ func Parse(file string, data []byte) (*Rule, error) {
 		Aggregation: agg,
 		SpecVersion: SpecVersion,
 		SourceFile:  file,
+		Slug:        slugFromFile(file),
 	}, nil
 }
 
@@ -395,6 +396,14 @@ func matchSelectionPattern(pattern string, selections map[string]Selection) []st
 // every successfully parsed Rule AND every error encountered, rather
 // than stopping at the first failure, so a corpus-wide lint run reports
 // every bad rule in one pass instead of one per CI run.
+// slugFromFile derives Rule.Slug from a source path — its basename with
+// the extension stripped. A test calling Parse directly with a bare
+// name like "test.yml" still gets a sensible slug ("test").
+func slugFromFile(file string) string {
+	base := filepath.Base(file)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
 func ParseCorpus(dir string) ([]*Rule, []error) {
 	var rules []*Rule
 	var errs []error

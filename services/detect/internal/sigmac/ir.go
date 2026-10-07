@@ -147,6 +147,15 @@ type Rule struct {
 	Aggregation *Aggregation
 	SpecVersion string
 	SourceFile  string
+	// Slug is SourceFile's basename with its extension stripped — e.g.
+	// "anonymous-proxy-signin" for detections/rules/anonymous-proxy-signin.yml.
+	// This, not ID (the YAML's own internal `id:` UUID), is what fixture
+	// filenames and generated identifiers are keyed by: CONTRIBUTING.md
+	// and scripts/validate-detections.sh already document and enforce
+	// "<rule file name>.positive.json"/".negative.json" as the fixture
+	// convention, and this field exists so sigmac doesn't invent a
+	// second, UUID-keyed convention alongside it.
+	Slug string
 }
 
 type LogSource struct {
