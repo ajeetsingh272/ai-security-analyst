@@ -140,7 +140,17 @@ export function parseTriageDecision(text: string): TriageDecision {
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     if (parsed.decision === 'dismiss' || parsed.decision === 'escalate') {
-      return { decision: parsed.decision, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
+      const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+      // P4-12 AC1: "every AI dismissal records the model's stated
+      // reason" — a dismiss decision with no reason at all is just as
+      // untrustworthy as invalid JSON (there is nothing to show a
+      // customer in the digest, and nothing a human could evaluate
+      // if they disagreed), so it gets the SAME fail-safe-to-escalate
+      // treatment as an unparseable response, not a silent dismissal.
+      if (parsed.decision === 'dismiss' && reason.trim().length === 0) {
+        return { decision: 'escalate', reason: 'triage returned dismiss with no reason, failing safe to escalate' };
+      }
+      return { decision: parsed.decision, reason };
     }
   } catch {
     // falls through to the fail-safe below

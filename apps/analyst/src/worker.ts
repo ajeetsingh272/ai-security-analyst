@@ -172,7 +172,16 @@ export class AnalystWorker {
             withRetry(() => this.callModelThroughBreaker(() => this.triageModel.triage(ctx!)), this.retryOpts).finally(() => triageSpan.end()),
           );
           this.logger.info({ tenant_id: tenantId, case_id: caseId, triage_decision: decision.decision, triage_reason: decision.reason }, 'triage decided');
-          if (decision.decision === 'dismiss') return;
+          if (decision.decision === 'dismiss') {
+            // P4-12 AC1: a durable, auditable record of WHY — never
+            // just a log line — so the daily digest (AC2/AC3) and a
+            // customer's own challenge (AC4) both have something real
+            // to work from. parseTriageDecision's own fail-safe
+            // already guarantees `decision.reason` is non-empty
+            // whenever decision is 'dismiss'.
+            await withTenantContext(tenantId, () => new CasesRepository(this.pool).recordAiDismissal(caseId, decision.reason));
+            return;
+          }
         }
 
         const verdict = await this.tracer.startActiveSpan('case.llm_investigation', (llmSpan) =>

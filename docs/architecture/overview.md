@@ -731,6 +731,31 @@ fire-and-forget, so a test reading the transcript back immediately after `invest
 returned sometimes raced the write; recording is now awaited (still error-tolerant) since AC1 is
 this ticket's own primary deliverable, not best-effort telemetry.
 
+**Daily dismissal digest generation (P4-12, TG3).** "AI-dismissed cases are summarised daily
+with the model's reason, so an automated dismissal is never invisible to the customer." P3-07
+already built the digest's own read path (`CasesRepository.dailyDismissalDigest`, grouping
+`case_transitions` by reason) and the challenge path (`challengeDismissal`, reopening a
+dismissed case and auditing it) — this ticket closed the one real gap: nothing had ever
+written a `case_transitions` row for a TRIAGE dismissal at all (P4-05's own worker just
+`return`ed on a dismiss decision, logging it but leaving no durable trace), so no AI dismissal
+could ever have appeared in that digest no matter how it was queried. `recordAiDismissal`
+(`CasesRepository`) is the fix — one transition, `actor_type = 'ai'`, the model's own stated
+reason — called from `worker.ts`'s existing triage branch. `dailyDismissalDigest` now also
+groups by `actor_type`, so one digest naturally distinguishes a rule-based dismissal (a small,
+stable enum reason) from an AI one (the model's own free-text reason — grouped by exact text
+match, deliberately not clustered: that is the correct behaviour for free prose, not a
+limitation to engineer around). `triage.ts`'s own `parseTriageDecision` gives a `dismiss`
+decision with no stated reason the SAME fail-safe-to-escalate treatment an unparseable
+response already gets (AC1 — there is nothing to show a customer, and nothing to validate,
+for a dismissal with no reason), and `recordAiDismissal` independently validates the same
+thing at the repository boundary. Delivery (AC5) is the same honestly-scoped structured log
+line every other not-yet-delivered alert in this codebase already is. Two real, date-window
+bugs surfaced and were fixed while writing the end-to-end tests: `recordAiDismissal` correctly
+stamps `occurred_at` at `now()` like any other real write, but a test capturing "the digest
+window" via a `new Date()` taken AFTER the dismissal had already happened could land
+milliseconds later than the DB's own timestamp and silently exclude it — fixed by anchoring
+the test's own window comfortably in the past rather than at the instant of the assertion.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

@@ -25,6 +25,7 @@ import type { InvestigationModel, CaseContext } from '../investigation-model.js'
 import { GroundingFailedError } from '../investigation-model.js';
 import type { TriageModel, TriageDecision } from '../triage.js';
 import { CircuitBreaker } from '../circuit-breaker.js';
+import { withTenantContext, CasesRepository } from '@sentinel/db';
 
 const BROKERS = [process.env.REDPANDA_BROKERS ?? 'localhost:19092'];
 const JAEGER_URL = 'http://localhost:16686';
@@ -309,6 +310,19 @@ describe('AnalystWorker', () => {
     // called before asserting it never was.
     await new Promise((r) => setTimeout(r, 500));
     expect(investigationModel.calls).toHaveLength(0);
+
+    // P4-12 AC1: a durable record of the dismissal and its reason,
+    // not just a log line — and AC2's own digest sees it.
+    const state = await withTenantContext(tenantId, () => new CasesRepository(pool).currentState(caseId));
+    expect(state).toBe('dismissed');
+    // dailyDismissalDigest's own window is [day, day+24h) — a minute
+    // in the past safely covers the dismissal that just happened,
+    // where `new Date()` captured right NOW could land a few
+    // milliseconds AFTER the DB's own now()-stamped occurred_at and
+    // exclude it.
+    const digest = await withTenantContext(tenantId, () => new CasesRepository(pool).dailyDismissalDigest(new Date(Date.now() - 60_000)));
+    const aiRow = digest.find((r) => r.actorType === 'ai' && r.reason === 'no genuine threat indicator');
+    expect(aiRow).toMatchObject({ caseCount: 1 });
   });
 
   it('P4-05 T2: a critical case bypasses triage entirely', async () => {

@@ -17,6 +17,7 @@ import { loadPriceTable } from './pricing.js';
 import { CircuitBreaker, type CircuitState } from './circuit-breaker.js';
 import { PostgresTranscriptRecorder } from './transcript.js';
 import { purgeExpiredTranscripts } from '@sentinel/db';
+import { generateDailyDigests } from './digest.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PermanentError } from './retry.js';
@@ -133,12 +134,24 @@ async function main(): Promise<void> {
       .catch((err) => logger.error({ err: err instanceof Error ? err.message : String(err) }, 'purging expired investigation transcripts failed'));
   }, purgeIntervalMs);
 
+  // P4-12 AC2: "a daily digest per tenant" — the previous UTC day's
+  // own dismissals, swept once every 24h, same timer shape as the
+  // retention purge above.
+  const digestIntervalMs = Number(envOr('DISMISSAL_DIGEST_INTERVAL_MS', String(24 * 60 * 60 * 1000)));
+  const digestTimer = setInterval(() => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    generateDailyDigests(pool, yesterday, logger).catch((err) =>
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'generating daily dismissal digests failed'),
+    );
+  }, digestIntervalMs);
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'draining in-flight investigations before exit');
     clearInterval(purgeTimer);
+    clearInterval(digestTimer);
     await worker.stop();
     await disconnect();
     await ch.close();
