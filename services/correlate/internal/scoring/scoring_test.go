@@ -133,17 +133,17 @@ func TestScore_AlwaysReportsAllFiveComponents(t *testing.T) {
 }
 
 func TestEscalationThreshold_VariesByPlanTier(t *testing.T) {
-	if EscalationThreshold(PlanEnterprise) >= EscalationThreshold(PlanTrial) {
-		t.Errorf("enterprise threshold (%v) should be lower than trial's (%v)", EscalationThreshold(PlanEnterprise), EscalationThreshold(PlanTrial))
+	if EscalationThreshold(PlanMSP) >= EscalationThreshold(PlanTrial) {
+		t.Errorf("MSP threshold (%v) should be lower than trial's (%v)", EscalationThreshold(PlanMSP), EscalationThreshold(PlanTrial))
 	}
 }
 
 func TestIsEscalated_ComparesAgainstThePlanTiersOwnThreshold(t *testing.T) {
-	score := EscalationThreshold(PlanPro)
-	if !IsEscalated(score, PlanPro) {
+	score := EscalationThreshold(PlanStartup)
+	if !IsEscalated(score, PlanStartup) {
 		t.Errorf("a score exactly at the threshold should escalate")
 	}
-	if IsEscalated(score-0.01, PlanPro) {
+	if IsEscalated(score-0.01, PlanStartup) {
 		t.Errorf("a score just below the threshold should not escalate")
 	}
 }

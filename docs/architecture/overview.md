@@ -334,7 +334,8 @@ representations remains the separate, not-yet-done integration work P3-02's own 
 already named. Tenant baseline deviation is a named component that always contributes 0 for
 now — a deliberate placeholder for P3-05 ("Entity baselines for anomaly context"), not a
 silent omission. The escalation threshold is a small, reviewable table keyed by tenant plan
-tier (enterprise tenants escalate sooner), not yet exposed as a per-tenant override. A
+tier, keyed by `tenants.plan`'s own real values (`msp`, `small_business`, `startup`, `trial` —
+an MSP tenant escalates soonest), not yet exposed as a per-tenant override. A
 case's score is recomputed from its *entire* current signal set every time a signal joins
 it, in the same transaction as that signal's own write — recomputing from scratch rather
 than patching incrementally is what keeps the stored score consistent with Score's own
@@ -400,6 +401,28 @@ itself (`GET /dismissals/digest`) is retrievable through the API for any tenant 
 `apps/dashboard` has no real UI framework yet (the same gap `routes/suppressions.ts` already
 documents for its own dashboard requirement), so the API response is the real, tested
 deliverable here, not a placeholder standing in for a UI that doesn't exist.
+
+**Noise-ratio replay harness (`services/correlate/internal/noiseratio`, P3-09).** The P3 exit
+criterion — 10:1 signal-to-case reduction — as an executable test: a reference week of
+signals (benign noise that *should* cluster into low-scoring cases, benign noise that stays
+isolated and still must not escalate, and one seeded BEC-shaped attack sequence) replayed
+through the real `cluster`/`scoring`/`lifecycle` packages against real Postgres, then measured
+with `reduction.Ratio` itself — the identical function the production SLO job uses, so this
+test and that job can never quietly disagree about what "the ratio" means. Deliberately
+replays signals directly (`[]cluster.Signal`), not through Kafka or `services/detect`'s own
+rule engine like `go/sentinelreplay` (P1-09) does for raw events — this harness's own claim is
+about correlation's behaviour at a realistic mix and scale, already-covered territory (Kafka
+delivery, rule matching) is not re-proven here. Runs at two scales: `Reduced` (~80 signals) on
+every PR, inside the normal `go test -tags=integration ./...` sweep; `Full` (~900 signals, a
+closer approximation of a real week) nightly only, behind its own `noiseratio_full` build tag
+(mirroring P2-11's own `loadtest` tag split, for the identical "too slow for every PR, still
+worth running regularly" reason) — `.github/workflows/noise-ratio-nightly.yml`. Building this
+harness is also what caught a real, previously-undetected bug: `scoring.PlanTier`'s own
+`pro`/`enterprise` constants never matched `tenants.plan`'s real CHECK constraint (`msp`,
+`startup`, `small_business`, `trial`) at all — every non-trial tenant's escalation threshold
+had silently been falling through to the conservative default since P3-04. Fixed at its
+source (`scoring/threshold.go`), caught only because this test inserts a real tenant against
+the real schema rather than a synthetic one.
 
 ### 3.7 AI analyst plane
 
