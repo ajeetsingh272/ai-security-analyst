@@ -8,9 +8,24 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:unit": "vitest run --passWithNoTests"
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run -c vitest.integration.config.ts --passWithNoTests",
+    "test:eval": "vitest run -c vitest.integration.config.ts src/__tests__/eval.integration.test.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@clickhouse/client": "^1.24.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@sentinel/db": "workspace:*",
+    "@sentinel/observability": "workspace:*",
+    "@sentinel/schema": "workspace:*",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

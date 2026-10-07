@@ -26,6 +26,7 @@ none of them has to be taken on trust:
 | Table | `tenant_id` | RLS | FORCED | Policy |
 |---|---|---|---|---|
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
+| `analyst_degraded_queue` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
 | `baseline_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -38,6 +39,8 @@ none of them has to be taken on trust:
 | `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
+| `investigation_transcripts` | NOT NULL | yes | yes | `tenant_isolation` |
+| `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -105,6 +108,45 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `analyst_degraded_queue`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `reason` | `text` | no | — |
+| `queued_at` | `timestamptz` | no | `now()` |
+| `processed_at` | `timestamptz` | yes | — |
+
+**Primary key**
+
+- `analyst_degraded_queue_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `analyst_degraded_queue_tenant_id_case_id_key` — `UNIQUE (tenant_id, case_id)`
+
+**Foreign keys**
+
+- `analyst_degraded_queue_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `analyst_degraded_queue_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_analyst_degraded_queue_pending` — `CREATE INDEX idx_analyst_degraded_queue_pending ON public.analyst_degraded_queue USING btree (tenant_id, queued_at) WHERE (processed_at IS NULL)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
 ### `approval_nonces`
@@ -312,6 +354,8 @@ part of the control and not merely a description of it.
 | `entity_ids` | `text[]` | no | `'{}'::text[]` |
 | `signal_count` | `integer` | no | `0` |
 | `created_at` | `timestamptz` | no | `now()` |
+| `escalated_at` | `timestamptz` | yes | — |
+| `escalated_published_at` | `timestamptz` | yes | — |
 
 **Primary key**
 
@@ -611,6 +655,89 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `investigation_transcripts`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `model` | `text` | no | — |
+| `system` | `jsonb` | no | — |
+| `messages` | `jsonb` | no | — |
+| `final_response` | `jsonb` | no | — |
+| `verdict` | `jsonb` | yes | — |
+| `recorded_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `investigation_transcripts_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `investigation_transcripts_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `investigation_transcripts_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_investigation_transcripts_case` — `CREATE INDEX idx_investigation_transcripts_case ON public.investigation_transcripts USING btree (tenant_id, case_id, recorded_at DESC)`
+- `idx_investigation_transcripts_recorded` — `CREATE INDEX idx_investigation_transcripts_recorded ON public.investigation_transcripts USING btree (recorded_at)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
+- `sentinel_jobs`: SELECT
+
+### `llm_usage`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `model` | `text` | no | — |
+| `stage` | `text` | no | — |
+| `input_tokens` | `integer` | no | — |
+| `output_tokens` | `integer` | no | — |
+| `cache_read_tokens` | `integer` | no | `0` |
+| `cache_creation_tokens` | `integer` | no | `0` |
+| `cost_usd` | `numeric` | no | — |
+| `recorded_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `llm_usage_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `llm_usage_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `llm_usage_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `llm_usage_stage_check` — `CHECK ((stage = ANY (ARRAY['triage'::text, 'investigation'::text])))`
+
+**Indexes**
+
+- `idx_llm_usage_tenant_recorded` — `CREATE INDEX idx_llm_usage_tenant_recorded ON public.llm_usage USING btree (tenant_id, recorded_at)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
 - `sentinel_jobs`: SELECT
 
 ### `memberships`

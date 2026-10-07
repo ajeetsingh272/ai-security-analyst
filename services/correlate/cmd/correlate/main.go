@@ -103,7 +103,14 @@ func main() {
 	// shape does not carry — that is a real, separate integration this
 	// ticket's own ACs do not require and should not invent a half
 	// -working version of.
-	clusterer := cluster.NewClusterer(cluster.NewPostgresStore(pgPool), cluster.DefaultWindow)
+	casesProducer, err := kgo.NewClient(kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")))
+	if err != nil {
+		log.Error("creating kafka producer for the cases topic", "err", err)
+		os.Exit(1)
+	}
+	defer casesProducer.Close()
+
+	clusterer := cluster.NewClusterer(cluster.NewPostgresStore(pgPool, &kafkaCaseEventPublisher{producer: casesProducer}), cluster.DefaultWindow)
 
 	group := envOr("CONSUMER_GROUP", "correlate")
 	consumer, err := kgo.NewClient(
@@ -397,6 +404,33 @@ func runReductionRatioSweep(ctx context.Context, log *slog.Logger, store *reduct
 			sweepOnce()
 		}
 	}
+}
+
+// kafkaCaseEventPublisher is cluster.CaseEventPublisher's real,
+// production-backing implementation (P4-01) — the first thing in this
+// system to ever produce to sentinelstream.Cases. The payload is
+// deliberately minimal (just the two ids): the analyst worker that
+// consumes this has full Postgres access and reads the real case
+// directly, so the wire message's only job is "a case escalated,
+// here is which one" — not a duplicate copy of case state that could
+// drift from what Postgres actually holds.
+type kafkaCaseEventPublisher struct {
+	producer *kgo.Client
+}
+
+type caseEventPayload struct {
+	TenantID string `json:"tenant_id"`
+	CaseID   string `json:"case_id"`
+}
+
+func (p *kafkaCaseEventPublisher) PublishEscalated(ctx context.Context, tenantID, caseID string) error {
+	payload, err := json.Marshal(caseEventPayload{TenantID: tenantID, CaseID: caseID})
+	if err != nil {
+		return err
+	}
+	key := sentinelstream.TenantCaseKey(tenantID, caseID)
+	res := p.producer.ProduceSync(ctx, &kgo.Record{Topic: sentinelstream.Cases, Key: []byte(key), Value: payload})
+	return res.FirstErr()
 }
 
 func envOr(key, fallback string) string {

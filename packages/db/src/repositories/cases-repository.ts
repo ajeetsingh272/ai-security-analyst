@@ -28,11 +28,47 @@ export interface CaseRow {
   title: string | null;
   signalCount: number;
   createdAt: string;
+  windowStart: string;
+  windowEnd: string | null;
+}
+
+export interface CaseSignalRow {
+  signalId: string;
+  ruleId: string;
+  entityType: string;
+  entityId: string;
+  severity: string;
+  detectedAt: string;
+}
+
+export interface CaseTransitionRow {
+  fromState: string;
+  toState: string;
+  actorType: string;
+  actorId: string;
+  reason: string | null;
+  occurredAt: string;
+}
+
+export interface CaseHistory {
+  case: CaseRow | null;
+  signals: CaseSignalRow[];
+  transitions: CaseTransitionRow[];
 }
 
 export interface DismissalDigestRow {
-  /** Machine-readable (services/correlate/internal/lifecycle.DismissalReason) —
-   * e.g. "below_escalation_threshold" — never free prose (AC1). */
+  /** 'system' for a rule-based dismissal (services/correlate/internal/
+   * lifecycle's own writer), 'ai' for a triage dismissal (P4-05's
+   * worker.ts) — P4-12 AC3's own "distinguishes rule-based from
+   * AI-based dismissals." */
+  actorType: string;
+  /** For 'system': machine-readable (services/correlate/internal/
+   * lifecycle.DismissalReason), e.g. "below_escalation_threshold". For
+   * 'ai': the model's own stated reason (P4-12 AC1) — free prose, so
+   * two AI dismissals only group together when their stated reasons
+   * happen to match exactly; that is the correct behaviour, not a
+   * limitation to work around with clustering this ticket never asked
+   * for. */
   reason: string;
   caseCount: number;
   signalCount: number;
@@ -45,6 +81,14 @@ export class DismissalChallengeEmptyReasonError extends Error {
   }
 }
 
+/** P4-12 T3: "a dismissal recorded without a reason fails validation." */
+export class AiDismissalEmptyReasonError extends Error {
+  constructor() {
+    super('An AI dismissal requires the model\'s own stated reason and cannot be blank.');
+    this.name = 'AiDismissalEmptyReasonError';
+  }
+}
+
 function mapRow(row: Record<string, unknown>): CaseRow {
   return {
     id: String(row['id']),
@@ -53,6 +97,8 @@ function mapRow(row: Record<string, unknown>): CaseRow {
     title: (row['title'] as string | null) ?? null,
     signalCount: Number(row['signal_count']),
     createdAt: String(row['created_at']),
+    windowStart: String(row['window_start']),
+    windowEnd: (row['window_end'] as string | null) ?? null,
   };
 }
 
@@ -70,7 +116,7 @@ export class CasesRepository extends TenantScopedRepository {
   async findAll(): Promise<CaseRow[]> {
     return this.withTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases ORDER BY created_at DESC',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases ORDER BY created_at DESC',
       );
       return rows.map(mapRow);
     });
@@ -79,7 +125,7 @@ export class CasesRepository extends TenantScopedRepository {
   async findById(id: string): Promise<CaseRow | null> {
     return this.withTransaction(async (client) => {
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
         [id],
       );
       return rows.length > 0 ? mapRow(rows[0]) : null;
@@ -97,22 +143,51 @@ export class CasesRepository extends TenantScopedRepository {
    */
   async dailyDismissalDigest(day: Date): Promise<DismissalDigestRow[]> {
     return this.withTransaction(async (client) => {
-      const { rows } = await client.query<{ reason: string; case_count: string; signal_count: string }>(
-        `SELECT ct.reason, count(DISTINCT ct.case_id) AS case_count, sum(c.signal_count) AS signal_count
+      const { rows } = await client.query<{ actor_type: string; reason: string; case_count: string; signal_count: string }>(
+        `SELECT ct.actor_type, ct.reason, count(DISTINCT ct.case_id) AS case_count, sum(c.signal_count) AS signal_count
            FROM case_transitions ct
            JOIN cases c ON c.id = ct.case_id
           WHERE ct.to_state = 'dismissed'
             AND ct.occurred_at >= $1
             AND ct.occurred_at < $1::timestamptz + INTERVAL '1 day'
-          GROUP BY ct.reason
+          GROUP BY ct.actor_type, ct.reason
           ORDER BY case_count DESC`,
         [day.toISOString()],
       );
       return rows.map((r) => ({
+        actorType: r.actor_type,
         reason: r.reason,
         caseCount: Number(r.case_count),
         signalCount: Number(r.signal_count),
       }));
+    });
+  }
+
+  /**
+   * P4-12 AC1: "every AI dismissal records the model's stated reason."
+   * Mirrors `challengeDismissal`'s own shape (read the current state,
+   * write one transition) but for the OPPOSITE edge — triaging (or
+   * whatever state the case was already in) to dismissed, with
+   * `actor_type = 'ai'` so `dailyDismissalDigest` can tell it apart
+   * from a rule-based dismissal (AC3). Called from `worker.ts`'s own
+   * triage step the moment a case is dismissed, never from inside the
+   * model itself — the model only ever RETURNS a reason string; this
+   * repository is what turns that into a durable, auditable fact.
+   */
+  async recordAiDismissal(caseId: string, reason: string): Promise<void> {
+    if (reason.trim().length === 0) {
+      throw new AiDismissalEmptyReasonError();
+    }
+    await this.withTransaction(async (client) => {
+      const current = await client.query<{ to_state: string | null }>(
+        'SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1',
+        [caseId],
+      );
+      await client.query(
+        `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+         VALUES ($1, $2, $3, 'dismissed', 'ai', 'sentinel-analyst', $4)`,
+        [this.tenantId, caseId, current.rows[0]?.to_state ?? null, reason],
+      );
     });
   }
 
@@ -129,6 +204,67 @@ export class CasesRepository extends TenantScopedRepository {
         [caseId],
       );
       return rows[0]?.to_state ?? null;
+    });
+  }
+
+  /**
+   * get_case_history (P4-02 AC1): a case's full signal and transition
+   * history, newest first. `limit` is fetched as `limit + 1` so the
+   * caller (apps/analyst's own tool wrapper) can tell "there were exactly
+   * `limit` rows" apart from "there were more than `limit` rows" without a
+   * separate COUNT query — the same bounded-plus-one shape
+   * `findById`/`findAll` don't need but a tool with an explicit
+   * truncation marker (AC3) does.
+   */
+  async history(caseId: string, limit: number): Promise<CaseHistory> {
+    return this.withTransaction(async (client) => {
+      const caseResult = await client.query(
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
+        [caseId],
+      );
+      const signalResult = await client.query<{
+        signal_id: string;
+        rule_id: string;
+        entity_type: string;
+        entity_id: string;
+        severity: string;
+        detected_at: string;
+      }>(
+        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at
+           FROM case_signals WHERE case_id = $1 ORDER BY detected_at DESC LIMIT $2`,
+        [caseId, limit + 1],
+      );
+      const transitionResult = await client.query<{
+        from_state: string;
+        to_state: string;
+        actor_type: string;
+        actor_id: string;
+        reason: string | null;
+        occurred_at: string;
+      }>(
+        `SELECT from_state, to_state, actor_type, actor_id, reason, occurred_at
+           FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT $2`,
+        [caseId, limit + 1],
+      );
+      return {
+        case: caseResult.rows.length > 0 ? mapRow(caseResult.rows[0]) : null,
+        signals: signalResult.rows.map((r) => ({
+          signalId: r.signal_id,
+          ruleId: r.rule_id,
+          entityType: r.entity_type,
+          entityId: r.entity_id,
+          severity: r.severity,
+          detectedAt: r.detected_at,
+        })),
+        transitions: transitionResult.rows.map((r) => ({
+          fromState: r.from_state,
+          toState: r.to_state,
+          actorType: r.actor_type,
+          actorId: r.actor_id,
+          reason: r.reason,
+          occurredAt: r.occurred_at,
+        })),
+      };
     });
   }
 
@@ -173,7 +309,7 @@ export class CasesRepository extends TenantScopedRepository {
       });
 
       const { rows } = await client.query(
-        'SELECT id, tenant_id, severity, title, signal_count, created_at FROM cases WHERE id = $1',
+        'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases WHERE id = $1',
         [caseId],
       );
       return rows.length > 0 ? mapRow(rows[0]) : null;

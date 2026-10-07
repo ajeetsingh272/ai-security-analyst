@@ -31,9 +31,21 @@ export {
 export {
   CasesRepository,
   DismissalChallengeEmptyReasonError,
+  AiDismissalEmptyReasonError,
   type CaseRow,
   type DismissalDigestRow,
+  type CaseHistory,
+  type CaseSignalRow,
+  type CaseTransitionRow,
 } from './repositories/cases-repository.js';
+export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
+export { DegradedQueueRepository, listTenantsWithPendingDegradedCases, type DegradedQueueRow } from './repositories/degraded-queue-repository.js';
+export {
+  InvestigationTranscriptRepository,
+  purgeExpiredTranscripts,
+  type TranscriptInput,
+  type TranscriptRow,
+} from './repositories/investigation-transcript-repository.js';
 export {
   ConnectorsRepository,
   type ConnectorHealth,

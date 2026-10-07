@@ -1,0 +1,60 @@
+# P4-04 AC5/TG1: "grounding rejection rate is exported as a metric with
+# an alert above 2%." analyst.grounding.attempts/.rejections
+# (apps/analyst/src/main.ts, via packages/observability's createMeter)
+# are OTel counters; the otel-collector's Prometheus exporter turns dots
+# into underscores and appends _total to a counter — confirmed live by
+# golden-signals.json's own dashboard comment for the identical
+# http.server.* counters, not assumed from the OTel spec — giving
+# analyst_grounding_attempts_total / analyst_grounding_rejections_total.
+#
+# increase(...[15m]) rather than a plain ratio of the raw counters: a
+# monotonic counter's raw value only means something as a rate/delta,
+# and 15m is long enough that a single tenant's occasional investigation
+# doesn't make the ratio swing wildly between evaluations while still
+# being short enough that an actual regression pages well inside the
+# same working session that introduced it.
+#
+# "by (tenant_id)" — same reasoning as reduction-ratio.yml: one
+# degraded tenant must page on its own, never averaged away by every
+# other healthy tenant.
+#
+# No separate Alertmanager container is needed for the rule to
+# EVALUATE; routing a firing alert to a person is a separate,
+# not-yet-built concern (same note as reduction-ratio.yml/ingest-lag.yml).
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: analyst-grounding-rejection-rate
+    folder: Sentinel Alerting
+    interval: 1m
+    rules:
+      - uid: p4-04-grounding-rejection-above-2pct
+        title: 'Evidence grounding rejection rate above 2%'
+        condition: Threshold
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: 'Tenant {{ $labels.tenant_id }}''s evidence grounding rejection rate is {{ $values.Query.Value | printf "%.1f" }}%, above the 2% threshold (TG1). The model''s own claims are failing re-verification against the real event store more often than expected.'
+        data:
+          - refId: Query
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              expr: 100 * sum(increase(analyst_grounding_rejections_total[15m])) by (tenant_id) / sum(increase(analyst_grounding_attempts_total[15m])) by (tenant_id)
+              instant: true
+              refId: Query
+          - refId: Threshold
+            datasourceUid: '-100'
+            model:
+              type: threshold
+              expression: Query
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 2
+              refId: Threshold

@@ -483,6 +483,279 @@ Failure is explicit, never silent: a report that cannot be grounded twice degrad
 rule-only alert and pages the on-call. We would rather ship a terse true alert than a fluent
 false one.
 
+**The worker skeleton (`apps/analyst`, P4-01).** Consumes `cases` — correlation
+(`services/correlate`, P4-01's own other half) now publishes there the moment a case's score
+first crosses its tenant's escalation threshold, closing the gap that existed through all of
+P3: nothing had ever produced to that topic before. Per-tenant concurrency is a plain
+in-process limiter (`TenantConcurrencyLimiter`), not Kafka partition assignment — one
+partition can carry many tenants' cases, so the limit has to be enforced at the application
+layer regardless of how partitions are assigned. A transient provider failure (Anthropic's own
+529 "overloaded", 429, or any 5xx) retries with full-jitter exponential backoff; a permanent
+one (or a transient one with its retry budget exhausted) routes to `cases.dlq` and logs a
+paging-level alert — the same honestly-scoped "a real alert, not a dedicated paging
+integration" shape this repo already uses for its scheduled-workflow alerts. Shutdown drains
+every in-flight investigation before disconnecting, proven directly: a dedicated test holds an
+investigation open with a gate and asserts `stop()` does not resolve until that gate releases.
+Every stage (`case.fetch`, `case.llm_investigation`, `case.investigate`) emits a real span,
+verified against this dev stack's own Jaeger, not merely that the OTel API was called — an
+early version of that same test called `startActiveSpan` without ever having called
+`startTracing()` first, which runs against a no-op tracer and emits nothing at all; caught by
+actually querying Jaeger rather than trusting the call site.
+
+The actual investigation step is deliberately minimal: one model call (now with real tool use,
+P4-02 below), no tiered routing (P4-05), no prompt caching (P4-05), and only a shape check on
+the response (full parsing/validation is P4-03/P4-04) — just enough to prove the worker
+skeleton produces *a* `Verdict` (`packages/schema`'s own frozen contract) end to end. No real
+`ANTHROPIC_API_KEY` is configured in the dev sandbox this was built in, so the integration
+tests substitute a fake `InvestigationModel` at that one seam — every other part of the
+pipeline (Kafka consumption and offset commits, Postgres case lookup, concurrency, retry, DLQ
+routing, tracing, graceful shutdown) runs against this project's own real infrastructure the
+same as everywhere else.
+
+**The investigation tools (P4-02).** Four tools the model can call mid-investigation:
+`query_events` and `get_entity_baseline` read ClickHouse directly (`sentinel.events`,
+`sentinel.entity_baselines` — `apps/analyst` is this repo's first TypeScript ClickHouse
+client; every other reader/writer is Go's clickhouse-go); `get_case_history` reads Postgres
+through the same `CasesRepository`/`withTenantContext` the worker already uses;
+`lookup_threat_intel` is an honest stub — a repo-wide search found no real threat-intel source
+anywhere, so it returns a structured "not configured" result rather than a fabricated match.
+None of the four ever accept a tenant id from the model; `tenantId` comes only from the
+worker's own trusted `CaseContext`. The ClickHouse tools get real defense in depth, not just an
+application-layer `WHERE tenant_id = ...`: they connect as `sentinel_query_user`, the role
+`db/clickhouse/0002_hot_cold_tier_and_row_policy.sql`'s `tenant_isolation` ROW POLICY is scoped
+to, with `SQL_app_tenant_id` set per query — the exact mechanism `scripts/verify-setup.sh`'s
+own P1-06 T2 already proves blocks a cross-tenant read, now exercised by real application code
+for the first time. Every tool call is timed, bounded (an oversized result is truncated with
+an explicit `truncated` flag, never silently cut), and never throws — a timeout, a bad
+argument, or a query failure all become a structured `{error, code, message}` result the model
+reads like any other tool result, logged with its arguments either way for replay. The model's
+tool-use loop in `investigation-model.ts` is capped at a fixed number of round-trips so a case
+that never converges on an answer fails loudly rather than looping (and spending) forever.
+
+**Structured verdict validation (P4-03).** The model's final JSON response is checked against
+the Verdict contract for real (`verdict-validation.ts`) — not the duck-typed shape check P4-01
+shipped as a placeholder: severity is constrained to its five-value enum, every claim must cite
+at least one non-empty `evidenceRef` (an unverifiable claim is rejected here, before the
+grounding validator, P4-04, would otherwise re-query the event store for nothing), and every
+recommended action's `playbook` is checked against a known-identifier list
+(`playbook-registry.ts`). That list is deliberately NOT the real playbook registry — P5-05
+("Response playbook registry and executor") owns blast radius, required scopes, step-up
+requirements, reversal procedures, and the actual executor; this is only validation, using the
+exact six identifiers P5-05's own ticket already names, not invented ahead of that design. A
+validation failure (malformed JSON or any schema violation) gives the model exactly one
+corrected attempt — the failure is fed back as a plain-language message listing every problem
+found in one pass — before the investigation fails outright; a second consecutive failure is
+treated the same as `UnparsableVerdictError` always has been, non-retryable.
+
+**Evidence grounding (P4-04, TG1).** "The mechanism the entire product promise rests on," per
+the ticket's own description, and deliberately deterministic code, never a model self-check:
+every `evidenceRef` a schema-valid Verdict cites is re-queried against `sentinel.events`
+(`grounding.ts`), through the exact same `sentinel_query_user` row-policy mechanism `query_events`
+(P4-02) uses — a fabricated id and a REAL id belonging to a different tenant produce the
+identical "not found" outcome, which is correct: this code must never even hint that a
+cross-tenant id exists. Each resolved event's time is also checked against the case's own
+`window_start`/`window_end` (open cases have no upper bound yet, so only the lower bound is
+enforced). A single unresolvable or out-of-window reference fails the WHOLE report, not just
+that claim, and gives the model exactly one more chance — a separate repair budget from
+P4-03's own schema repair, since they're different problems. A second consecutive grounding
+failure throws a distinguished `GroundingFailedError` that `worker.ts` catches specially: rather
+than the DLQ every other failure gets, it degrades to a rule-only alert and pages — honestly
+scoped the same way every alert in this codebase is before a real delivery channel exists (no
+WhatsApp/Slack/email integration exists before P5's response plane): a real, structured, paged
+log line carrying only the case's own deterministic fields, never the verdict's own unverified
+claims. The rejection rate itself is a real OTel counter pair (`analyst.grounding.attempts` /
+`.rejections`, via `packages/observability`'s new `createMeter`), independently confirmed
+reaching Prometheus by querying it directly rather than trusting the counter call site, with a
+Grafana alert (`infra/docker/grafana-provisioning/alerting/grounding-rejection-rate.yml`) firing
+per-tenant above a 2% rejection rate, mirroring the already-proven `reduction-ratio.yml` pattern.
+
+**Tiered model routing and prompt caching (P4-05).** "The single largest cost lever in the
+system," per the ticket's own description. Every non-critical case is triaged on a cheap model
+(`triage.ts`'s `AnthropicTriageModel`) before the expensive investigation model ever sees it —
+a `dismiss` decision ends the case right there, never reaching `investigate()` at all. A
+malformed or unparseable triage response fails safe to `escalate`, never to dismiss: this
+file's whole job is cheaply filtering out noise, and the worst outcome of a parsing bug here
+would be silently dropping a real case, which is strictly worse than one unnecessary
+investigation. Critical-severity cases bypass triage entirely (`worker.ts`'s own routing, before
+either model is called) — a case already known to be severe gains nothing from a cheap-model
+opinion, only latency. Both tiers share one `tenantContextBlock(tenantId)` function as a
+`cache_control: {type: 'ephemeral'}` system-prompt block — the SAME function, not two copies
+that could silently drift apart and stop matching byte-for-byte, which is what an Anthropic
+prompt cache actually requires to hit. Model identifiers for both tiers are env-configured
+(`ANTHROPIC_TRIAGE_MODEL`/`ANTHROPIC_INVESTIGATION_MODEL`), never hardcoded, so swapping either
+is a deploy-time change. Cache hit rate is a real counter pair
+(`analyst.prompt_cache.calls`/`.hits`, incremented from the Anthropic response's own
+`cache_read_input_tokens`), not a derived guess.
+
+**Per-tenant cost budgets (P4-06).** Enforces the unit economics constraint directly: every
+real Anthropic call (`cost-budget.ts`'s `recordUsage`) writes a durable `llm_usage` row — one
+per call, not a pre-aggregated rollup, so T1's own "token accounting matches the provider's
+reported usage" can be checked against an actual row — and increments a real `analyst.llm.cost_usd`
+counter in the same place, so the two can never drift apart. Cost itself comes from a
+configurable price table (`config/model-prices.json`, USD per million tokens, matching how
+providers publish their own pricing) with its own per-token-kind rate, so a cache read's real
+discount (P4-05) is visible in the number that matters most: the bill. `PLAN_BUDGETS` mirrors
+`services/correlate/internal/scoring/threshold.go`'s own `PlanTier` map almost exactly — the
+same four real plan values, the same "an unrecognised tier degrades to the most conservative
+configured budget" shape, learned from that Go file's own documented mistake of inventing
+fictional tier names that silently never matched the schema. Checked once per case, BEFORE
+either model is called, using only what the tenant already spent on earlier cases today: at
+1.5x the plan's allowance, an operational alert fires but the case still proceeds normally; at
+the hard cap, the case never reaches either model at all and degrades straight to the SAME
+rule-only-alert-and-page path P4-04's grounding failures use — reusing that mechanism rather
+than building a second one. Cost per tenant is visible on a real Grafana dashboard
+(`infra/docker/grafana-provisioning/dashboards/json/llm-cost.json`), alongside the prompt-cache
+hit rate and grounding rejection rate it sits next to for the same reason: all three move
+together when a tenant's behavior actually changes.
+
+**Plain-English report generation (P4-07).** The customer-facing output, built entirely from an
+already-validated, already-grounded Verdict (P4-03/P4-04) — `report.ts`'s own `generateReport`
+never calls a model again and never invents content; it only glosses jargon and restructures
+what already passed grounding, the same "deterministic code, never a model self-check"
+discipline the grounding validator itself applies, now to WRITING a report instead of
+validating one. A fixed glossary (`jargon.ts`) explains any technical term inline the first
+time it appears, never repeating the gloss on later mentions; a Flesch-Kincaid grade-level
+check (`readability.ts`) gates every report before it goes out — calibrated empirically against
+a genuinely plain security-report sentence (~8) versus dense, jargon-heavy prose (25+), since
+the formula is known to be noisy on short passages and a stricter threshold would fail ordinary
+sentences on noise alone. `recommendedActions` are grouped into now/today/later and each
+playbook identifier (P4-03's own known-playbook registry) gets a one-line plain description,
+falling back to the raw identifier rather than fabricating one for anything unrecognised.
+Every statement stays traceable to its own claim's `evidenceRef` (AC3) — carried alongside the
+narrative, not woven into it, since narrating "(see evt_abc123)" inline would reintroduce the
+same jargon this file exists to remove. Four channel renderers (`report-channels.ts`) turn the
+same `Report` into WhatsApp plain text, Slack Block Kit, escaped HTML email, and the dashboard's
+own structured JSON — each respecting that channel's real limits (WhatsApp's message cap,
+Slack's per-block text cap) with an explicit truncation marker, never a silent cut, and the
+email renderer HTML-escapes every piece of report text, since it ultimately traces back to
+model-authored claim text that is grounding-validated but never HTML-encoding-trusted. No real
+delivery channel exists yet (WhatsApp/Slack/email integration is P5's own response plane), so
+the worker renders for all four channels against every real case it processes — proving AC4
+against real production traffic, not only a unit-test fixture — and logs the result rather than
+sending it, the same honestly-scoped pattern every other not-yet-delivered alert in this
+codebase already uses.
+
+**Golden-case eval suite (P4-08).** "How a model or prompt change is proven safe before it
+ships." 50 golden cases (`apps/analyst/src/eval/golden-cases.ts`) — generated from 10
+true-positive/false-positive/ambiguous templates each instantiated across 5
+entities/countries/scores, a standard parameterised-golden-set authoring technique rather than
+50 bespoke narratives — each seeding exactly what the real pipeline needs (a `cases` row, a
+handful of real `sentinel.events` rows the investigation model's own tools can discover and
+cite) to produce a verdict for real. Scoring (`eval/scoring.ts`) is pure and infra-free: triage
+correctness, severity accuracy, 100%-grounding (never a lower tolerance — a single unresolved
+reference is TG1's own "fails the whole report," not a statistic to average away), and action
+appropriateness (does ANY recommended playbook match the case's own expected set, not an
+exact-match requirement) are scored per case and aggregated; `checkTolerance` is the one
+function a CI exit code comes from, and `detectDrift` separately catches a suite sliding several
+points run over run even while still clearing every absolute floor. Results are written as
+timestamped snapshots plus a `latest.json` (AC5) so drift is visible without reparsing
+filenames. The harness (`eval/runner.ts`) is model-agnostic by construction — real
+Anthropic-backed models and a fake model share every line of seeding/scoring code — which is
+what let a fake "always dismiss" model prove the suite correctly fails a deliberately degraded
+prompt (AC4/T4), and a fake "oracle" model (looks up each case's own known-correct answer,
+grounds against a REAL resolved event id) prove the harness's own seeding/grounding/scoring
+plumbing at the full 50-case scale against real infra — both verified for real, in this
+sandbox, in a few seconds. What has NOT run here: the actual pinned model against all 50 cases
+(T1/T2/T3), which needs a real `ANTHROPIC_API_KEY` this sandbox does not have — those tests are
+`skipIf`-gated, visibly skipped rather than faked, and `.github/workflows/eval-golden-cases.yml`
+runs them for real nightly once that secret is configured, against model identifiers pinned in
+the workflow itself (AC3), never an env default that could silently drift.
+
+**Prompt-injection resistance (P4-09, TG1).** "Log content is attacker-controlled... the
+analyst must treat all event content as data, never as instruction." Every piece of
+log-derived content reaching either model — every tool result (`tools/index.ts`'s own
+`executeTool`) and the case's own title — is wrapped in an explicit `<untrusted_data>` delimiter
+(`injection-defense.ts`), and both system prompts (`triage.ts`, `investigation-model.ts`) state
+plainly that content inside those tags is never an instruction, no matter what it says. Delimiting
+happens unconditionally; DETECTION is the separate, narrower mechanism a growing blocklist of
+known injection shapes (`ignore previous instructions`, a fake `assistant:` turn, `severity
+should be set to info`, `do not alert`, ...) feeds — a match adds a visible security-warning
+banner to that specific block and logs the attempt for threat research (AC3/AC5), regardless of
+whether the model would have resisted it anyway. Tool arguments get the same boundary check
+P4-02's own design already implied: no tool has ever read a tenant id from its own arguments,
+only from the worker's trusted `CaseContext` — this ticket makes that explicit and tested (an
+injected `tenant_id` key in a tool call's arguments is logged as suspicious and has zero effect,
+proven against real ClickHouse row-policy-scoped data, no model required). Whether a REAL model
+actually resists a crafted payload (AC2) is a different claim from any of the above and the one
+piece this sandbox's missing `ANTHROPIC_API_KEY` cannot verify — those two tests are
+`skipIf`-gated and show as skipped, the same honest boundary P4-08's own eval suite already
+established for exactly this reason.
+
+**Analyst degradation path (P4-10, TG4/C4).** "The provider being down must degrade the
+product, not stop it." `circuit-breaker.ts`'s `CircuitBreaker` — a plain, clock-injectable
+state machine, no network or SDK dependency of its own — is shared by both the triage and
+investigation calls, since both hit the same underlying Anthropic API: a 503 from either is
+equally real evidence the provider itself is down. Three states (`closed`/`open`/`half_open`):
+a configured number of consecutive provider failures opens it; after `openDurationMs`, exactly
+one trial call is let through; that call's own success closes it again and reports
+`recovered: true`, the one edge that should trigger a drain, distinct from an ordinary success
+while already closed. A malformed response or a grounding failure is a real problem but never
+trips this breaker — only `isProviderFailure` (the same classifier `main.ts` already uses for
+retry eligibility) decides that. An open circuit routes the case straight to the SAME
+`degradeToRuleOnlyAlert` path P4-04/P4-06 already built (now generalized to take a
+reason/detail pair instead of being grounding-specific) and queues it
+(`analyst_degraded_queue`, `packages/db`'s `DegradedQueueRepository` — `UNIQUE (tenant_id,
+case_id)` makes enqueueing idempotent) rather than losing it to the DLQ. Recovery drains that
+queue by re-publishing each pending case back onto `cases`, which this same worker then
+genuinely re-investigates through the ordinary pipeline — proven end to end, not just that a
+queue row exists: a dedicated test runs a real outage-then-recovery cycle against real
+Postgres/Redpanda and confirms the originally-degraded case is later re-investigated exactly
+once, with its original degrade alert never duplicated. Circuit state is a live OTel gauge
+(`analyst.circuit_breaker.state`, 0/1/2) on the same operations dashboard P4-04/P4-05/P4-06's
+own metrics already share (`llm-cost.json`), confirmed live via Grafana's own API after this
+dashboard's update auto-provisioned.
+
+**Investigation replay and debugging tooling (P4-11).** "Re-run a past investigation with full
+prompt, tool-call and response capture, so 'why did it say that' is answerable months later."
+`investigation-model.ts` records a full transcript (`investigation_transcripts`, Postgres) at
+the end of every real investigation — `messages` alone already carries every tool call in its
+natural order (Anthropic's own format interleaves `tool_use`/`tool_result` directly into the
+conversation), so there is no separate tool-call log to keep in sync with it. Captured through
+`@sentinel/observability`'s own `redact` — the SAME function already wired into every log call
+(P0-10 AC3), not a second redaction mechanism invented here that could drift from what the rest
+of this codebase already trusts — before it ever reaches SQL, so the table is not itself a
+place a secret could leak from, by construction. `replay.ts`'s `replayInvestigation` re-sends a
+captured transcript's own `system`/`messages` to a DIFFERENT model/prompt version with no
+`tools` field at all: the captured `tool_result` turns are replayed verbatim, never
+re-executed, which is what makes "replay never emits a real alert or executes a real action"
+true by construction rather than by a separate guard — there is no code path in this file that
+could call a tool or produce to Kafka even if it tried. `verdict-diff.ts`'s `diffVerdicts`
+structurally compares two verdicts (severity, claims by text, actions by playbook+urgency) for
+AC5's own "diffing two replays is supported." Retention (AC3) is a daily sweep
+(`purgeExpiredTranscripts`, cross-tenant by construction like
+`DegradedQueueRepository`'s own sweep) against a configurable window, default 90 days. A
+dedicated test captures a real investigation into real Postgres, reads the transcript back, and
+replays it against a second fake model — proving capture, storage, retrieval, and replay all
+work together, which caught a second real bug the same session: the original recording call was
+fire-and-forget, so a test reading the transcript back immediately after `investigate()`
+returned sometimes raced the write; recording is now awaited (still error-tolerant) since AC1 is
+this ticket's own primary deliverable, not best-effort telemetry.
+
+**Daily dismissal digest generation (P4-12, TG3).** "AI-dismissed cases are summarised daily
+with the model's reason, so an automated dismissal is never invisible to the customer." P3-07
+already built the digest's own read path (`CasesRepository.dailyDismissalDigest`, grouping
+`case_transitions` by reason) and the challenge path (`challengeDismissal`, reopening a
+dismissed case and auditing it) — this ticket closed the one real gap: nothing had ever
+written a `case_transitions` row for a TRIAGE dismissal at all (P4-05's own worker just
+`return`ed on a dismiss decision, logging it but leaving no durable trace), so no AI dismissal
+could ever have appeared in that digest no matter how it was queried. `recordAiDismissal`
+(`CasesRepository`) is the fix — one transition, `actor_type = 'ai'`, the model's own stated
+reason — called from `worker.ts`'s existing triage branch. `dailyDismissalDigest` now also
+groups by `actor_type`, so one digest naturally distinguishes a rule-based dismissal (a small,
+stable enum reason) from an AI one (the model's own free-text reason — grouped by exact text
+match, deliberately not clustered: that is the correct behaviour for free prose, not a
+limitation to engineer around). `triage.ts`'s own `parseTriageDecision` gives a `dismiss`
+decision with no stated reason the SAME fail-safe-to-escalate treatment an unparseable
+response already gets (AC1 — there is nothing to show a customer, and nothing to validate,
+for a dismissal with no reason), and `recordAiDismissal` independently validates the same
+thing at the repository boundary. Delivery (AC5) is the same honestly-scoped structured log
+line every other not-yet-delivered alert in this codebase already is. Two real, date-window
+bugs surfaced and were fixed while writing the end-to-end tests: `recordAiDismissal` correctly
+stamps `occurred_at` at `now()` like any other real write, but a test capturing "the digest
+window" via a `new Date()` taken AFTER the dismissal had already happened could land
+milliseconds later than the DB's own timestamp and silently exclude it — fixed by anchoring
+the test's own window comfortably in the past rather than at the instant of the assertion.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.
