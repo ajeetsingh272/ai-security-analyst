@@ -1,0 +1,22 @@
+{
+  "name": "@sentinel/approval-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "P5-03/ADR-0007: signed single-use approval tokens",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
