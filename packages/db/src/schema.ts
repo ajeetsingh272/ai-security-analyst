@@ -267,6 +267,32 @@ export const tenantDeks = pgTable("tenant_deks", {
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 ]);
 
+export const hotfixRules = pgTable("hotfix_rules", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	ruleId: text("rule_id").notNull(),
+	ruleTitle: text("rule_title").notNull(),
+	ruleYaml: text("rule_yaml").notNull(),
+	reason: text().notNull(),
+	createdBy: uuid("created_by").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+	revokedBy: uuid("revoked_by"),
+}, (table) => [
+	index("idx_hotfix_rules_active").using("btree", table.expiresAt.asc().nullsLast().op("timestamptz_ops")).where(sql`(revoked_at IS NULL)`),
+	foreignKey({
+			columns: [table.createdBy],
+			foreignColumns: [users.id],
+			name: "hotfix_rules_created_by_fkey"
+		}),
+	foreignKey({
+			columns: [table.revokedBy],
+			foreignColumns: [users.id],
+			name: "hotfix_rules_revoked_by_fkey"
+		}),
+	check("hotfix_rules_reason_check", sql`length(TRIM(BOTH FROM reason)) > 0`),
+]);
+
 export const connectorCursors = pgTable("connector_cursors", {
 	connectorId: uuid("connector_id").notNull(),
 	stream: text().notNull(),

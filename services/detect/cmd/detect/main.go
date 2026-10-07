@@ -28,6 +28,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/hotfix"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/windowed"
@@ -182,11 +183,20 @@ func main() {
 	defer pgPool.Close()
 	suppressionChecker := suppression.NewPostgresChecker(pgPool)
 
+	// P2-12/ADR-0004: the emergency hotfix rule path. Reuses pgPool
+	// above — this is a second, independent read against the same
+	// cluster, not a second connection concern. hotfixLoader.Run starts
+	// its own background refresh ticker; Active() is read lock-free
+	// from the worker's own hot path.
+	hotfixLoader := hotfix.NewLoader(hotfix.NewPostgresSource(pgPool), log)
+	go hotfixLoader.Run(ctx, 30*time.Second)
+
 	w := worker.New(tree, consumerClient, producerClient, worker.Options{
 		Group:              group,
 		Log:                log,
 		Enricher:           enrichRefresher,
 		SuppressionChecker: suppressionChecker,
+		HotfixRules:        hotfixLoader,
 		Metrics: worker.Metrics{
 			SignalsEmitted:        signalsEmitted,
 			EvalErrors:            evalErrors,

@@ -171,6 +171,24 @@ Every rule, in either engine, carries a mandatory MITRE ATT&CK technique ID. CI 
 unmapped rule. This is not bureaucracy — the technique ID is what the customer-facing report
 cites, and it is what makes the output defensible to the customer's auditor.
 
+**Emergency hotfix rules (services/detect/internal/hotfix, P2-12).** ADR-0004's own named
+escape hatch: a small interpreted rule path for urgent detections, capped at 10 active rules
+platform-wide and expiring automatically after 7 days with no option to extend in place (the
+expiry is enforced by a Postgres trigger, `0008_hotfix_rules.sql`, not application convention —
+no INSERT or UPDATE can set `expires_at` to anything other than `created_at + 7 days`).
+Evaluation reuses `sigmac.Evaluate`, P2-02's own reference interpreter (the correctness oracle
+codegen tests already check the compiled path against) — this package is the plumbing that
+feeds it rules sourced from Postgres instead of the committed corpus, not a second interpreter.
+A hotfix rule is in-stream only; `Evaluate` ignores `Aggregation` entirely, so a rule declaring
+one is rejected at load time rather than silently degraded. Not tenant-scoped — the cap is a
+single global count across every tenant combined (`hotfix_rules` carries no `tenant_id`, the
+same shape `tenants`/`users` themselves use). "Creating one requires an elevated role" resolves
+a real gap: every RBAC role in this system is tenant-scoped, and letting any customer's own
+`admin` create a rule affecting every tenant's detection would be a cross-tenant boundary
+violation — the fix pins creation to a single designated operations tenant
+(`PLATFORM_OPS_TENANT_ID`) rather than inventing a new access-control axis, and audits every
+denied attempt, not only successful ones.
+
 **Load testing (services/detect/internal/loadtest, P2-11).** A Go harness — not k6, following
 this repo's own established Go-based load/soak convention (go/soaktest, go/sentinelevents/loadtest)
 rather than a new JS toolchain — drives real `Worker` instances at a configurable EPS for a
