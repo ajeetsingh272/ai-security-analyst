@@ -50,7 +50,7 @@ func createTenant(t *testing.T, pool *pgxpool.Pool) string {
 func TestPostgresStore_BECScenarioProducesExactlyOneCase(t *testing.T) {
 	pool := newTestPool(t)
 	tenantID := createTenant(t, pool)
-	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	c := NewClusterer(NewPostgresStore(pool, nil), DefaultWindow)
 	ctx := context.Background()
 
 	base := time.Date(2026, 1, 1, 2, 14, 0, 0, time.UTC)
@@ -121,7 +121,7 @@ func TestPostgresStore_BECScenarioProducesExactlyOneCase(t *testing.T) {
 func TestPostgresStore_CloseQuietCasesRecordsDismissalForNonEscalatedCase(t *testing.T) {
 	pool := newTestPool(t)
 	tenantID := createTenant(t, pool)
-	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	c := NewClusterer(NewPostgresStore(pool, nil), DefaultWindow)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
 
@@ -178,7 +178,7 @@ func TestPostgresStore_CloseQuietCasesRecordsDismissalForNonEscalatedCase(t *tes
 func TestPostgresStore_EscalatedCaseStillClosesOnQuietTimeout(t *testing.T) {
 	pool := newTestPool(t)
 	tenantID := createTenant(t, pool)
-	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	c := NewClusterer(NewPostgresStore(pool, nil), DefaultWindow)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
 
@@ -222,7 +222,7 @@ func TestPostgresStore_EscalatedCaseStillClosesOnQuietTimeout(t *testing.T) {
 func TestPostgresStore_ScoreIsRecomputedAsSignalsJoinAndEntityIsFlagged(t *testing.T) {
 	pool := newTestPool(t)
 	tenantID := createTenant(t, pool)
-	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	c := NewClusterer(NewPostgresStore(pool, nil), DefaultWindow)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 3, 0, 0, 0, time.UTC)
 
@@ -315,7 +315,7 @@ func readCaseScore(t *testing.T, pool *pgxpool.Pool, caseID string) float64 {
 func TestPostgresStore_OpenCaseSurvivesHotTenantShardMidStream(t *testing.T) {
 	pool := newTestPool(t)
 	rawTenantID := createTenant(t, pool)
-	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	c := NewClusterer(NewPostgresStore(pool, nil), DefaultWindow)
 	ctx := context.Background()
 	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
 

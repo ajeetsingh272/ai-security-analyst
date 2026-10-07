@@ -94,6 +94,18 @@ const Signals = "signals"
 // to DLQ without halting the worker").
 const SignalsDLQ = "signals.dlq"
 
+// Cases is P4-01's own output topic — correlation (P3) publishes here
+// the first time a case's score crosses its tenant's escalation
+// threshold (cases.escalated_at is the idempotency guard), consumed
+// next by the AI analyst plane (P4). Provisioned since P1-05; this is
+// its first real producer or consumer.
+const Cases = "cases"
+
+// CasesDLQ is cases' own dead-letter topic — a case the analyst
+// worker permanently fails to investigate (P4-01's own retry budget
+// exhausted) lands here, never silently dropped.
+const CasesDLQ = "cases.dlq"
+
 // CriticalAlerts is P2-08/TG4's own direct alert path — "the rule engine
 // owns a direct alert path that bypasses the analyst" (SECURITY.md
 // guarantee #4). Published to in parallel with Signals, by the same

@@ -483,6 +483,55 @@ Failure is explicit, never silent: a report that cannot be grounded twice degrad
 rule-only alert and pages the on-call. We would rather ship a terse true alert than a fluent
 false one.
 
+**The worker skeleton (`apps/analyst`, P4-01).** Consumes `cases` — correlation
+(`services/correlate`, P4-01's own other half) now publishes there the moment a case's score
+first crosses its tenant's escalation threshold, closing the gap that existed through all of
+P3: nothing had ever produced to that topic before. Per-tenant concurrency is a plain
+in-process limiter (`TenantConcurrencyLimiter`), not Kafka partition assignment — one
+partition can carry many tenants' cases, so the limit has to be enforced at the application
+layer regardless of how partitions are assigned. A transient provider failure (Anthropic's own
+529 "overloaded", 429, or any 5xx) retries with full-jitter exponential backoff; a permanent
+one (or a transient one with its retry budget exhausted) routes to `cases.dlq` and logs a
+paging-level alert — the same honestly-scoped "a real alert, not a dedicated paging
+integration" shape this repo already uses for its scheduled-workflow alerts. Shutdown drains
+every in-flight investigation before disconnecting, proven directly: a dedicated test holds an
+investigation open with a gate and asserts `stop()` does not resolve until that gate releases.
+Every stage (`case.fetch`, `case.llm_investigation`, `case.investigate`) emits a real span,
+verified against this dev stack's own Jaeger, not merely that the OTel API was called — an
+early version of that same test called `startActiveSpan` without ever having called
+`startTracing()` first, which runs against a no-op tracer and emits nothing at all; caught by
+actually querying Jaeger rather than trusting the call site.
+
+The actual investigation step is deliberately minimal: one model call (now with real tool use,
+P4-02 below), no tiered routing (P4-05), no prompt caching (P4-05), and only a shape check on
+the response (full parsing/validation is P4-03/P4-04) — just enough to prove the worker
+skeleton produces *a* `Verdict` (`packages/schema`'s own frozen contract) end to end. No real
+`ANTHROPIC_API_KEY` is configured in the dev sandbox this was built in, so the integration
+tests substitute a fake `InvestigationModel` at that one seam — every other part of the
+pipeline (Kafka consumption and offset commits, Postgres case lookup, concurrency, retry, DLQ
+routing, tracing, graceful shutdown) runs against this project's own real infrastructure the
+same as everywhere else.
+
+**The investigation tools (P4-02).** Four tools the model can call mid-investigation:
+`query_events` and `get_entity_baseline` read ClickHouse directly (`sentinel.events`,
+`sentinel.entity_baselines` — `apps/analyst` is this repo's first TypeScript ClickHouse
+client; every other reader/writer is Go's clickhouse-go); `get_case_history` reads Postgres
+through the same `CasesRepository`/`withTenantContext` the worker already uses;
+`lookup_threat_intel` is an honest stub — a repo-wide search found no real threat-intel source
+anywhere, so it returns a structured "not configured" result rather than a fabricated match.
+None of the four ever accept a tenant id from the model; `tenantId` comes only from the
+worker's own trusted `CaseContext`. The ClickHouse tools get real defense in depth, not just an
+application-layer `WHERE tenant_id = ...`: they connect as `sentinel_query_user`, the role
+`db/clickhouse/0002_hot_cold_tier_and_row_policy.sql`'s `tenant_isolation` ROW POLICY is scoped
+to, with `SQL_app_tenant_id` set per query — the exact mechanism `scripts/verify-setup.sh`'s
+own P1-06 T2 already proves blocks a cross-tenant read, now exercised by real application code
+for the first time. Every tool call is timed, bounded (an oversized result is truncated with
+an explicit `truncated` flag, never silently cut), and never throws — a timeout, a bad
+argument, or a query failure all become a structured `{error, code, message}` result the model
+reads like any other tool result, logged with its arguments either way for replay. The model's
+tool-use loop in `investigation-model.ts` is capped at a fixed number of round-trips so a case
+that never converges on an answer fails loudly rather than looping (and spending) forever.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

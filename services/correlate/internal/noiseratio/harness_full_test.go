@@ -35,7 +35,7 @@ func TestNoiseRatio_ReferenceDatasetAtFullScale(t *testing.T) {
 	weekStart := time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)
 	ds := Build(Full, weekStart)
 
-	clusterer := cluster.NewClusterer(cluster.NewPostgresStore(pool), cluster.DefaultWindow)
+	clusterer := cluster.NewClusterer(cluster.NewPostgresStore(pool, nil), cluster.DefaultWindow)
 	replay(t, ctx, tenantID, clusterer, ds)
 
 	m := measure(t, ctx, pool, tenantID, threshold)
