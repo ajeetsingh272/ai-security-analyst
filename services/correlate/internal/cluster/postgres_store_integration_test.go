@@ -107,7 +107,17 @@ func TestPostgresStore_BECScenarioProducesExactlyOneCase(t *testing.T) {
 // Real-Postgres counterpart to T4's own in-memory proof: a quiet
 // period sweep against the real table closes exactly the cases it
 // should, and leaves the case_transitions trail behind.
-func TestPostgresStore_CloseQuietCasesRecordsTransition(t *testing.T) {
+//
+// P3-07/TG3: a single medium-severity signal's own score never
+// crosses any plan tier's escalation threshold, so this case —
+// unchanged from P3-03's own original fixture — now DISMISSES on
+// quiet timeout rather than closing. That is the intended, correct
+// behaviour this ticket introduces, not a regression: this case was
+// never going to be escalated, so quiet-timing it out is exactly the
+// "non-escalated" path AC1 requires a machine-readable reason for.
+// TestPostgresStore_EscalatedCaseStillClosesOnQuietTimeout below
+// covers the other branch.
+func TestPostgresStore_CloseQuietCasesRecordsDismissalForNonEscalatedCase(t *testing.T) {
 	pool := newTestPool(t)
 	tenantID := createTenant(t, pool)
 	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
@@ -131,14 +141,17 @@ func TestPostgresStore_CloseQuietCasesRecordsTransition(t *testing.T) {
 		t.Fatalf("closed = %d, want 1", closed)
 	}
 
-	var transitionCount int
+	var toState, reason string
 	if err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM case_transitions WHERE case_id = $1 AND to_state = 'closed'`, caseID,
-	).Scan(&transitionCount); err != nil {
-		t.Fatalf("counting case_transitions: %v", err)
+		`SELECT to_state, reason FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1`, caseID,
+	).Scan(&toState, &reason); err != nil {
+		t.Fatalf("reading the latest case_transitions row: %v", err)
 	}
-	if transitionCount != 1 {
-		t.Errorf("'closed' transitions for case %s = %d, want 1", caseID, transitionCount)
+	if toState != "dismissed" {
+		t.Errorf("to_state = %q, want %q (this case's score never crossed any escalation threshold)", toState, "dismissed")
+	}
+	if reason != "below_escalation_threshold" {
+		t.Errorf("reason = %q, want the machine-readable %q", reason, "below_escalation_threshold")
 	}
 
 	// P3-03/AC5: this transition — shipped in P3-02, before the audit
@@ -150,8 +163,52 @@ func TestPostgresStore_CloseQuietCasesRecordsTransition(t *testing.T) {
 	).Scan(&auditCount); err != nil {
 		t.Fatalf("counting audit_log: %v", err)
 	}
-	if auditCount != 2 { // one for the 'open' transition, one for 'closed'
+	if auditCount != 2 { // one for the 'open' transition, one for 'dismissed'
 		t.Errorf("audit_log entries for case %s = %d, want 2", caseID, auditCount)
+	}
+}
+
+// The other branch: a case whose score DID cross the escalation
+// threshold still closes normally on quiet timeout — it was never a
+// hidden dismissal to begin with. Forced over the threshold directly
+// via UPDATE, the same way scoring's own weights are deliberately not
+// re-derived here (this test is about CloseQuietCases' own branching,
+// not about scoring.Score's correctness, which has its own suite).
+func TestPostgresStore_EscalatedCaseStillClosesOnQuietTimeout(t *testing.T) {
+	pool := newTestPool(t)
+	tenantID := createTenant(t, pool)
+	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
+
+	caseID, err := c.Cluster(ctx, tenantID, Signal{
+		DedupeKey: tenantID + ":rule-1:s1", SignalID: "s1", RuleID: "rule-1",
+		EntityType: "user", EntityID: "priya", Severity: "critical",
+		EventIDs: []string{"evt-1"}, DetectedAt: base,
+	})
+	if err != nil {
+		t.Fatalf("Cluster: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE cases SET score = 999 WHERE id = $1`, caseID); err != nil {
+		t.Fatalf("forcing score above threshold: %v", err)
+	}
+
+	closed, err := c.CloseQuietCases(ctx, tenantID, 30*time.Minute, base.Add(31*time.Minute))
+	if err != nil {
+		t.Fatalf("CloseQuietCases: %v", err)
+	}
+	if closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+
+	var toState string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1`, caseID,
+	).Scan(&toState); err != nil {
+		t.Fatalf("reading the latest case_transitions row: %v", err)
+	}
+	if toState != "closed" {
+		t.Errorf("to_state = %q, want %q (this case's score crossed the escalation threshold)", toState, "closed")
 	}
 }
 

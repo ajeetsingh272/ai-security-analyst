@@ -4,10 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelaudit"
 	"github.com/jackc/pgx/v5"
 )
+
+// ErrDismissalReasonRequired is returned by Transition when `to` is
+// StateDismissed and reason is empty or blank — P3-07's own AC1/T2:
+// "a dismissal without a reason is rejected at write time." Checked
+// before anything is written, the same as an illegal transition.
+var ErrDismissalReasonRequired = errors.New("lifecycle: a dismissal requires a non-empty, machine-readable reason")
 
 // Writer appends one case_transitions row and its audit_log entry in
 // the SAME caller-provided transaction (AC5) — an illegal transition
@@ -30,6 +37,13 @@ func NewWriter(audit *sentinelaudit.Writer) *Writer {
 // since it may need to share this transaction with its own other
 // writes (e.g. case_signals).
 func (w *Writer) Transition(ctx context.Context, tx pgx.Tx, tenantID, caseID string, to State, actorType sentinelaudit.ActorType, actorID, reason string) error {
+	// Checked before any I/O at all — T2's own "a dismissal without a
+	// reason is rejected at write time" is provable with no tx and no
+	// database, just this function and its arguments.
+	if to == StateDismissed && strings.TrimSpace(reason) == "" {
+		return ErrDismissalReasonRequired
+	}
+
 	current, err := currentState(ctx, tx, tenantID, caseID)
 	if err != nil {
 		return fmt.Errorf("lifecycle: reading current state for case %s: %w", caseID, err)
