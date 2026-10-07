@@ -1,0 +1,57 @@
+# P3-06/TG3 AC2: "An alert fires when the ratio drops below 8:1."
+#
+# correlate_reduction_ratio is a synchronous OTel gauge
+# (cmd/correlate/main.go), set once per tenant per day by
+# runReductionRatioSweep after computing that tenant's own previous
+# completed day — Prometheus keeps reporting that last-set value
+# between updates, which is the correct reading for a daily SLO (the
+# alert reflects "yesterday's ratio" until today's run replaces it, not
+# some partial, still-accumulating number).
+#
+# "by (tenant_id)" is deliberate: a single degraded tenant must fire
+# its own alert instance, never averaged away by every other healthy
+# tenant the way a single platform-wide aggregate would.
+#
+# Same reasoning as ingest-lag.yml (P1-11) for everything below: no
+# separate Alertmanager container is needed for the rule to EVALUATE;
+# routing a firing alert to a person is a separate, not-yet-built
+# concern. `for: 0s` because the threshold itself (8) already IS the
+# AC's own requirement — a dwell period would mean firing later than
+# "the ratio IS below 8:1".
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: correlate-reduction-ratio
+    folder: Sentinel Alerting
+    interval: 1m
+    rules:
+      - uid: p3-06-reduction-ratio-below-8to1
+        title: 'Signal-to-case reduction ratio dropped below 8:1'
+        condition: Threshold
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: 'Tenant {{ $labels.tenant_id }}''s signal-to-case reduction ratio is {{ $values.Query.Value }}:1, below the 8:1 SLO floor. See docs/runbooks/reduction-ratio-degraded.md.'
+        data:
+          - refId: Query
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              expr: min by (tenant_id) (correlate_reduction_ratio)
+              instant: true
+              refId: Query
+          - refId: Threshold
+            datasourceUid: '-100'
+            model:
+              type: threshold
+              expression: Query
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - 8
+              refId: Threshold
