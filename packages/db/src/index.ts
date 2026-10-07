@@ -36,6 +36,13 @@ export {
   type ConnectorDbStatus,
 } from './repositories/connectors-repository.js';
 export {
+  SuppressionsRepository,
+  SuppressionEmptyReasonError,
+  type SuppressionRow,
+  type CreateSuppressionInput,
+  type RenewSuppressionInput,
+} from './repositories/suppressions-repository.js';
+export {
   AuditLogWriter,
   type ActorType,
   type AuditEntryInput,

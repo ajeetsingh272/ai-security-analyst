@@ -33,6 +33,7 @@ none of them has to be taken on trust:
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
+| `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
@@ -422,6 +423,52 @@ part of the control and not merely a description of it.
 **Primary key**
 
 - `schema_migrations_pkey` — `PRIMARY KEY (filename)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `suppressions`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `rule_id` | `text` | no | — |
+| `entity_id` | `text` | yes | — |
+| `reason` | `text` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `expires_at` | `timestamptz` | no | — |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+| `suppressed_count` | `integer` | no | `0` |
+
+**Primary key**
+
+- `suppressions_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `suppressions_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `suppressions_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+- `suppressions_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `suppressions_check` — `CHECK ((expires_at > created_at))`
+- `suppressions_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_suppressions_lookup` — `CREATE INDEX idx_suppressions_lookup ON public.suppressions USING btree (tenant_id, rule_id, entity_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
 
 **Grants**
 

@@ -219,6 +219,40 @@ export const users = pgTable("users", {
 	passwordHash: text("password_hash"),
 });
 
+export const suppressions = pgTable("suppressions", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	ruleId: text("rule_id").notNull(),
+	entityId: text("entity_id"),
+	reason: text().notNull(),
+	createdBy: uuid("created_by").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: 'string' }).notNull(),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+	revokedBy: uuid("revoked_by"),
+	suppressedCount: integer("suppressed_count").default(0).notNull(),
+}, (table) => [
+	index("idx_suppressions_lookup").using("btree", table.tenantId.asc().nullsLast().op("uuid_ops"), table.ruleId.asc().nullsLast().op("text_ops"), table.entityId.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "suppressions_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.createdBy],
+			foreignColumns: [users.id],
+			name: "suppressions_created_by_fkey"
+		}),
+	foreignKey({
+			columns: [table.revokedBy],
+			foreignColumns: [users.id],
+			name: "suppressions_revoked_by_fkey"
+		}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("suppressions_reason_check", sql`length(TRIM(BOTH FROM reason)) > 0`),
+	check("suppressions_check", sql`expires_at > created_at`),
+]);
+
 export const tenantDeks = pgTable("tenant_deks", {
 	tenantId: uuid("tenant_id").primaryKey().notNull(),
 	wrappedDek: bytea("wrapped_dek").notNull(),

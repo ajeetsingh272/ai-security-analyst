@@ -191,6 +191,22 @@ today, before dispatch; a windowed rule's own query reads ClickHouse history tha
 persist this data, which is why `impossible-travel.yml`'s own true geo-velocity check remains a
 documented follow-up rather than something this ticket completed.
 
+**Suppression and allowlisting (services/detect/internal/suppression, TG3).** An analyst can
+suppress a noisy rule — scoped to a tenant, a rule, and either one entity or every entity
+(`suppressions`, `db/postgres/migrations/0006`) — with a mandatory reason (`apps/api`'s own
+`POST /suppressions` rejects a blank one) and a bounded lifetime (expires by default; renewing
+records a fresh reason rather than silently extending the old one). A suppressed signal is
+**never dropped**: it still publishes to `signals` exactly as any other, with `Suppressed` and
+`SuppressionID` disclosed on the record itself (never a silent hole in coverage) — the
+suppression only ever gates the critical bypass above, skipping escalation for that one signal
+while leaving every other rule's bypass, and the normal signal, untouched. The check
+(`suppression.PostgresChecker.IsSuppressed`) fails *open*: if Postgres is unreachable, nothing is
+suppressed, deliberately — the same "no dependency that can silence a critical alert" principle
+TG4 already established. Each match atomically increments the suppression's own
+`suppressed_count` (`0007_suppressions_suppressed_count.sql`), since nothing yet persists
+`signals` anywhere queryable — this is the dashboard's honest answer, today, to "what has this
+suppression actually suppressed."
+
 ### 3.6 Correlation plane
 
 This is the component that makes the product viable, and it contains no AI.

@@ -20,6 +20,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/suppression"
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -163,6 +164,14 @@ type Options struct {
 	// referencing them legitimately never matches, the same as any
 	// other field an event happens not to carry.
 	Enricher Enricher
+	// SuppressionChecker, if set, is consulted once per emitted signal
+	// (P2-10/TG3). A suppressed signal still publishes to `signals`
+	// exactly like any other (AC3) — this field only ever gates the
+	// P2-08 critical-alert bypass, never the normal publish. Optional
+	// and nil-safe; a deployment with no Postgres wiring for suppression
+	// simply never suppresses anything, the same as every other optional
+	// capability here.
+	SuppressionChecker suppression.Checker
 }
 
 // Worker evaluates events.normalized against tree and publishes matches to
@@ -172,13 +181,14 @@ type Options struct {
 // client for publishing, separate from the grouped consumer" split
 // services/eventwriter's own DLQ client already uses.
 type Worker struct {
-	tree     *dispatch.Tree
-	consumer *kgo.Client
-	producer *kgo.Client
-	group    string
-	log      *slog.Logger
-	metrics  Metrics
-	enricher Enricher
+	tree       *dispatch.Tree
+	consumer   *kgo.Client
+	producer   *kgo.Client
+	group      string
+	log        *slog.Logger
+	metrics    Metrics
+	enricher   Enricher
+	suppressor suppression.Checker
 }
 
 func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Worker {
@@ -187,13 +197,14 @@ func New(tree *dispatch.Tree, consumer, producer *kgo.Client, opts Options) *Wor
 		log = slog.Default()
 	}
 	return &Worker{
-		tree:     tree,
-		consumer: consumer,
-		producer: producer,
-		group:    opts.Group,
-		log:      log,
-		metrics:  opts.Metrics,
-		enricher: opts.Enricher,
+		tree:       tree,
+		consumer:   consumer,
+		producer:   producer,
+		group:      opts.Group,
+		log:        log,
+		metrics:    opts.Metrics,
+		enricher:   opts.Enricher,
+		suppressor: opts.SuppressionChecker,
 	}
 }
 
@@ -257,6 +268,26 @@ func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
 	}
 
 	for _, sig := range signals {
+		// P2-10/TG3: checked once, before either publish, so the
+		// suppression disclosure (sig.Suppressed/SuppressionID) reaches
+		// the normal `signals` publish too — AC3's "still stored and
+		// counted" means the stored record itself says whether it was
+		// suppressed, not just that the bypass silently didn't fire.
+		// A lookup failure (e.g. Postgres unreachable) fails OPEN —
+		// treated as not-suppressed, logged, never blocking either
+		// publish — the same "no dependency" principle AC2 already
+		// established for the bypass: a suppression-store outage must
+		// never be a way to silence a critical alert.
+		if w.suppressor != nil {
+			suppressed, suppressionID, err := w.suppressor.IsSuppressed(ctx, sig.TenantID, sig.RuleID, sig.EntityID)
+			if err != nil {
+				w.log.Error("checking suppression failed, treating as not suppressed", "rule_id", sig.RuleID, "err", err)
+			} else if suppressed {
+				sig.Suppressed = true
+				sig.SuppressionID = suppressionID
+			}
+		}
+
 		if err := w.publishSignal(ctx, sig); err != nil {
 			w.log.Error("publishing signal failed, routing to DLQ", "rule_id", sig.RuleID, "event_id", wev.EventID, "err", err)
 			w.toDLQ(ctx, "publish", err, sig.RuleID, r.Value)
@@ -271,7 +302,9 @@ func (w *Worker) handleRecord(ctx context.Context, r *kgo.Record) {
 		// plane is down for unrelated reasons this worker never
 		// observes (AC2: "no dependency on correlation, the analyst,
 		// or the LLM provider" — this call never touches any of them).
-		if sig.Severity == levelCritical {
+		// The ONE new gate, from P2-10: a suppressed critical signal
+		// is still stored above, but does not escalate (AC3).
+		if sig.Severity == levelCritical && !sig.Suppressed {
 			if err := w.publishCriticalAlert(ctx, sig); err != nil {
 				w.log.Error("publishing critical alert failed, routing to DLQ", "rule_id", sig.RuleID, "event_id", wev.EventID, "err", err)
 				w.toCriticalAlertDLQ(ctx, err, sig)
