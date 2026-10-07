@@ -38,6 +38,7 @@ export {
   type CaseTransitionRow,
 } from './repositories/cases-repository.js';
 export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
+export { DegradedQueueRepository, listTenantsWithPendingDegradedCases, type DegradedQueueRow } from './repositories/degraded-queue-repository.js';
 export {
   ConnectorsRepository,
   type ConnectorHealth,

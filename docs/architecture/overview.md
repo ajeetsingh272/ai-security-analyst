@@ -681,6 +681,30 @@ piece this sandbox's missing `ANTHROPIC_API_KEY` cannot verify — those two tes
 `skipIf`-gated and show as skipped, the same honest boundary P4-08's own eval suite already
 established for exactly this reason.
 
+**Analyst degradation path (P4-10, TG4/C4).** "The provider being down must degrade the
+product, not stop it." `circuit-breaker.ts`'s `CircuitBreaker` — a plain, clock-injectable
+state machine, no network or SDK dependency of its own — is shared by both the triage and
+investigation calls, since both hit the same underlying Anthropic API: a 503 from either is
+equally real evidence the provider itself is down. Three states (`closed`/`open`/`half_open`):
+a configured number of consecutive provider failures opens it; after `openDurationMs`, exactly
+one trial call is let through; that call's own success closes it again and reports
+`recovered: true`, the one edge that should trigger a drain, distinct from an ordinary success
+while already closed. A malformed response or a grounding failure is a real problem but never
+trips this breaker — only `isProviderFailure` (the same classifier `main.ts` already uses for
+retry eligibility) decides that. An open circuit routes the case straight to the SAME
+`degradeToRuleOnlyAlert` path P4-04/P4-06 already built (now generalized to take a
+reason/detail pair instead of being grounding-specific) and queues it
+(`analyst_degraded_queue`, `packages/db`'s `DegradedQueueRepository` — `UNIQUE (tenant_id,
+case_id)` makes enqueueing idempotent) rather than losing it to the DLQ. Recovery drains that
+queue by re-publishing each pending case back onto `cases`, which this same worker then
+genuinely re-investigates through the ordinary pipeline — proven end to end, not just that a
+queue row exists: a dedicated test runs a real outage-then-recovery cycle against real
+Postgres/Redpanda and confirms the originally-degraded case is later re-investigated exactly
+once, with its original degrade alert never duplicated. Circuit state is a live OTel gauge
+(`analyst.circuit_breaker.state`, 0/1/2) on the same operations dashboard P4-04/P4-05/P4-06's
+own metrics already share (`llm-cost.json`), confirmed live via Grafana's own API after this
+dashboard's update auto-provisioned.
+
 ### 3.8 Response plane
 
 Alerts go to WhatsApp (Meta Cloud API), Slack, and email, carrying an **Approve** action.

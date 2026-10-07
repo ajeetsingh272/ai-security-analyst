@@ -14,6 +14,7 @@ import { AnalystWorker } from './worker.js';
 import { AnthropicInvestigationModel } from './investigation-model.js';
 import { AnthropicTriageModel } from './triage.js';
 import { loadPriceTable } from './pricing.js';
+import { CircuitBreaker, type CircuitState } from './circuit-breaker.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { PermanentError } from './retry.js';
@@ -55,6 +56,20 @@ async function main(): Promise<void> {
   const priceTable = loadPriceTable(envOr('MODEL_PRICES_PATH', path.join(__dirname, '..', 'config', 'model-prices.json')));
   const costMetric = meterHandle.meter.createCounter('analyst.llm.cost_usd', { description: 'LLM cost in USD, per tenant (AC5: operations dashboard)' });
 
+  // P4-10: AC1's own failure threshold / open duration are a deploy-
+  // time config choice, not a magic number buried in worker.ts.
+  const circuitBreaker = new CircuitBreaker({
+    failureThreshold: Number(envOr('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5')),
+    openDurationMs: Number(envOr('CIRCUIT_BREAKER_OPEN_DURATION_MS', '30000')),
+  });
+  const CIRCUIT_STATE_VALUE: Record<CircuitState, number> = { closed: 0, half_open: 1, open: 2 };
+  // AC4: "degraded mode is visible in the dashboard" — a live gauge,
+  // not a counter, since what matters is the CURRENT state, not how
+  // many times it changed.
+  meterHandle.meter
+    .createObservableGauge('analyst.circuit_breaker.state', { description: '0=closed, 1=half_open, 2=open' })
+    .addCallback((result) => result.observe(CIRCUIT_STATE_VALUE[circuitBreaker.getState()]));
+
   const pool = new Pool({ connectionString: envOr('POSTGRES_URL', 'postgres://sentinel:sentinel@localhost:5434/sentinel') });
   const brokers = envOr('REDPANDA_BROKERS', 'localhost:19092').split(',');
   const { consumer, producer, disconnect } = createKafkaClients(brokers, envOr('CONSUMER_GROUP', 'analyst'));
@@ -94,6 +109,8 @@ async function main(): Promise<void> {
     partitionsConsumedConcurrently: Number(envOr('PARTITIONS_CONSUMED_CONCURRENTLY', '16')),
     retry: { maxAttempts: 4, baseDelayMs: 500, maxDelayMs: 10_000 },
     isRetryable: isRetryableAnthropicError,
+    circuitBreaker,
+    isProviderFailure: isRetryableAnthropicError,
   });
 
   await worker.start();
