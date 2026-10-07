@@ -55,6 +55,7 @@ var Rules = []CompiledRule{
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000028", Title: "External guest granted access to a SharePoint site", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", OwnerDescription: "Someone outside the company was given access to a company site or folder. This is normal for working with partners, but worth checking if it was not expected.\n", Matches: ruleMatch_sharepoint_external_user_granted_access},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000030", Title: "Site collection administrator added", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", OwnerDescription: "Someone was given full control over a company site, including every file and folder in it. This should match something IT actually did on purpose.\n", Matches: ruleMatch_sharepoint_site_collection_admin_added},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000029", Title: "SharePoint site permission level changed", Level: "low", MitreIDs: []string{"attack.t1098"}, Engine: "in-stream", OwnerDescription: "The access rules for a company site or folder were changed. This is routine site administration most of the time, but is also how someone could open up an area that was supposed to stay restricted.\n", Matches: ruleMatch_sharepoint_site_permission_broadened},
+	{ID: "8f1a2b3c-0001-4a00-9000-000000000041", Title: "Tenant-wide unified audit logging disabled", Level: "critical", MitreIDs: []string{"attack.t1685.002"}, Engine: "in-stream", OwnerDescription: "Someone turned off the company-wide activity record-keeping for the whole organization. Attackers do this so none of their actions anywhere in the company's account can be reviewed later.\n", Matches: ruleMatch_tenant_audit_log_disabled},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000022", Title: "Mail flow rule created to forward mail externally", Level: "high", MitreIDs: []string{"attack.t1114.003"}, Engine: "in-stream", OwnerDescription: "A company-wide mail rule was created that can redirect or copy email. Unlike a personal inbox rule, this can affect everyone's email at once, so it deserves a closer look if nobody meant to set it up.\n", Matches: ruleMatch_transport_rule_forwards_externally},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000026", Title: "Trusted network location added to sign-in policy", Level: "medium", MitreIDs: []string{"attack.t1484.002"}, Engine: "in-stream", OwnerDescription: "A network location was added to the list the company treats as safe for signing in. If someone adds their own location to this list without permission, it can let them get around checks meant to catch risky sign-ins.\n", Matches: ruleMatch_trusted_location_added_to_conditional_access},
 }
@@ -307,6 +308,13 @@ func ruleMatch_sharepoint_site_collection_admin_added(ev map[string]string) bool
 
 func ruleMatch_sharepoint_site_permission_broadened(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "PermissionLevelModified")
+	return sel_selection
+
+}
+
+func ruleMatch_tenant_audit_log_disabled(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "Set-AdminAuditLogConfig") &&
+		(ev["unmapped.UnifiedAuditLogIngestionEnabled"] == "False")
 	return sel_selection
 
 }

@@ -1,0 +1,30 @@
+title: Tenant-wide unified audit logging disabled
+id: 8f1a2b3c-0001-4a00-9000-000000000041
+status: stable
+description: >
+  Detects UnifiedAuditLogIngestionEnabled being set to false at the
+  tenant level (Set-AdminAuditLogConfig) — the same defense-evasion
+  pattern mailbox-audit-disabled.yml already covers at a single
+  mailbox's scope, here at the whole tenant's scope: turning this off
+  removes the record an investigator would use to reconstruct ANY
+  user's activity across the tenant, not just one mailbox's.
+owner_description: >
+  Someone turned off the company-wide activity record-keeping for the
+  whole organization. Attackers do this so none of their actions
+  anywhere in the company's account can be reviewed later.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1685.002
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Set-AdminAuditLogConfig'
+    UnifiedAuditLogIngestionEnabled: 'False'
+  condition: selection
+falsepositives:
+  - A deliberate, time-boxed change during a tenant migration or a licensing change that temporarily removes unified audit log entitlement
+level: critical

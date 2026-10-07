@@ -33,11 +33,15 @@ A ticket is done when **all** of these hold:
 
 ## Adding a detection rule
 
-1. Write the Sigma rule in `detections/rules/<platform>/<id>.yml`
-2. Map it to a MITRE ATT&CK technique — unmapped rules are rejected by CI
-3. Add an `owner_description:` field — a plain-English explanation of what this rule means, written for a non-technical mailbox/tenant owner reading an alert, not the engineer-facing `description:` field above it. Unmapped (empty) is rejected by CI, same as a missing MITRE tag.
+See [`docs/detection-engineering-guide.md`](docs/detection-engineering-guide.md) for the full
+walkthrough (the supported Sigma subset, a real worked example, tuning, and the emergency hotfix
+path) — this is the quick checklist version.
+
+1. Write the Sigma rule in `detections/rules/<id>.yml` (flat — no per-product subdirectory)
+2. Map it to a MITRE ATT&CK technique — unmapped, deprecated, or revoked tags are rejected by CI
+3. Add an `owner_description:` field — a plain-English explanation of what this rule means, written for a non-technical mailbox/tenant owner reading an alert, not the engineer-facing `description:` field above it. Unmapped (empty) or jargon-containing text is rejected by CI, same as a missing MITRE tag.
 4. Add `detections/fixtures/<id>.positive.json` (must fire)
-5. Add `detections/fixtures/<id>.negative.json` (must NOT fire)
-6. Run `pnpm detections:validate`
+5. Add `detections/fixtures/<id>.negative.json` (must NOT fire) — write it as the closest plausible event that should *not* match, not an unrelated one; a trivially-different negative fixture proves nothing
+6. Run `pnpm detections:validate` and commit the regenerated output it produces
 
 A rule without a negative fixture is a false-positive generator. CI blocks it.
