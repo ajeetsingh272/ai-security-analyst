@@ -340,6 +340,26 @@ it, in the same transaction as that signal's own write — recomputing from scra
 than patching incrementally is what keeps the stored score consistent with Score's own
 determinism guarantee, with no accumulated-drift path to get wrong.
 
+**Entity baselines (`services/correlate/internal/baseline`, P3-05).** Per-entity behavioural
+baselines — usual countries, ASNs, devices, sign-in-hour distribution, typical data-transfer
+volume — computed from `sentinel.events` into `sentinel.entity_baselines`
+(`AggregatingMergeTree`, already shaped for this in P1-06), merged over a rolling 30-day
+window. Below a minimum-observation floor a baseline is explicitly `Valid: false` — never
+silently treated as "nothing unusual" *or* "everything is anomalous" — so a new hire's first
+week never generates an anomaly purely from novelty. Recomputation is incremental: a Postgres
+watermark (`baseline_cursors`, mirroring `connector_cursors`' own role) tracks what has
+already been folded in per tenant, and each run only reads/writes events since that point —
+proven to produce the identical merged result a full rescan would, since ClickHouse's own
+aggregate-state merge combinators guarantee it. `GetBaseline` is, deliberately, the future
+`get_entity_baseline(entity, metric)` investigation tool named in §3.7, built ahead of any
+tool-calling framework existing to invoke it (none exists anywhere in this repo yet) — a
+plain, well-documented function a later phase wires in, not a framework this ticket invents.
+P3-04's own `baselineDeviation` score component is still the documented 0 placeholder after
+this ticket, not wired to a real value: doing so needs per-signal geography/device context
+(`go/sentinelsignal.Signal` carries neither today), a separate wire-format change outside
+this ticket's own scope — `GetBaseline` gives scoring something real to deviate against, but
+connecting the two is still open, future work.
+
 **The 10:1 SLO.** `signals_in / cases_escalated` is emitted as a metric per tenant per day
 and alerted on. If it degrades, that is a product incident, not a tuning task.
 

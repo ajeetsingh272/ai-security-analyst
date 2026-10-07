@@ -18,9 +18,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/baseline"
 	"github.com/ajeetsingh272/ai-security-analyst/services/correlate/internal/cluster"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -114,6 +116,30 @@ func main() {
 		runQuietPeriodSweep(ctx, log, pgPool, clusterer, quietPeriodDuration)
 	}()
 
+	// P3-05: entity baselines recompute on their own ticker, independent
+	// of the clustering/quiet-period loops above — they read from
+	// ClickHouse, which neither of those touches at all.
+	chConn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{envOr("CLICKHOUSE_ADDR", "localhost:9000")},
+		Auth: clickhouse.Auth{
+			Database: envOr("CLICKHOUSE_DATABASE", "sentinel"),
+			Username: envOr("CLICKHOUSE_USER", "default"),
+			Password: envOr("CLICKHOUSE_PASSWORD", ""),
+		},
+	})
+	if err != nil {
+		log.Error("connecting to clickhouse for entity baselines", "err", err)
+		os.Exit(1)
+	}
+	defer chConn.Close()
+	baselineStore := baseline.NewStore(chConn, pgPool)
+
+	baselineDone := make(chan struct{})
+	go func() {
+		defer close(baselineDone)
+		runBaselineRecomputeSweep(ctx, log, pgPool, baselineStore)
+	}()
+
 	<-ctx.Done()
 	log.Info("draining in-flight clustering before exit")
 
@@ -131,6 +157,11 @@ func main() {
 	case <-sweepDone:
 	case <-shutdown.Done():
 		log.Error("quiet-period sweep did not stop within the shutdown deadline")
+	}
+	select {
+	case <-baselineDone:
+	case <-shutdown.Done():
+		log.Error("baseline recompute sweep did not stop within the shutdown deadline")
 	}
 	log.Info("correlate stopped")
 }
@@ -221,6 +252,52 @@ func runQuietPeriodSweep(ctx context.Context, log *slog.Logger, pool *pgxpool.Po
 			}
 			if closed > 0 {
 				log.Info("closed quiet cases", "tenant_id", tenantID, "count", closed)
+			}
+		}
+	}
+
+	sweepOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweepOnce()
+		}
+	}
+}
+
+// runBaselineRecomputeSweep folds the newest sentinel.events rows into
+// sentinel.entity_baselines on a fixed tick, one tenant at a time —
+// the same cross-tenant sweep shape runQuietPeriodSweep already uses,
+// for the identical reason (this is a background job that legitimately
+// spans every tenant, not a per-request path). Each call to
+// baseline.Store.Recompute is itself incremental (AC5): only events
+// since that tenant's own watermark are read or written, regardless of
+// how long this ticker's own interval is.
+func runBaselineRecomputeSweep(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool, store *baseline.Store) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	sweepOnce := func() {
+		rows, err := pool.Query(ctx, `SELECT id FROM tenants`)
+		if err != nil {
+			log.Error("listing tenants for baseline recompute sweep", "err", err)
+			return
+		}
+		var tenantIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				log.Error("scanning tenant id", "err", err)
+				continue
+			}
+			tenantIDs = append(tenantIDs, id)
+		}
+		rows.Close()
+
+		for _, tenantID := range tenantIDs {
+			if err := store.Recompute(ctx, tenantID, time.Now().UTC()); err != nil {
+				log.Error("recomputing entity baselines", "tenant_id", tenantID, "err", err)
 			}
 		}
 	}
