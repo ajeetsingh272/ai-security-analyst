@@ -16,6 +16,38 @@ func TestTenantShardKeyUsesGivenShard(t *testing.T) {
 	}
 }
 
+// P3-10 T2: an unsharded key (no ":shard_n" suffix at all — what every
+// tenant uses before Phase 7's hot-tenant split ever activates for it)
+// parses identically to an explicit shard 0.
+func TestParseTenantShardKey_UnshardedKeyIsShardZero(t *testing.T) {
+	tenantID, shard, err := ParseTenantShardKey("tenant-a")
+	if err != nil {
+		t.Fatalf("ParseTenantShardKey: %v", err)
+	}
+	if tenantID != "tenant-a" || shard != 0 {
+		t.Fatalf("got (%q, %d), want (%q, 0)", tenantID, shard, "tenant-a")
+	}
+}
+
+func TestParseTenantShardKey_RoundTripsThroughTenantShardKey(t *testing.T) {
+	for _, shard := range []int{0, 1, 7, 42} {
+		key := TenantShardKey("tenant-a", shard)
+		tenantID, gotShard, err := ParseTenantShardKey(key)
+		if err != nil {
+			t.Fatalf("ParseTenantShardKey(%q): %v", key, err)
+		}
+		if tenantID != "tenant-a" || gotShard != shard {
+			t.Errorf("ParseTenantShardKey(%q) = (%q, %d), want (%q, %d)", key, tenantID, gotShard, "tenant-a", shard)
+		}
+	}
+}
+
+func TestParseTenantShardKey_NonNumericSuffixIsAnError(t *testing.T) {
+	if _, _, err := ParseTenantShardKey("tenant-a:not-a-number"); err == nil {
+		t.Fatal("expected an error for a non-numeric shard suffix")
+	}
+}
+
 func TestTenantEntityKeyFormat(t *testing.T) {
 	got := TenantEntityKey("tenant-a", "entity-1")
 	if want := "tenant-a:entity-1"; got != want {

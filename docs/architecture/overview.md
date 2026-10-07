@@ -424,6 +424,21 @@ had silently been falling through to the conservative default since P3-04. Fixed
 source (`scoring/threshold.go`), caught only because this test inserts a real tenant against
 the real schema rather than a synthetic one.
 
+**Hot-tenant sharding readiness (P3-10).** §3.3's own "correlation windows are merged
+downstream" claim, made concrete: neither `services/detect`'s worker nor this plane's own
+consumer loop (`cmd/correlate/main.go`) ever reads a Kafka message's *key* — only its JSON
+value — so the `tenant_id:shard_n` re-keying Phase 7's hot-tenant split applies to
+`events.normalized` never reaches `cluster.Signal` or `Clusterer` at all; clustering already
+keys purely on `(tenant_id, entity_type, entity_id)`, with no shard dimension to merge in the
+first place. `go/sentinelstream.ParseTenantShardKey` (`TenantShardKey`'s own inverse) exists so
+that claim stays true on *purpose*, not by accident — the one place shard-suffix parsing is
+defined, ready for whatever Phase 7 code eventually needs it, with nothing in today's pipeline
+calling it. Locked in with regression tests that simulate a tenant crossing the sharding
+threshold mid-stream (two signals for the same entity, keyed as if produced before and after
+the split) and confirm they still join one case, against both `InMemoryStore` and real
+Postgres — so Phase 7's own hot-tenant split can be a configuration change there, not a
+correlation-plane redesign.
+
 ### 3.7 AI analyst plane
 
 A TypeScript worker consuming the `cases` topic. See

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentineldb"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -300,4 +301,62 @@ func readCaseScore(t *testing.T, pool *pgxpool.Pool, caseID string) float64 {
 		t.Fatalf("reading score for case %s: %v", caseID, err)
 	}
 	return score
+}
+
+// P3-10 T3: enabling sharding mid-stream does not split an open case —
+// against real Postgres, not just InMemoryStore. The first signal
+// arrives via what would have been an unsharded key (the tenant has
+// not yet crossed the Phase 7 EPS threshold); the second, for the
+// SAME entity, arrives via what would have been an explicitly
+// shard-qualified key (as if that threshold had just been crossed
+// mid-stream) — both resolve to the identical real tenant_id via
+// sentinelstream.ParseTenantShardKey, which is the only thing
+// PostgresStore ever receives or clusters on.
+func TestPostgresStore_OpenCaseSurvivesHotTenantShardMidStream(t *testing.T) {
+	pool := newTestPool(t)
+	rawTenantID := createTenant(t, pool)
+	c := NewClusterer(NewPostgresStore(pool), DefaultWindow)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
+
+	tenantUnsharded, _, err := sentinelstream.ParseTenantShardKey(rawTenantID)
+	if err != nil {
+		t.Fatalf("ParseTenantShardKey (unsharded): %v", err)
+	}
+	caseID, err := c.Cluster(ctx, tenantUnsharded, Signal{
+		DedupeKey: rawTenantID + ":rule-1:pre-shard-sig", SignalID: "pre-shard-sig", RuleID: "rule-1",
+		EntityType: "user", EntityID: "mid-stream-entity", Severity: "medium",
+		EventIDs: []string{"evt-pre-shard"}, DetectedAt: base,
+	})
+	if err != nil {
+		t.Fatalf("Cluster (pre-shard signal): %v", err)
+	}
+
+	tenantSharded, shard, err := sentinelstream.ParseTenantShardKey(sentinelstream.TenantShardKey(rawTenantID, 3))
+	if err != nil {
+		t.Fatalf("ParseTenantShardKey (sharded): %v", err)
+	}
+	if shard != 3 || tenantSharded != rawTenantID {
+		t.Fatalf("test fixture itself is broken: got (%q, %d), want (%q, 3)", tenantSharded, shard, rawTenantID)
+	}
+	secondCaseID, err := c.Cluster(ctx, tenantSharded, Signal{
+		DedupeKey: rawTenantID + ":rule-1:post-shard-sig", SignalID: "post-shard-sig", RuleID: "rule-1",
+		EntityType: "user", EntityID: "mid-stream-entity", Severity: "medium",
+		EventIDs: []string{"evt-post-shard"}, DetectedAt: base.Add(5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("Cluster (post-shard signal): %v", err)
+	}
+
+	if secondCaseID != caseID {
+		t.Fatalf("a signal arriving via a newly-shard-qualified key for an already-open case's entity opened a SECOND case (%s), want it to join the original (%s)", secondCaseID, caseID)
+	}
+
+	var signalCount int
+	if err := pool.QueryRow(ctx, `SELECT signal_count FROM cases WHERE id = $1`, caseID).Scan(&signalCount); err != nil {
+		t.Fatalf("reading signal_count: %v", err)
+	}
+	if signalCount != 2 {
+		t.Errorf("case %s has signal_count=%d, want 2 (both signals joined the same case)", caseID, signalCount)
+	}
 }
