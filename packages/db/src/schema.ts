@@ -293,6 +293,80 @@ export const hotfixRules = pgTable("hotfix_rules", {
 	check("hotfix_rules_reason_check", sql`length(TRIM(BOTH FROM reason)) > 0`),
 ]);
 
+export const entities = pgTable("entities", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	entityType: text("entity_type").notNull(),
+	status: text().default('provisional').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_entities_tenant_type").using("btree", table.tenantId.asc().nullsLast().op("text_ops"), table.entityType.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "entities_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("entities_status_check", sql`status = ANY (ARRAY['provisional'::text, 'resolved'::text])`),
+]);
+
+export const entityAliases = pgTable("entity_aliases", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	entityId: uuid("entity_id").notNull(),
+	aliasType: text("alias_type").notNull(),
+	aliasValue: text("alias_value").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_entity_aliases_entity").using("btree", table.entityId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "entity_aliases_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.entityId],
+			foreignColumns: [entities.id],
+			name: "entity_aliases_entity_id_fkey"
+		}),
+	unique("entity_aliases_tenant_id_alias_type_alias_value_key").on(table.tenantId, table.aliasType, table.aliasValue),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
+export const entityMerges = pgTable("entity_merges", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	fromEntityId: uuid("from_entity_id").notNull(),
+	intoEntityId: uuid("into_entity_id").notNull(),
+	movedAliasIds: uuid("moved_alias_ids").array().notNull(),
+	reason: text().notNull(),
+	actorType: text("actor_type").notNull(),
+	actorId: text("actor_id").notNull(),
+	mergedAt: timestamp("merged_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	reversedAt: timestamp("reversed_at", { withTimezone: true, mode: 'string' }),
+	reversedBy: text("reversed_by"),
+}, (table) => [
+	index("idx_entity_merges_tenant").using("btree", table.tenantId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "entity_merges_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.fromEntityId],
+			foreignColumns: [entities.id],
+			name: "entity_merges_from_entity_id_fkey"
+		}),
+	foreignKey({
+			columns: [table.intoEntityId],
+			foreignColumns: [entities.id],
+			name: "entity_merges_into_entity_id_fkey"
+		}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("entity_merges_reason_check", sql`length(TRIM(BOTH FROM reason)) > 0`),
+	check("entity_merges_actor_type_check", sql`actor_type = ANY (ARRAY['human'::text, 'system'::text])`),
+]);
+
 export const connectorCursors = pgTable("connector_cursors", {
 	connectorId: uuid("connector_id").notNull(),
 	stream: text().notNull(),

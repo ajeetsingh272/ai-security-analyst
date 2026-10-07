@@ -30,6 +30,7 @@ no downsides has not been thought through.
 | [0008](./0008-tenant-isolation.md) | Shared infrastructure with row-level security isolation | Accepted | P0 |
 | [0009](./0009-sql-owns-schema-drizzle-generated.md) | Hand-written SQL owns the schema; the typed layer is generated from it | Accepted | P0 |
 | [0010](./0010-checkpoint-after-kafka-ack.md) | Cursors commit only after durable Kafka acknowledgement | Accepted | P1 |
+| [0011](./0011-entity-resolution-alias-graph.md) | Entity resolution via co-occurring aliases, with a dedicated merge audit trail | Accepted | P3 |
 
 ## Writing a new ADR
 

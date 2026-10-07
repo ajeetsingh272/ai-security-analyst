@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, connectorCursors } from "./schema";
+import { tenants, memberships, users, connectors, cases, caseTransitions, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, entityAliases, entityMerges, connectorCursors } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -27,6 +27,9 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	}),
 	suppressions: many(suppressions),
 	tenantDeks: many(tenantDeks),
+	entities: many(entities),
+	entityAliases: many(entityAliases),
+	entityMerges: many(entityMerges),
 }));
 
 export const usersRelations = relations(users, ({many}) => ({
@@ -143,6 +146,48 @@ export const hotfixRulesRelations = relations(hotfixRules, ({one}) => ({
 		fields: [hotfixRules.revokedBy],
 		references: [users.id],
 		relationName: "hotfixRules_revokedBy_users_id"
+	}),
+}));
+
+export const entitiesRelations = relations(entities, ({one, many}) => ({
+	tenant: one(tenants, {
+		fields: [entities.tenantId],
+		references: [tenants.id]
+	}),
+	entityAliases: many(entityAliases),
+	entityMerges_fromEntityId: many(entityMerges, {
+		relationName: "entityMerges_fromEntityId_entities_id"
+	}),
+	entityMerges_intoEntityId: many(entityMerges, {
+		relationName: "entityMerges_intoEntityId_entities_id"
+	}),
+}));
+
+export const entityAliasesRelations = relations(entityAliases, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [entityAliases.tenantId],
+		references: [tenants.id]
+	}),
+	entity: one(entities, {
+		fields: [entityAliases.entityId],
+		references: [entities.id]
+	}),
+}));
+
+export const entityMergesRelations = relations(entityMerges, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [entityMerges.tenantId],
+		references: [tenants.id]
+	}),
+	entity_fromEntityId: one(entities, {
+		fields: [entityMerges.fromEntityId],
+		references: [entities.id],
+		relationName: "entityMerges_fromEntityId_entities_id"
+	}),
+	entity_intoEntityId: one(entities, {
+		fields: [entityMerges.intoEntityId],
+		references: [entities.id],
+		relationName: "entityMerges_intoEntityId_entities_id"
 	}),
 }));
 

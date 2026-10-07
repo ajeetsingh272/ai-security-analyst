@@ -259,6 +259,20 @@ resolver maintains aliases (a user's UPN, object ID, and email are one entity). 
 sharing an entity within a sliding window (default 60 min, per-rule override) are clustered
 into a **Case**.
 
+**Entity resolution (`services/correlate/internal/entity`, P3-01, ADR-0011).** Tenant-scoped
+(identical identifiers in two different tenants never merge — `entities`/`entity_aliases`/
+`entity_merges`, full RLS). Aliases known *together* on one signal's own event are the
+evidence they name the same person: if they already point at more than one existing entity,
+the resolver auto-merges them, attributed to the system. A signal with no identifying
+information at all still resolves to a **provisional** entity, never an error — nothing is
+ever discarded for lack of identity data. A merge is reversible and audited — not through
+`packages/db`'s TypeScript hash chain (which Go has never written to; porting its canonical-
+JSON encoding was rejected as its own, separate piece of work, not a P3-01 side effect), but
+through `entity_merges`' own append-only record of exactly which aliases moved, so a reversal
+is exact rather than "undo everything currently on the target entity." Resolution is a single
+Postgres transaction per call (`FastResolver`) — proven directly at under 5ms p99 against real
+Postgres with a realistic 1-new-user-in-20 traffic mix, not assumed from the design alone.
+
 A case has a lifecycle: `open → triaging → investigating → awaiting_approval → actioned →
 closed`, with `dismissed` reachable from triaging and investigating. State transitions are
 append-only events in Postgres, so the full history of a case is reconstructible — required

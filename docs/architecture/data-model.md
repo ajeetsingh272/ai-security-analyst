@@ -32,6 +32,9 @@ none of them has to be taken on trust:
 | `cases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entities` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -325,6 +328,128 @@ part of the control and not merely a description of it.
 
 - `connectors_kind_check` — `CHECK ((kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text])))`
 - `connectors_status_check` — `CHECK ((status = ANY (ARRAY['pending'::text, 'healthy'::text, 'degraded'::text, 'revoked'::text, 'error'::text])))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entities`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `entity_type` | `text` | no | — |
+| `status` | `text` | no | `'provisional'::text` |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entities_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `entities_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entities_status_check` — `CHECK ((status = ANY (ARRAY['provisional'::text, 'resolved'::text])))`
+
+**Indexes**
+
+- `idx_entities_tenant_type` — `CREATE INDEX idx_entities_tenant_type ON public.entities USING btree (tenant_id, entity_type)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_aliases`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `entity_id` | `uuid` | no | — |
+| `alias_type` | `text` | no | — |
+| `alias_value` | `text` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entity_aliases_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `entity_aliases_tenant_id_alias_type_alias_value_key` — `UNIQUE (tenant_id, alias_type, alias_value)`
+
+**Foreign keys**
+
+- `entity_aliases_entity_id_fkey` — `FOREIGN KEY (entity_id) REFERENCES entities(id)`
+- `entity_aliases_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_entity_aliases_entity` — `CREATE INDEX idx_entity_aliases_entity ON public.entity_aliases USING btree (entity_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_merges`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `from_entity_id` | `uuid` | no | — |
+| `into_entity_id` | `uuid` | no | — |
+| `moved_alias_ids` | `uuid[]` | no | — |
+| `reason` | `text` | no | — |
+| `actor_type` | `text` | no | — |
+| `actor_id` | `text` | no | — |
+| `merged_at` | `timestamptz` | no | `now()` |
+| `reversed_at` | `timestamptz` | yes | — |
+| `reversed_by` | `text` | yes | — |
+
+**Primary key**
+
+- `entity_merges_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `entity_merges_from_entity_id_fkey` — `FOREIGN KEY (from_entity_id) REFERENCES entities(id)`
+- `entity_merges_into_entity_id_fkey` — `FOREIGN KEY (into_entity_id) REFERENCES entities(id)`
+- `entity_merges_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entity_merges_actor_type_check` — `CHECK ((actor_type = ANY (ARRAY['human'::text, 'system'::text])))`
+- `entity_merges_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_entity_merges_tenant` — `CREATE INDEX idx_entity_merges_tenant ON public.entity_merges USING btree (tenant_id)`
 
 **Row-level security**
 

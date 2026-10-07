@@ -45,8 +45,10 @@ func main() {
 		}
 	}()
 
-	// TODO(P3-01): entity resolution and alias graph.
-	// TODO(P3-02): sliding-window signal clustering.
+	// P3-01: entity resolution and alias graph — internal/entity.Resolver,
+	// ready for the signals consumer loop P3-02 wires up here.
+	// TODO(P3-02): sliding-window signal clustering, consuming `signals`
+	// and calling entity.Resolver.Resolve per event.
 
 	<-ctx.Done()
 	shutdown, cancel := context.WithTimeout(context.Background(), 30*time.Second)
