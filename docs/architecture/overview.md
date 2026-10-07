@@ -119,6 +119,7 @@ Kafka ourselves at this size. See [ADR-0003](../adr/0003-redpanda-over-kafka.md)
 | `signals` | `tenant_id:entity_id` | 32 | 7 d |
 | `cases` | `tenant_id:case_id` | 16 | 30 d |
 | `actions` | `tenant_id:case_id` | 8 | 30 d |
+| `alerts.critical` | `tenant_id` | 8 | 30 d |
 | `*.dlq` | — | 4 | 30 d |
 
 Partitioning by `tenant_id` preserves per-tenant ordering, which correlation depends on.
@@ -170,12 +171,84 @@ Every rule, in either engine, carries a mandatory MITRE ATT&CK technique ID. CI 
 unmapped rule. This is not bureaucracy — the technique ID is what the customer-facing report
 cites, and it is what makes the output defensible to the customer's auditor.
 
-**The critical bypass.** Rules with `severity: critical` publish to the alert channel
-*directly*, in parallel with entering correlation. If the LLM, correlation, or the whole
-analyst plane is down, a critical detection still reaches the customer's phone — degraded to
-the rule's own description instead of a narrative. This satisfies constraint C4 and product
-guarantee #4, and it is covered by a chaos test that kills the analyst and asserts the alert
-still lands.
+See [`docs/detection-engineering-guide.md`](../detection-engineering-guide.md) for how to write,
+map, fixture and tune a rule — written for a new detection engineer, not this document's own
+architectural level of detail.
+
+**Emergency hotfix rules (services/detect/internal/hotfix, P2-12).** ADR-0004's own named
+escape hatch: a small interpreted rule path for urgent detections, capped at 10 active rules
+platform-wide and expiring automatically after 7 days with no option to extend in place (the
+expiry is enforced by a Postgres trigger, `0008_hotfix_rules.sql`, not application convention —
+no INSERT or UPDATE can set `expires_at` to anything other than `created_at + 7 days`).
+Evaluation reuses `sigmac.Evaluate`, P2-02's own reference interpreter (the correctness oracle
+codegen tests already check the compiled path against) — this package is the plumbing that
+feeds it rules sourced from Postgres instead of the committed corpus, not a second interpreter.
+A hotfix rule is in-stream only; `Evaluate` ignores `Aggregation` entirely, so a rule declaring
+one is rejected at load time rather than silently degraded. Not tenant-scoped — the cap is a
+single global count across every tenant combined (`hotfix_rules` carries no `tenant_id`, the
+same shape `tenants`/`users` themselves use). "Creating one requires an elevated role" resolves
+a real gap: every RBAC role in this system is tenant-scoped, and letting any customer's own
+`admin` create a rule affecting every tenant's detection would be a cross-tenant boundary
+violation — the fix pins creation to a single designated operations tenant
+(`PLATFORM_OPS_TENANT_ID`) rather than inventing a new access-control axis, and audits every
+denied attempt, not only successful ones.
+
+**Load testing (services/detect/internal/loadtest, P2-11).** A Go harness — not k6, following
+this repo's own established Go-based load/soak convention (go/soaktest, go/sentinelevents/loadtest)
+rather than a new JS toolchain — drives real `Worker` instances at a configurable EPS for a
+configurable duration, measuring real end-to-end latency (produce time -> `Signal.DetectedAt`,
+with no change needed to the hot path itself) and tracking goroutine/heap samples throughout
+(`go run ./services/detect/cmd/loadtest -eps=30000 -duration=1h`). A CI-feasible, reduced-scale
+profile runs automatically on every PR (its own `loadtest` build tag, run sequentially rather
+than alongside the rest of the integration suite — concurrent production at this volume was
+proven, directly, to make unrelated tests on the same shared Redpanda intermittently see
+duplicate/delayed signals), comparing P50 latency and achieved EPS against a committed baseline
+and failing the build on a >10% regression.
+
+Only the in-stream engine is measured — "p99 under 100ms" cannot describe the windowed engine
+by construction (its own schedule interval IS 30s-15min). On real infrastructure, sustained 30k
+EPS measured p99 around 115-120ms, above the ticket's own 100ms target; P50 (the gate's own
+metric) stayed in the tens of milliseconds. This is a genuine finding, not a gap this ticket
+silently closed — see the P2-11 PR/issue for the full numbers and the open question of whether
+ADR-0010's per-poll-batch commit discipline (traded latency for the crash-safety guarantee
+P2-04 established) is itself the tail's dominant cost, which would make this a deliberate,
+already-reviewed trade-off showing up for the first time in a real measurement, not a bug.
+
+**The critical bypass.** Rules with `level: critical` publish to `alerts.critical` *directly*
+(go/sentinelstream.CriticalAlerts), in parallel with the same signal entering `signals` for
+correlation — the same producer client, two independent publishes, neither one gated on the
+other's success. If the LLM, correlation, or the whole analyst plane is down, a critical
+detection still reaches the customer — degraded to the rule's own `owner_description` (P2-06)
+instead of an AI narrative. This satisfies constraint C4 and product guarantee #4 (SECURITY.md).
+Both paths carry the same deterministic dedupe key (go/sentinelsignal.Signal.DedupeKey) so a
+downstream notifier can collapse a bypass alert and its later AI-investigated counterpart into
+one customer-facing notification once that notifier exists.
+
+**Threat-intel enrichment (go/sentinelenrich).** A sign-in's `ClientIP` is resolved against
+locally cached feeds — the Tor Project's own bulk exit list, X4BNet's maintained VPN/datacenter
+CIDR ranges, and GeoLite2-derived country/ASN tables (sapics/ip-location-db) — refreshed on a
+24h schedule and written to disk, so a lookup is always an in-memory map/range search, never a
+network call. A feed outage leaves the previously loaded data in place (stale, not silently
+empty) and raises an alert rather than degrading detection. Attached only on the in-stream path
+today, before dispatch; a windowed rule's own query reads ClickHouse history that does not yet
+persist this data, which is why `impossible-travel.yml`'s own true geo-velocity check remains a
+documented follow-up rather than something this ticket completed.
+
+**Suppression and allowlisting (services/detect/internal/suppression, TG3).** An analyst can
+suppress a noisy rule — scoped to a tenant, a rule, and either one entity or every entity
+(`suppressions`, `db/postgres/migrations/0006`) — with a mandatory reason (`apps/api`'s own
+`POST /suppressions` rejects a blank one) and a bounded lifetime (expires by default; renewing
+records a fresh reason rather than silently extending the old one). A suppressed signal is
+**never dropped**: it still publishes to `signals` exactly as any other, with `Suppressed` and
+`SuppressionID` disclosed on the record itself (never a silent hole in coverage) — the
+suppression only ever gates the critical bypass above, skipping escalation for that one signal
+while leaving every other rule's bypass, and the normal signal, untouched. The check
+(`suppression.PostgresChecker.IsSuppressed`) fails *open*: if Postgres is unreachable, nothing is
+suppressed, deliberately — the same "no dependency that can silence a critical alert" principle
+TG4 already established. Each match atomically increments the suppression's own
+`suppressed_count` (`0007_suppressions_suppressed_count.sql`), since nothing yet persists
+`signals` anywhere queryable — this is the dashboard's honest answer, today, to "what has this
+suppression actually suppressed."
 
 ### 3.6 Correlation plane
 
@@ -186,19 +259,185 @@ resolver maintains aliases (a user's UPN, object ID, and email are one entity). 
 sharing an entity within a sliding window (default 60 min, per-rule override) are clustered
 into a **Case**.
 
+**Entity resolution (`services/correlate/internal/entity`, P3-01, ADR-0011).** Tenant-scoped
+(identical identifiers in two different tenants never merge — `entities`/`entity_aliases`/
+`entity_merges`, full RLS). Aliases known *together* on one signal's own event are the
+evidence they name the same person: if they already point at more than one existing entity,
+the resolver auto-merges them, attributed to the system. A signal with no identifying
+information at all still resolves to a **provisional** entity, never an error — nothing is
+ever discarded for lack of identity data. A merge is reversible and audited — not through
+`packages/db`'s TypeScript hash chain (which Go has never written to; porting its canonical-
+JSON encoding was rejected as its own, separate piece of work, not a P3-01 side effect), but
+through `entity_merges`' own append-only record of exactly which aliases moved, so a reversal
+is exact rather than "undo everything currently on the target entity." Resolution is a single
+Postgres transaction per call (`FastResolver`) — proven directly at under 5ms p99 against real
+Postgres with a realistic 1-new-user-in-20 traffic mix, not assumed from the design alone.
+
+**Signal clustering (`services/correlate/internal/cluster`, P3-02).** Consumes `signals`
+directly (the first live consumer that topic has had) and clusters by `Signal.EntityType`/
+`EntityID` — deliberately not routed through the entity resolver above for this ticket: AC2's
+own wording is "signals sharing *any* entity", which the raw identifier `services/detect`
+already extracts and places on the signal (both engines now populate it — an in-stream
+signal's own `UserId`, when its event has one, not only a windowed rule's group-by key).
+Unifying different raw formats for the same person (a UPN and an object id) through the alias
+graph is real, separate integration work this ticket's own ACs do not require. A case's
+window is **sliding**, not fixed: it stays open as long as signals keep arriving within the
+window of the *most recent* one (not the first), closed only once a configurable quiet period
+elapses with nothing new — every decision uses the signal's own event time, never wall-clock
+processing time, which is what makes replay genuinely deterministic (AC5/T4): replaying the
+identical stream faster or slower, or twice, produces the identical case set, proven directly
+rather than assumed, including the real BEC scenario (impossible travel, then an inbox rule
+three minutes later, same person) collapsing into exactly one case. `cases`/`case_transitions`
+(`db/postgres/migrations/0001_foundation.sql`) already had the right shape for this ticket;
+only a new `case_signals` join table was needed, to know *which* signals are in a case at all
+— without it, idempotent replay has nothing to check a signal's membership against.
+
 A case has a lifecycle: `open → triaging → investigating → awaiting_approval → actioned →
-closed`, with `dismissed` reachable from triaging and investigating. State transitions are
-append-only events in Postgres, so the full history of a case is reconstructible — required
-for the audit guarantee.
+closed`, with `dismissed` reachable from triaging and investigating, and a failed response
+action returning `actioned → awaiting_approval` (§6's failure-mode table). One further edge
+exists outside that main path: `open → closed` directly, for a case that quiets out before
+anything ever triages it — the same "quiet period elapsed" case P3-02's clustering already
+produces. State transitions are append-only events in Postgres, so the full history of a case
+is reconstructible — required for the audit guarantee.
 
-Cases are scored before the LLM sees them: entity criticality (is this the CFO?), signal
-count, highest constituent severity, MITRE kill-chain progression (a case spanning Initial
-Access *and* Persistence outranks two separate cases), and tenant baseline deviation. Only
-cases above a threshold are escalated to investigation; the rest are triaged by the cheap
-model or auto-closed by rule.
+**Case lifecycle (`services/correlate/internal/lifecycle`, P3-03, TG6).** The legal-transition
+graph above is enforced in one place, `IsLegalTransition`, not re-checked ad hoc at each call
+site; an illegal transition is rejected before anything is written. `Writer.Transition` appends
+the `case_transitions` row and its `go/sentinelaudit` audit entry inside the *same*,
+caller-provided transaction — so a transition and its audit record commit or roll back
+together, never one without the other. `go/sentinelaudit` is itself a Go port of
+`packages/db`'s TypeScript hash chain (`SHA256(prevHash || canonicalJSON(content))`, same 8
+hashed fields, same genesis hash) — the thing P3-01's own entity-merge audit trail had
+deliberately deferred porting, now done once, properly, and proven cross-language: entries
+written entirely by the Go writer pass the real TypeScript `verify-audit-chain.mjs` CLI
+unmodified. Both transitions `cluster.PostgresStore` already wrote before this ticket (`open`
+on case creation, `closed` on quiet timeout) now go through this same writer, so every
+case transition in the system — not only ones added after this ticket — is legality-checked
+and audited.
 
-**The 10:1 SLO.** `signals_in / cases_escalated` is emitted as a metric per tenant per day
-and alerted on. If it degrades, that is a product incident, not a tuning task.
+**Case scoring (`services/correlate/internal/scoring`, P3-04).** Cases are scored
+deterministically before the LLM sees them, from five components that always sum to exactly
+the stored total (so a score is explainable after the fact, not just a number): entity
+criticality, signal count, highest constituent severity, MITRE kill-chain progression, and
+tenant baseline deviation. Kill-chain progression counts *distinct ATT&CK tactics* across a
+case's signals, via `go/sentinelattck` — a case spanning Initial Access *and* Persistence
+outranks two single-stage cases with the same signal count. `go/sentinelattck` is
+`services/detect/internal/attck`'s own pinned technique catalogue, moved to a standalone
+module in this ticket: Go's `internal/` visibility rule meant `services/correlate` could
+never import it directly, and duplicating an 8800-line pinned data file across two modules
+was the wrong fix — `services/detect/internal/attck` now re-exports this shared module's
+symbols under their original names, with zero behaviour change (its own full test suite
+passes unmodified). Entity criticality is a `high`/`normal` flag keyed by the same raw
+`(tenant_id, entity_type, entity_id)` pair `cases`/`case_signals` already use, not by
+`internal/entity`'s own resolved identity graph — unifying those two identity
+representations remains the separate, not-yet-done integration work P3-02's own notes
+already named. Tenant baseline deviation is a named component that always contributes 0 for
+now — a deliberate placeholder for P3-05 ("Entity baselines for anomaly context"), not a
+silent omission. The escalation threshold is a small, reviewable table keyed by tenant plan
+tier, keyed by `tenants.plan`'s own real values (`msp`, `small_business`, `startup`, `trial` —
+an MSP tenant escalates soonest), not yet exposed as a per-tenant override. A
+case's score is recomputed from its *entire* current signal set every time a signal joins
+it, in the same transaction as that signal's own write — recomputing from scratch rather
+than patching incrementally is what keeps the stored score consistent with Score's own
+determinism guarantee, with no accumulated-drift path to get wrong.
+
+**Entity baselines (`services/correlate/internal/baseline`, P3-05).** Per-entity behavioural
+baselines — usual countries, ASNs, devices, sign-in-hour distribution, typical data-transfer
+volume — computed from `sentinel.events` into `sentinel.entity_baselines`
+(`AggregatingMergeTree`, already shaped for this in P1-06), merged over a rolling 30-day
+window. Below a minimum-observation floor a baseline is explicitly `Valid: false` — never
+silently treated as "nothing unusual" *or* "everything is anomalous" — so a new hire's first
+week never generates an anomaly purely from novelty. Recomputation is incremental: a Postgres
+watermark (`baseline_cursors`, mirroring `connector_cursors`' own role) tracks what has
+already been folded in per tenant, and each run only reads/writes events since that point —
+proven to produce the identical merged result a full rescan would, since ClickHouse's own
+aggregate-state merge combinators guarantee it. `GetBaseline` is, deliberately, the future
+`get_entity_baseline(entity, metric)` investigation tool named in §3.7, built ahead of any
+tool-calling framework existing to invoke it (none exists anywhere in this repo yet) — a
+plain, well-documented function a later phase wires in, not a framework this ticket invents.
+P3-04's own `baselineDeviation` score component is still the documented 0 placeholder after
+this ticket, not wired to a real value: doing so needs per-signal geography/device context
+(`go/sentinelsignal.Signal` carries neither today), a separate wire-format change outside
+this ticket's own scope — `GetBaseline` gives scoring something real to deviate against, but
+connecting the two is still open, future work.
+
+**The 10:1 SLO (`services/correlate/internal/reduction`, P3-06, TG3).**
+`signals / cases_escalated` is computed per tenant per day
+(`services/correlate/internal/reduction`) and exported as the `correlate_reduction_ratio`
+Prometheus gauge; Grafana alerts when it drops below 8:1
+(`infra/docker/grafana-provisioning/alerting/reduction-ratio.yml`), visible platform-wide and
+per-tenant on its own operations dashboard. `signals` is a count of every `case_signals` row
+for the day — deliberately with no suppression-status filter of any kind: TG3 ("nothing is
+hidden") means a suppressed signal (still stored and counted since P2-10) cannot quietly fall
+out of the denominator to make the ratio look healthier than it is. `cases_escalated` uses
+P3-04's own `scoring.EscalationThreshold` for that tenant's plan tier, which is why this
+ticket depends on P3-04 specifically. The historical record lives in ClickHouse's own
+`sentinel.daily_reduction` (pre-built by P1-06) for backfill and trend analysis — a dedicated
+CLI (`cmd/backfill-reduction`) reuses the identical counting logic the live daily sweep uses,
+over any explicit date range, idempotently (a rerun deletes any existing row for that
+tenant/day first, since the table's own `SummingMergeTree` engine would otherwise double-count
+a repeated insert). A tenant with zero signals that day reports nothing to the gauge at all,
+rather than a misleading ratio of 0 — a quiet tenant is not a degraded one. A genuine
+degradation (as opposed to a single noisy rule caught and suppressed the same day) is
+documented as a product incident, not a tuning task — see
+[`docs/runbooks/reduction-ratio-degraded.md`](../runbooks/reduction-ratio-degraded.md).
+
+**Dismissed-signal digest (P3-07, TG3).** Every non-escalated case carries a machine-readable
+dismissal reason, never free prose — `below_escalation_threshold` today, the one reason this
+phase's own machinery can produce (`cluster.CloseQuietCases` now dismisses a case whose score
+never crossed the threshold, rather than merely closing it; a case that DID escalate still
+closes exactly as before — it was never hidden to begin with). `dismissed` is no longer a
+terminal lifecycle state: `dismissed → triaging` is a new legal edge
+(`services/correlate/internal/lifecycle`) specifically for a human challenging an
+auto-dismissal, which reopens the case and writes its own audit entry — the identical AC5
+("transition and audit entry in the same transaction") P3-03 already established, now also
+true from TypeScript (`CasesRepository.challengeDismissal`, `apps/api`'s own
+`POST /cases/:id/challenge`), via `writeAuditEntryTx` — `AuditLogWriter.insert`'s own
+transactional core, extracted so a caller already holding a transaction can write an audit
+entry inside it rather than opening a second one. No signal or case is ever deleted: a
+dismissal is an append-only transition like every other, so a case's full history —
+including every past dismissal and every challenge — is always reconstructible. The digest
+itself (`GET /dismissals/digest`) is retrievable through the API for any tenant and day;
+`apps/dashboard` has no real UI framework yet (the same gap `routes/suppressions.ts` already
+documents for its own dashboard requirement), so the API response is the real, tested
+deliverable here, not a placeholder standing in for a UI that doesn't exist.
+
+**Noise-ratio replay harness (`services/correlate/internal/noiseratio`, P3-09).** The P3 exit
+criterion — 10:1 signal-to-case reduction — as an executable test: a reference week of
+signals (benign noise that *should* cluster into low-scoring cases, benign noise that stays
+isolated and still must not escalate, and one seeded BEC-shaped attack sequence) replayed
+through the real `cluster`/`scoring`/`lifecycle` packages against real Postgres, then measured
+with `reduction.Ratio` itself — the identical function the production SLO job uses, so this
+test and that job can never quietly disagree about what "the ratio" means. Deliberately
+replays signals directly (`[]cluster.Signal`), not through Kafka or `services/detect`'s own
+rule engine like `go/sentinelreplay` (P1-09) does for raw events — this harness's own claim is
+about correlation's behaviour at a realistic mix and scale, already-covered territory (Kafka
+delivery, rule matching) is not re-proven here. Runs at two scales: `Reduced` (~80 signals) on
+every PR, inside the normal `go test -tags=integration ./...` sweep; `Full` (~900 signals, a
+closer approximation of a real week) nightly only, behind its own `noiseratio_full` build tag
+(mirroring P2-11's own `loadtest` tag split, for the identical "too slow for every PR, still
+worth running regularly" reason) — `.github/workflows/noise-ratio-nightly.yml`. Building this
+harness is also what caught a real, previously-undetected bug: `scoring.PlanTier`'s own
+`pro`/`enterprise` constants never matched `tenants.plan`'s real CHECK constraint (`msp`,
+`startup`, `small_business`, `trial`) at all — every non-trial tenant's escalation threshold
+had silently been falling through to the conservative default since P3-04. Fixed at its
+source (`scoring/threshold.go`), caught only because this test inserts a real tenant against
+the real schema rather than a synthetic one.
+
+**Hot-tenant sharding readiness (P3-10).** §3.3's own "correlation windows are merged
+downstream" claim, made concrete: neither `services/detect`'s worker nor this plane's own
+consumer loop (`cmd/correlate/main.go`) ever reads a Kafka message's *key* — only its JSON
+value — so the `tenant_id:shard_n` re-keying Phase 7's hot-tenant split applies to
+`events.normalized` never reaches `cluster.Signal` or `Clusterer` at all; clustering already
+keys purely on `(tenant_id, entity_type, entity_id)`, with no shard dimension to merge in the
+first place. `go/sentinelstream.ParseTenantShardKey` (`TenantShardKey`'s own inverse) exists so
+that claim stays true on *purpose*, not by accident — the one place shard-suffix parsing is
+defined, ready for whatever Phase 7 code eventually needs it, with nothing in today's pipeline
+calling it. Locked in with regression tests that simulate a tenant crossing the sharding
+threshold mid-stream (two signals for the same entity, keyed as if produced before and after
+the split) and confirm they still join one case, against both `InMemoryStore` and real
+Postgres — so Phase 7's own hot-tenant split can be a configuration change there, not a
+correlation-plane redesign.
 
 ### 3.7 AI analyst plane
 

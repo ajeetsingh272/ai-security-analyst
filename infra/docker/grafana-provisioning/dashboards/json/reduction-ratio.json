@@ -1,0 +1,72 @@
+{
+  "title": "Sentinel — Reduction Ratio SLO",
+  "uid": "sentinel-reduction-ratio",
+  "description": "P3-06 AC3: the platform-wide and per-tenant signal-to-case reduction ratio, the business-critical SLO (target >= 10:1, alert floor 8:1 — see infra/docker/grafana-provisioning/alerting/reduction-ratio.yml) that determines whether this product's unit economics hold. correlate_reduction_ratio is set once per tenant per day (cmd/correlate/main.go's own runReductionRatioSweep), after that tenant's own previous completed day.",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Platform-wide reduction ratio (worst tenant)",
+      "description": "min(correlate_reduction_ratio) across every tenant — the same aggregation the alert rule itself evaluates, so this number is always exactly what would currently be firing or not.",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 8 },
+              { "color": "green", "value": 10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "min(correlate_reduction_ratio)",
+          "legendFormat": "platform-wide (worst tenant)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Reduction ratio by tenant",
+      "description": "correlate_reduction_ratio by tenant_id — a flat line at 10 below the dashed 8:1 line means that tenant's own signal volume collapses to roughly a tenth as many escalated cases every day, the target this ticket's own SLO measures against.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "red", "value": 8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "correlate_reduction_ratio",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ]
+    }
+  ]
+}

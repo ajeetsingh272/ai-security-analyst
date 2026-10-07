@@ -1,0 +1,28 @@
+title: Conditional access policy disabled
+id: 8f1a2b3c-0001-4a00-9000-000000000013
+status: stable
+description: >
+  Detects a conditional access policy's state being set to Disabled —
+  these policies are the tenant's own gate on risky sign-ins, so
+  disabling one is a defense-evasion step worth surfacing regardless of
+  which policy it was.
+owner_description: >
+  A sign-in security rule for the company was turned off. These rules
+  usually block risky sign-ins, so turning one off can open a door for
+  an attacker.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1685
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Update Conditional Access Policy'
+    PolicyState: 'Disabled'
+  condition: selection
+falsepositives:
+  - IT retiring an old policy during a planned migration to a replacement
+level: high

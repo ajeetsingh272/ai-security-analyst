@@ -1,0 +1,28 @@
+title: Anonymous sharing link created for a file
+id: 8f1a2b3c-0001-4a00-9000-000000000027
+status: stable
+description: >
+  Detects creation of an anonymous ("anyone") sharing link — the file
+  becomes accessible to anyone with the link, with no sign-in or tenant
+  membership required, which is how sensitive content most often leaves
+  a tenant's own access boundary without a single credential being
+  stolen.
+owner_description: >
+  A link was created that lets anyone who has it open a company file,
+  without needing to sign in. This is convenient for sharing, but it
+  means the file is no longer limited to people inside the company.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1567.002
+logsource:
+  category: application
+  product: m365
+  service: sharepoint
+detection:
+  selection:
+    Operation: 'AnonymousLinkCreated'
+  condition: selection
+falsepositives:
+  - A user sharing a public marketing asset that was always meant to be open
+level: medium

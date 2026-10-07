@@ -22,4 +22,6 @@ export const GLOBAL_TABLES = {
     'Relates two tenants, so it holds msp_tenant_id and client_tenant_id instead of one tenant_id — this check only looks for the latter. RLS is still enforced (0003_msp_links_rls.sql): a row is visible to either the MSP tenant or the client tenant named in it, never to anyone else.',
   schema_migrations:
     'The migration runner ledger. Infrastructure, not application data, and deliberately untyped in @sentinel/db.',
+  hotfix_rules:
+    'P2-12/ADR-0004\'s emergency hotfix rule path: the cap AC1 requires ("maximum 10 active hotfix rules") is a single global count across every tenant combined, not a per-tenant limit, so this table is deliberately not tenant-scoped — the same reasoning tenants/users themselves already use above.',
 };

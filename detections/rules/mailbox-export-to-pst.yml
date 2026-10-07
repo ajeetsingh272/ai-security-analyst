@@ -1,0 +1,27 @@
+title: Mailbox content exported to a local file
+id: 8f1a2b3c-0001-4a00-9000-000000000020
+status: stable
+description: >
+  Detects a new mailbox export request — a bulk collection technique that
+  pulls an entire mailbox's contents into one exportable file, distinct
+  from mass-mailbox-download.yml's own per-item-access volume signal.
+owner_description: >
+  The full contents of a mailbox were exported to a file that can be
+  saved or copied elsewhere. IT sometimes does this during
+  investigations, but it is also how someone could copy out an entire
+  mailbox at once.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1114
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-MailboxExportRequest'
+  condition: selection
+falsepositives:
+  - IT exporting a departing employee's mailbox for legal retention
+level: medium

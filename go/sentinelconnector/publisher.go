@@ -23,16 +23,22 @@ import (
 // the translation at the one place that already owned "how an event
 // becomes wire bytes."
 type wireEvent struct {
-	TenantID      string            `json:"tenant_id"`
-	EventID       string            `json:"event_id"`
-	Time          time.Time         `json:"time"`
-	SchemaVersion string            `json:"schema_version"`
-	ClassUID      uint32            `json:"class_uid"`
-	CategoryUID   uint16            `json:"category_uid"`
-	ActivityID    uint16            `json:"activity_id"`
-	TypeUID       uint32            `json:"type_uid"`
-	SeverityID    uint8             `json:"severity_id"`
-	Unmapped      map[string]string `json:"unmapped,omitempty"`
+	TenantID      string    `json:"tenant_id"`
+	EventID       string    `json:"event_id"`
+	Time          time.Time `json:"time"`
+	SchemaVersion string    `json:"schema_version"`
+	ClassUID      uint32    `json:"class_uid"`
+	CategoryUID   uint16    `json:"category_uid"`
+	ActivityID    uint16    `json:"activity_id"`
+	TypeUID       uint32    `json:"type_uid"`
+	SeverityID    uint8     `json:"severity_id"`
+	// Metadata is P2-04's fix for a gap that went unnoticed because nothing
+	// downstream read it before: ocsf.Event.Metadata was never put on the
+	// wire at all, so services/detect's dispatch tree (keyed on
+	// metadata.product, per ADR-0004) would never see a single candidate
+	// rule for a real production event.
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Unmapped map[string]string `json:"unmapped,omitempty"`
 }
 
 // marshalEvent turns a normalised event into wire bytes. JSON, not because
@@ -52,6 +58,7 @@ func marshalEvent(ev ocsf.Event) ([]byte, error) {
 		ActivityID:    uint16(ev.ActivityID),
 		TypeUID:       uint32(ev.TypeUID),
 		SeverityID:    uint8(ev.SeverityID),
+		Metadata:      ev.Metadata,
 		Unmapped:      ev.Unmapped,
 	})
 }

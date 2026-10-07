@@ -1,0 +1,67 @@
+name: Noise-ratio replay (nightly, full scale)
+
+# P3-09 AC5: "Runs in CI on a reduced dataset and nightly on the full
+# one." The reduced-scale replay (TestNoiseRatio_ReferenceDatasetAtReducedScale,
+# services/correlate/internal/noiseratio) already runs on every PR as
+# part of ci-integration.yml's own "Go integration tests" step — it
+# carries only the `integration` build tag, so the normal
+# `go test -tags=integration ./...` sweep already includes it.
+#
+# This workflow is the OTHER half: the full-scale replay
+# (TestNoiseRatio_ReferenceDatasetAtFullScale, ~900 signals, ~10-30s),
+# gated behind its own `noiseratio_full` build tag specifically so it
+# does NOT run on every PR (mirrors P2-11's own `loadtest` tag split,
+# for the identical reason — too slow to pay on every push, still
+# worth running regularly). Mirrors verify-audit-chain.yml's own
+# scheduled-workflow shape: a non-zero exit here fails this job, which
+# is what turns into GitHub's own failed-scheduled-workflow
+# notification — a real, working alert on a genuine P3 exit-criterion
+# regression, not a placeholder.
+
+on:
+  schedule:
+    # Nightly. The reference dataset is fixed and deterministic, so
+    # checking more often than once a day buys nothing — a regression
+    # introduced during the day stays detectable at the next run
+    # regardless of exactly when it landed.
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: noise-ratio-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait postgres
+
+      - name: Migrate
+        run: bash scripts/migrate.sh
+        env:
+          MIGRATE_SKIP_CLICKHOUSE: '1'
+
+      # The P3 exit criterion itself, at full scale: a realistic
+      # week's worth of signals (~900), replayed through the real
+      # clustering/scoring/escalation pipeline against real Postgres.
+      - name: Noise-ratio replay (full scale)
+        run: cd services/correlate && go test -tags=integration,noiseratio_full ./internal/noiseratio/... -timeout 300s -v
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs postgres --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v

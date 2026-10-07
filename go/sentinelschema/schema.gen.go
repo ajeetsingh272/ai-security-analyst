@@ -9,7 +9,7 @@
 package sentinelschema
 
 // SchemaVersion mirrors SCHEMA_VERSION in packages/schema/src/index.ts.
-const SchemaVersion = "0.1.0"
+const SchemaVersion = "0.2.0"
 
 // Severity — generated from the TypeScript union of the same name.
 type Severity string
@@ -43,6 +43,21 @@ const (
 	UrgencyToday Urgency = "today"
 	UrgencyLater Urgency = "later"
 )
+
+// Case — generated from the TypeScript interface of the same name.
+type Case struct {
+	Id          string    `json:"id"`
+	TenantId    string    `json:"tenantId"`
+	Severity    *Severity `json:"severity,omitempty"`
+	Title       *string   `json:"title,omitempty"`
+	Score       *float64  `json:"score,omitempty"`
+	State       CaseState `json:"state"`
+	WindowStart string    `json:"windowStart"`
+	WindowEnd   *string   `json:"windowEnd,omitempty"`
+	EntityIds   []string  `json:"entityIds"`
+	SignalCount float64   `json:"signalCount"`
+	CreatedAt   string    `json:"createdAt"`
+}
 
 // Claim — generated from the TypeScript interface of the same name.
 type Claim struct {

@@ -28,7 +28,12 @@ export {
   TenantContextError,
   type TenantContext,
 } from './tenant-context.js';
-export { CasesRepository, type CaseRow } from './repositories/cases-repository.js';
+export {
+  CasesRepository,
+  DismissalChallengeEmptyReasonError,
+  type CaseRow,
+  type DismissalDigestRow,
+} from './repositories/cases-repository.js';
 export {
   ConnectorsRepository,
   type ConnectorHealth,
@@ -36,7 +41,22 @@ export {
   type ConnectorDbStatus,
 } from './repositories/connectors-repository.js';
 export {
+  SuppressionsRepository,
+  SuppressionEmptyReasonError,
+  type SuppressionRow,
+  type CreateSuppressionInput,
+  type RenewSuppressionInput,
+} from './repositories/suppressions-repository.js';
+export {
+  HotfixRulesRepository,
+  HotfixRuleEmptyReasonError,
+  HotfixRuleCapExceededError,
+  type HotfixRuleRow,
+  type CreateHotfixRuleInput,
+} from './repositories/hotfix-rules-repository.js';
+export {
   AuditLogWriter,
+  writeAuditEntryTx,
   type ActorType,
   type AuditEntryInput,
   type WrittenAuditEntry,

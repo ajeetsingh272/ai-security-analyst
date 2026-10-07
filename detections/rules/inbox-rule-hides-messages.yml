@@ -1,0 +1,28 @@
+title: Inbox rule created to hide incoming messages
+id: 8f1a2b3c-0001-4a00-9000-000000000012
+status: stable
+description: >
+  Detects a new inbox rule that marks matching mail as already read —
+  distinct from new-inbox-forwarding-rule.yml's own ForwardTo check, this
+  catches the "make the victim not notice" variant rather than the
+  "exfiltrate a copy" variant of the same post-compromise technique.
+owner_description: >
+  A rule was created on this mailbox that automatically marks certain
+  incoming emails as already read. Attackers use this to hide warning
+  emails, like security alerts, from the real owner of the account.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1564.008
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-InboxRule'
+    MarkAsRead: 'True'
+  condition: selection
+falsepositives:
+  - A user organising a noisy mailing list into a folder they do not read in real time
+level: medium

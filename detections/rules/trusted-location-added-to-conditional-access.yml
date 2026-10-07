@@ -1,0 +1,27 @@
+title: Trusted network location added to sign-in policy
+id: 8f1a2b3c-0001-4a00-9000-000000000026
+status: experimental
+description: >
+  Detects a new named location added to the tenant's trusted-location
+  list — a direct way to weaken conditional access, since sign-ins from
+  a trusted location are commonly exempted from stricter checks.
+owner_description: >
+  A network location was added to the list the company treats as safe
+  for signing in. If someone adds their own location to this list
+  without permission, it can let them get around checks meant to catch
+  risky sign-ins.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1484.002
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add a named location.'
+  condition: selection
+falsepositives:
+  - IT adding a new office's own network range to the trusted list
+level: medium

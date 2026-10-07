@@ -1,12 +1,16 @@
 go 1.23
 
 use (
+	./go/sentinelattck
+	./go/sentinelaudit
 	./go/sentinelconnector
 	./go/sentineldb
+	./go/sentinelenrich
 	./go/sentinelevents
 	./go/sentinelobs
 	./go/sentinelreplay
 	./go/sentinelschema
+	./go/sentinelsignal
 	./go/sentinelstream
 	./go/soaktest
 	./services/correlate

@@ -1,0 +1,27 @@
+title: New inbox forwarding rule to an external address
+id: 8f1a2b3c-0001-4a00-9000-000000000001
+status: stable
+description: >
+  Detects creation of a mailbox forwarding rule — a common post-compromise
+  persistence and exfiltration technique once an attacker has valid
+  credentials for a mailbox.
+owner_description: >
+  A rule was set up on this mailbox that automatically sends a copy of
+  incoming email to an outside address, often without the owner knowing.
+  This is a common way attackers quietly read someone's email after
+  breaking into their account.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1114.003
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-InboxRule'
+  condition: selection
+falsepositives:
+  - A user legitimately configuring their own forwarding rule
+level: medium

@@ -1,0 +1,28 @@
+title: New mobile device linked to a mailbox
+id: 8f1a2b3c-0001-4a00-9000-000000000032
+status: experimental
+description: >
+  Detects a new mobile device association on a mailbox — a routine event
+  most of the time, but also a persistence mechanism an attacker can use
+  to keep reading a victim's mail from their own device after obtaining
+  valid credentials.
+owner_description: >
+  A new phone or tablet was connected to someone's email account. This
+  happens whenever someone sets up email on a new device, but it is
+  also how someone could keep reading another person's email after
+  stealing their password.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.005
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-MobileDeviceAssociation'
+  condition: selection
+falsepositives:
+  - An employee setting up email on a new personal or company phone
+level: low

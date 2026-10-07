@@ -20,6 +20,9 @@ import { authPlugin } from './auth/auth-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
 import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-connector.js';
+import { suppressionsRoutes } from './routes/suppressions.js';
+import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
+import { dismissalsRoutes } from './routes/dismissals.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
 export interface BuildAppOptions {
@@ -33,10 +36,21 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can point it
    * at a local mock token endpoint instead. */
   m365OAuthConfig?: M365OAuthConfig | undefined;
+  /** Defaults to reading PLATFORM_OPS_TENANT_ID from the environment
+   * (undefined if unset, which routes/hotfix-rules.js handles with a
+   * 503, not a crash). Overridable so tests can point it at a fixture
+   * tenant instead. */
+  opsTenantId?: string | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
-  const { pool, redis, cookieSecure = true, m365OAuthConfig = m365OAuthConfigFromEnv() } = options;
+  const {
+    pool,
+    redis,
+    cookieSecure = true,
+    m365OAuthConfig = m365OAuthConfigFromEnv(),
+    opsTenantId = opsTenantIdFromEnv(),
+  } = options;
 
   const app = Fastify();
 
@@ -47,6 +61,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(tenantContextPlugin, { publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out'] });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
+  await app.register(suppressionsRoutes, { pool });
+  await app.register(hotfixRulesRoutes, { pool, opsTenantId });
+  await app.register(dismissalsRoutes, { pool });
 
   return app;
 }

@@ -187,3 +187,17 @@ P0 ──▶ P1 ──▶ P2 ──▶ P3 ──▶ P4 ──▶ P5 ──▶ P6
 
 The case contract (`packages/schema`) freezes at the end of P3. That is the gate that lets
 dashboard work parallelise, and it is why schema lives in its own package from P0.
+
+> **Gate open (P3-08, SCHEMA_VERSION 0.2.0).** The `Case` contract is frozen as of
+> `packages/schema/src/index.ts`'s own `SCHEMA_VERSION 0.2.0` — `id`, `tenantId`, `severity`,
+> `title`, `score`, `state` (the `CaseState` union P0-11 already defined), `windowStart`,
+> `windowEnd`, `entityIds`, `signalCount`, `createdAt`. Both the Go struct
+> (`go/sentinelschema/schema.gen.go`) and the TypeScript interface are generated from this one
+> source and proven to round-trip identically (`pnpm --filter @sentinel/schema
+> roundtrip-check`). From here, any change to `Case` is either additive (a MINOR/PATCH bump —
+> a new optional field, safe for every existing consumer) or breaking (a MAJOR bump, enforced
+> by CI — `ci-go.yml`'s own `schema` job fails a breaking change shipped without one). **P6
+> dashboard work can start now** against this shape without waiting on P4/P5. Deliberately
+> excluded from this frozen contract: P3-04's `scoreComponents` (JSONB scoring explainability)
+> — no consumer needs it yet, and adding it later is itself just another additive, MINOR
+> change under the same policy.

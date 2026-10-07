@@ -1,0 +1,30 @@
+title: Sign-in through a known anonymiser or proxy
+id: 8f1a2b3c-0001-4a00-9000-000000000005
+status: experimental
+description: >
+  Detects a successful sign-in where the source IP is a known Tor exit
+  node or anonymising proxy — threat-intel enrichment (P2-09,
+  go/sentinelenrich) populates IsAnonymousProxy at dispatch time from the
+  Tor Project's own exit list and X4BNet's maintained VPN range list;
+  this rule's own job is purely the field match against that flag.
+owner_description: >
+  Someone signed in to this account through a service that hides where
+  they are really connecting from. Attackers commonly use this trick to
+  hide their real location when they are using a stolen password.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1090.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'UserLoggedIn'
+    ResultStatus: 'Success'
+    IsAnonymousProxy: 'true'
+  condition: selection
+falsepositives:
+  - A user legitimately travelling or using a corporate VPN exit node
+level: high

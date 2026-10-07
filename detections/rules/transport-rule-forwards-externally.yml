@@ -1,0 +1,27 @@
+title: Mail flow rule created to forward mail externally
+id: 8f1a2b3c-0001-4a00-9000-000000000022
+status: stable
+description: >
+  Detects creation of a new transport rule — a tenant-wide mail-flow
+  object, distinct from new-inbox-forwarding-rule.yml's own per-mailbox
+  rule. A malicious transport rule affects every mailbox it matches at
+  once, making it a far higher-impact variant of the same technique.
+owner_description: >
+  A company-wide mail rule was created that can redirect or copy email.
+  Unlike a personal inbox rule, this can affect everyone's email at
+  once, so it deserves a closer look if nobody meant to set it up.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1114.003
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'New-TransportRule'
+  condition: selection
+falsepositives:
+  - IT setting up a legitimate mail-routing rule during a migration
+level: high

@@ -1,0 +1,29 @@
+title: Mailbox audit bypass enabled for an account
+id: 8f1a2b3c-0001-4a00-9000-000000000031
+status: experimental
+description: >
+  Detects AuditBypassEnabled being set to true for a mailbox or account —
+  the same defense-evasion goal as mailbox-audit-disabled.yml's own
+  check, reached through a different, less obvious cmdlet that excuses
+  one account's actions from being recorded rather than turning audit
+  off entirely.
+owner_description: >
+  A specific account or app was excused from having its mailbox activity
+  recorded. This is sometimes used for trusted internal tools, but it
+  can also let someone's actions go unrecorded on purpose.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1685.002
+logsource:
+  category: application
+  product: m365
+  service: exchange
+detection:
+  selection:
+    Operation: 'Set-MailboxAuditBypassAssociation'
+    AuditBypassEnabled: 'True'
+  condition: selection
+falsepositives:
+  - IT excluding a known, trusted backup or migration service account from audit noise
+level: high

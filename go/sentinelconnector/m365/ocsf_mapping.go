@@ -167,8 +167,20 @@ func MapEvent(tenantID, contentType string, raw []byte, fetchedAtUnix int64) ocs
 		TimeUnixMillis: timeMillis,
 		TimeOffset:     offset,
 		TenantID:       tenantID,
-		Metadata:       map[string]string{"source": "m365", "content_type": contentType},
-		RawData:        raw,
+		// "product" is read directly by services/detect/internal/dispatch
+		// as its one always-available dispatch dimension (every Sigma rule
+		// declares logsource.product unconditionally) — without it here, no
+		// M365 event would ever carry the one field the detection engine
+		// uses to find candidate rules at all.
+		//
+		// "operation" closes the gap fieldmap.go's own doc comment used to
+		// disclose (Operation -> metadata.operation, "P1-04's M365 mapping
+		// does not yet populate" it): every rule's base selection in this
+		// corpus filters on Operation, in-stream AND windowed alike, so
+		// leaving it unpopulated left the whole detection engine unable to
+		// match a single real M365 event, mapped or not.
+		Metadata: map[string]string{"source": "m365", "content_type": contentType, "product": "m365", "operation": rec.Operation},
+		RawData:  raw,
 	}
 
 	mapping, ok := operationMappings[rec.Operation]

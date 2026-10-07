@@ -1,0 +1,27 @@
+title: High-privilege permission granted to an application
+id: 8f1a2b3c-0001-4a00-9000-000000000024
+status: stable
+description: >
+  Detects a new app role assignment on a service principal — distinct
+  from oauth-consent-unverified-app.yml's own publisher-verification
+  check, this flags the SCOPE of what was granted rather than who
+  published the app, since a verified app can still be over-permissioned.
+owner_description: >
+  A connected app was given a powerful level of access to company data.
+  If IT did not set this up on purpose, it is worth checking exactly
+  what that app can now see or change.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1528
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Add app role assignment to service principal.'
+  condition: selection
+falsepositives:
+  - IT deliberately granting a reviewed integration broad mailbox or directory access
+level: high

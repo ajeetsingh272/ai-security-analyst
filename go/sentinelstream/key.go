@@ -1,6 +1,10 @@
 package sentinelstream
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // defaultShard is what every tenant-keyed message uses until the Phase 7
 // hot-tenant splitter assigns something else (overview.md §3.3) — carried
@@ -18,6 +22,33 @@ func TenantKey(tenantID string) string {
 // hot-tenant splitter uses; nothing in P1-05 calls this with shard != 0 yet.
 func TenantShardKey(tenantID string, shard int) string {
 	return fmt.Sprintf("%s:%d", tenantID, shard)
+}
+
+// ParseTenantShardKey is TenantShardKey's own inverse (P3-10 AC1) — given
+// an events.raw/events.normalized message key, returns the real tenant_id
+// and its shard number. A key with no ":shard_n" suffix at all parses as
+// shard 0 (defaultShard), the identical value TenantKey itself would have
+// produced — so a caller never needs to special-case "this tenant isn't
+// sharded yet" versus "this tenant's shard happens to be 0".
+//
+// Nothing in the live pipeline calls this today: neither
+// services/detect's worker nor services/correlate's own consumer loop
+// reads a Kafka message's KEY at all (only its JSON value) — Kafka's own
+// partitioner is the only thing that currently cares what the key
+// contains. This function exists so that claim stays true on PURPOSE,
+// not by accident: should Phase 7 ever need code that DOES read the key
+// (a sharding-aware metric or router, say), this is the one place that
+// parsing is defined, rather than every caller inventing its own.
+func ParseTenantShardKey(key string) (tenantID string, shard int, err error) {
+	idx := strings.LastIndex(key, ":")
+	if idx < 0 {
+		return key, defaultShard, nil
+	}
+	shard, err = strconv.Atoi(key[idx+1:])
+	if err != nil {
+		return "", 0, fmt.Errorf("sentinelstream: key %q has a non-numeric shard suffix: %w", key, err)
+	}
+	return key[:idx], shard, nil
 }
 
 // TenantEntityKey builds the `signals` topic's key: tenant_id:entity_id —

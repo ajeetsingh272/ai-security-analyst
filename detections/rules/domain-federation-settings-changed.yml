@@ -1,0 +1,28 @@
+title: Domain federation settings changed
+id: 8f1a2b3c-0001-4a00-9000-000000000034
+status: experimental
+description: >
+  Detects a change to a domain's federation settings — a rarely-touched,
+  high-impact configuration; an attacker who can modify it can make the
+  tenant trust sign-in tokens from an identity provider the attacker
+  controls, for every account on that domain at once.
+owner_description: >
+  The company changed how one of its email domains proves who its users
+  are when they sign in. This is a sensitive, rarely-changed setting —
+  someone who changes it without permission could make Microsoft trust
+  sign-ins they control.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1484.002
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Set federation settings on domain.'
+  condition: selection
+falsepositives:
+  - IT performing a planned, reviewed federation migration
+level: critical

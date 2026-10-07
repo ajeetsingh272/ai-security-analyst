@@ -1,0 +1,28 @@
+title: Tenant-wide admin consent granted to an application
+id: 8f1a2b3c-0001-4a00-9000-000000000015
+status: stable
+description: >
+  Detects an OAuth consent grant where ConsentType is AdminConsent — a
+  tenant-wide grant, distinct from oauth-consent-unverified-app.yml's own
+  publisher-verification check, and higher-impact since it grants the
+  application access on behalf of every user rather than one.
+owner_description: >
+  An administrator approved an outside app's access for everyone in the
+  company at once, rather than just for themselves. If this was not
+  planned, it is worth checking what that app can now see or do.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation: 'Consent to application.'
+    ConsentType: 'AdminConsent'
+  condition: selection
+falsepositives:
+  - IT deliberately rolling out a reviewed line-of-business app tenant-wide
+level: critical

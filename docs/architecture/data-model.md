@@ -28,11 +28,18 @@ none of them has to be taken on trust:
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
+| `baseline_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
+| `case_signals` | NOT NULL | yes | yes | `tenant_isolation` |
 | `case_transitions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `cases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entities` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
+| `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
@@ -42,6 +49,7 @@ table without a tenant and without a reason is an isolation gap.
 
 | Table | Why it has no `tenant_id` |
 |---|---|
+| `hotfix_rules` | P2-12/ADR-0004's emergency hotfix rule path: the cap AC1 requires ("maximum 10 active hotfix rules") is a single global count across every tenant combined, not a per-tenant limit, so this table is deliberately not tenant-scoped — the same reasoning tenants/users themselves already use above. |
 | `msp_links` | Relates two tenants, so it holds msp_tenant_id and client_tenant_id instead of one tenant_id — this check only looks for the latter. RLS is still enforced (0003_msp_links_rls.sql): a row is visible to either the MSP tenant or the client tenant named in it, never to anyone else. |
 | `schema_migrations` | The migration runner ledger. Infrastructure, not application data, and deliberately untyped in @sentinel/db. |
 | `tenants` | The tenant registry itself. A tenant_id column would be its primary key twice. |
@@ -170,6 +178,80 @@ part of the control and not merely a description of it.
 **Grants**
 
 - `sentinel_app`: INSERT, SELECT
+- `sentinel_jobs`: SELECT
+
+### `baseline_cursors`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `last_processed_at` | `timestamptz` | no | — |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `baseline_cursors_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `baseline_cursors_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `case_signals`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | no | — |
+| `dedupe_key` | `text` | no | — |
+| `signal_id` | `text` | no | — |
+| `rule_id` | `text` | no | — |
+| `entity_type` | `text` | no | — |
+| `entity_id` | `text` | no | — |
+| `severity` | `text` | no | — |
+| `event_ids` | `text[]` | no | `'{}'::text[]` |
+| `detected_at` | `timestamptz` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `mitre_ids` | `text[]` | no | `'{}'::text[]` |
+
+**Primary key**
+
+- `case_signals_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `case_signals_tenant_id_dedupe_key_key` — `UNIQUE (tenant_id, dedupe_key)`
+
+**Foreign keys**
+
+- `case_signals_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE`
+- `case_signals_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_case_signals_case` — `CREATE INDEX idx_case_signals_case ON public.case_signals USING btree (case_id)`
+- `idx_case_signals_tenant_entity_detected` — `CREATE INDEX idx_case_signals_tenant_entity_detected ON public.case_signals USING btree (tenant_id, entity_type, entity_id, detected_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
 ### `case_transitions`
@@ -335,6 +417,202 @@ part of the control and not merely a description of it.
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
+### `entities`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `entity_type` | `text` | no | — |
+| `status` | `text` | no | `'provisional'::text` |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entities_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `entities_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entities_status_check` — `CHECK ((status = ANY (ARRAY['provisional'::text, 'resolved'::text])))`
+
+**Indexes**
+
+- `idx_entities_tenant_type` — `CREATE INDEX idx_entities_tenant_type ON public.entities USING btree (tenant_id, entity_type)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_aliases`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `entity_id` | `uuid` | no | — |
+| `alias_type` | `text` | no | — |
+| `alias_value` | `text` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entity_aliases_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `entity_aliases_tenant_id_alias_type_alias_value_key` — `UNIQUE (tenant_id, alias_type, alias_value)`
+
+**Foreign keys**
+
+- `entity_aliases_entity_id_fkey` — `FOREIGN KEY (entity_id) REFERENCES entities(id)`
+- `entity_aliases_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `idx_entity_aliases_entity` — `CREATE INDEX idx_entity_aliases_entity ON public.entity_aliases USING btree (entity_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_criticality`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `entity_type` | `text` | no | — |
+| `entity_id` | `text` | no | — |
+| `criticality` | `text` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entity_criticality_pkey` — `PRIMARY KEY (tenant_id, entity_type, entity_id)`
+
+**Foreign keys**
+
+- `entity_criticality_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entity_criticality_criticality_check` — `CHECK ((criticality = ANY (ARRAY['normal'::text, 'high'::text])))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_merges`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `from_entity_id` | `uuid` | no | — |
+| `into_entity_id` | `uuid` | no | — |
+| `moved_alias_ids` | `uuid[]` | no | — |
+| `reason` | `text` | no | — |
+| `actor_type` | `text` | no | — |
+| `actor_id` | `text` | no | — |
+| `merged_at` | `timestamptz` | no | `now()` |
+| `reversed_at` | `timestamptz` | yes | — |
+| `reversed_by` | `text` | yes | — |
+
+**Primary key**
+
+- `entity_merges_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `entity_merges_from_entity_id_fkey` — `FOREIGN KEY (from_entity_id) REFERENCES entities(id)`
+- `entity_merges_into_entity_id_fkey` — `FOREIGN KEY (into_entity_id) REFERENCES entities(id)`
+- `entity_merges_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entity_merges_actor_type_check` — `CHECK ((actor_type = ANY (ARRAY['human'::text, 'system'::text])))`
+- `entity_merges_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_entity_merges_tenant` — `CREATE INDEX idx_entity_merges_tenant ON public.entity_merges USING btree (tenant_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `hotfix_rules`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `rule_id` | `text` | no | — |
+| `rule_title` | `text` | no | — |
+| `rule_yaml` | `text` | no | — |
+| `reason` | `text` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `expires_at` | `timestamptz` | no | `now()` |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+
+**Primary key**
+
+- `hotfix_rules_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `hotfix_rules_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `hotfix_rules_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+
+**Checks**
+
+- `hotfix_rules_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_hotfix_rules_active` — `CREATE INDEX idx_hotfix_rules_active ON public.hotfix_rules USING btree (expires_at) WHERE (revoked_at IS NULL)`
+
+**Triggers**
+
+- `hotfix_rules_force_expiry_trigger` — `CREATE TRIGGER hotfix_rules_force_expiry_trigger BEFORE INSERT OR UPDATE ON public.hotfix_rules FOR EACH ROW EXECUTE FUNCTION hotfix_rules_force_expiry()`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
 ### `memberships`
 
 | Column | Type | Null | Default |
@@ -422,6 +700,52 @@ part of the control and not merely a description of it.
 **Primary key**
 
 - `schema_migrations_pkey` — `PRIMARY KEY (filename)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `suppressions`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `rule_id` | `text` | no | — |
+| `entity_id` | `text` | yes | — |
+| `reason` | `text` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `expires_at` | `timestamptz` | no | — |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+| `suppressed_count` | `integer` | no | `0` |
+
+**Primary key**
+
+- `suppressions_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `suppressions_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `suppressions_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+- `suppressions_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `suppressions_check` — `CHECK ((expires_at > created_at))`
+- `suppressions_reason_check` — `CHECK ((length(TRIM(BOTH FROM reason)) > 0))`
+
+**Indexes**
+
+- `idx_suppressions_lookup` — `CREATE INDEX idx_suppressions_lookup ON public.suppressions USING btree (tenant_id, rule_id, entity_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
 
 **Grants**
 

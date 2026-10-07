@@ -1,0 +1,28 @@
+title: MFA method registration outside business hours
+id: 8f1a2b3c-0001-4a00-9000-000000000004
+status: experimental
+description: >
+  Detects registration of a new multi-factor authentication method —
+  commonly performed by an attacker immediately after obtaining valid
+  credentials, to establish a persistent authentication factor of their
+  own.
+owner_description: >
+  Someone added a new way to prove their identity on this account (like
+  a new phone number or app) outside of normal office hours. Attackers
+  often do this right after stealing a password, so they can get back
+  in even if the real owner changes it.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1556.006
+logsource:
+  category: application
+  product: m365
+  service: azuread
+detection:
+  selection:
+    Operation|startswith: 'Register security info'
+  condition: selection
+falsepositives:
+  - A legitimate user enrolling a new device
+level: medium

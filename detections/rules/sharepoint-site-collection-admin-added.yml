@@ -1,0 +1,26 @@
+title: Site collection administrator added
+id: 8f1a2b3c-0001-4a00-9000-000000000030
+status: stable
+description: >
+  Detects a new site collection admin grant — full control over every
+  file, folder and permission in that site collection, so an unexpected
+  grant here is as significant as a directory-role assignment.
+owner_description: >
+  Someone was given full control over a company site, including every
+  file and folder in it. This should match something IT actually did on
+  purpose.
+author: Sentinel detection engineering
+date: 2026/10/06
+tags:
+  - attack.t1098.003
+logsource:
+  category: application
+  product: m365
+  service: sharepoint
+detection:
+  selection:
+    Operation: 'Add site collection admin.'
+  condition: selection
+falsepositives:
+  - IT provisioning a new site and assigning its intended owner
+level: medium
