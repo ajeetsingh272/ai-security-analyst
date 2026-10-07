@@ -28,6 +28,7 @@ none of them has to be taken on trust:
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
+| `baseline_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `case_signals` | NOT NULL | yes | yes | `tenant_isolation` |
 | `case_transitions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `cases` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -35,6 +36,7 @@ none of them has to be taken on trust:
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entities` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
+| `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -178,6 +180,33 @@ part of the control and not merely a description of it.
 - `sentinel_app`: INSERT, SELECT
 - `sentinel_jobs`: SELECT
 
+### `baseline_cursors`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `last_processed_at` | `timestamptz` | no | — |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `baseline_cursors_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `baseline_cursors_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
 ### `case_signals`
 
 | Column | Type | Null | Default |
@@ -194,6 +223,7 @@ part of the control and not merely a description of it.
 | `event_ids` | `text[]` | no | `'{}'::text[]` |
 | `detected_at` | `timestamptz` | no | — |
 | `created_at` | `timestamptz` | no | `now()` |
+| `mitre_ids` | `text[]` | no | `'{}'::text[]` |
 
 **Primary key**
 
@@ -451,6 +481,39 @@ part of the control and not merely a description of it.
 **Indexes**
 
 - `idx_entity_aliases_entity` — `CREATE INDEX idx_entity_aliases_entity ON public.entity_aliases USING btree (entity_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
+- `sentinel_jobs`: SELECT
+
+### `entity_criticality`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `entity_type` | `text` | no | — |
+| `entity_id` | `text` | no | — |
+| `criticality` | `text` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `entity_criticality_pkey` — `PRIMARY KEY (tenant_id, entity_type, entity_id)`
+
+**Foreign keys**
+
+- `entity_criticality_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `entity_criticality_criticality_check` — `CHECK ((criticality = ANY (ARRAY['normal'::text, 'high'::text])))`
 
 **Row-level security**
 
