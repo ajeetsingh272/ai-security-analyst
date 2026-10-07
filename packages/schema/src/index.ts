@@ -25,7 +25,7 @@
  * documentation that can quietly go stale.
  */
 
-export const SCHEMA_VERSION = '0.1.0';
+export const SCHEMA_VERSION = '0.2.0';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
@@ -37,6 +37,36 @@ export type CaseState =
   | 'actioned'
   | 'closed'
   | 'dismissed';
+
+/**
+ * The Case contract (P3-08) — frozen at SCHEMA_VERSION 0.2.0 as the gate
+ * docs/roadmap.md names: P6 dashboard work can parallelise against this
+ * shape from here, without waiting on the rest of P3-P5.
+ *
+ * Deliberately narrower than the full `cases` row
+ * (db/postgres/migrations/0001_foundation.sql) — `scoreComponents`
+ * (P3-04's JSONB explainability detail) is NOT part of this frozen
+ * contract. Nothing that consumes a Case today (a dashboard listing or
+ * detail view) needs per-component scoring internals; adding it later,
+ * if a real consumer needs it, is a MINOR/additive change under this
+ * same compatibility policy — not something to freeze in speculatively
+ * now. `state` mirrors `services/correlate/internal/lifecycle.State`
+ * (P3-03) — CaseState already existed here before that package did;
+ * this is the first interface that actually uses it.
+ */
+export interface Case {
+  id: string;
+  tenantId: string;
+  severity?: Severity;
+  title?: string;
+  score?: number;
+  state: CaseState;
+  windowStart: string;
+  windowEnd?: string;
+  entityIds: string[];
+  signalCount: number;
+  createdAt: string;
+}
 
 /**
  * A single assertion in an AI-generated report.
