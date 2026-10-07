@@ -11,7 +11,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { AnthropicInvestigationModel, UnparsableVerdictError } from '../investigation-model.js';
+import type { ClickHouseClient } from '@clickhouse/client';
+import { AnthropicInvestigationModel, UnparsableVerdictError, GroundingFailedError } from '../investigation-model.js';
 import type { ToolDependencies } from '../tools/index.js';
 
 function fakeLogger() {
@@ -52,8 +53,19 @@ function finalTextResponse(text: string): Anthropic.Message {
   } as unknown as Anthropic.Message;
 }
 
-function fakeDeps(): ToolDependencies {
-  return { ch: null as never, pool: null as never, logger: fakeLogger() };
+/** evt_1 resolving inside the test's own default case window
+ * ('2026-01-01T00:00:00.000Z' .. open) is what lets every test that
+ * reuses CANNED_VERDICT_TEXT (cites evt_1) also pass the grounding
+ * check this loop now runs after schema validation — a fake ClickHouse
+ * client stands in here the same way a fake Anthropic client already
+ * does above; grounding's own real-row-policy logic is proven in
+ * grounding.test.ts/tools.integration.test.ts, not here. */
+function fakeGroundedClickHouseClient(rows: Array<{ event_id: string; time: string }> = [{ event_id: 'evt_1', time: '2026-01-01 12:00:00.000' }]): ClickHouseClient {
+  return { query: async () => ({ json: async () => rows }) } as unknown as ClickHouseClient;
+}
+
+function fakeDeps(ch: ClickHouseClient = fakeGroundedClickHouseClient()): ToolDependencies {
+  return { ch, pool: null as never, logger: fakeLogger() };
 }
 
 describe('AnthropicInvestigationModel tool-use loop', () => {
@@ -71,7 +83,7 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
       tools: fakeDeps(),
     });
 
-    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
 
     expect(verdict.title).toBe('Investigated via tool use');
     expect(create).toHaveBeenCalledTimes(2);
@@ -90,7 +102,7 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
     const fakeClient = { messages: { create } } as unknown as Anthropic;
 
     const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
-    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
 
     expect(verdict.title).toBe('Investigated via tool use');
     expect(create).toHaveBeenCalledTimes(1);
@@ -106,7 +118,7 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
     const fakeClient = { messages: { create } } as unknown as Anthropic;
 
     const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
-    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
 
     expect(verdict.title).toBe('Investigated via tool use');
     expect(create).toHaveBeenCalledTimes(2);
@@ -125,7 +137,7 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
 
     const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
 
-    await expect(model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' })).rejects.toThrow(UnparsableVerdictError);
+    await expect(model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null })).rejects.toThrow(UnparsableVerdictError);
     // Exactly one repair attempt: the call that would be a SECOND
     // repair never happens.
     expect(create).toHaveBeenCalledTimes(2);
@@ -146,10 +158,58 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
     const fakeClient = { messages: { create } } as unknown as Anthropic;
 
     const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient });
-    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
 
     expect(verdict.title).toBe('Investigated via tool use');
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('P4-04 AC4: a grounding failure triggers exactly one repair attempt, then succeeds', async () => {
+    const ungroundedCh = fakeGroundedClickHouseClient([]); // evt_1 never resolves
+    const groundedCh = fakeGroundedClickHouseClient(); // default: evt_1 resolves
+
+    // The fake Anthropic client's SECOND call must see the grounded
+    // ClickHouse client, since by then the "model" has supposedly
+    // revised its claims — simulated here by swapping which ch backs
+    // the SAME ToolDependencies object between calls.
+    const deps: ToolDependencies = { ch: ungroundedCh, pool: null as never, logger: fakeLogger() };
+    const create = vi.fn().mockImplementationOnce(() => Promise.resolve(finalTextResponse(CANNED_VERDICT_TEXT))).mockImplementationOnce(() => {
+      (deps as { ch: ClickHouseClient }).ch = groundedCh;
+      return Promise.resolve(finalTextResponse(CANNED_VERDICT_TEXT));
+    });
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+
+    const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient, tools: deps });
+    const verdict = await model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null });
+
+    expect(verdict.title).toBe('Investigated via tool use');
+    expect(create).toHaveBeenCalledTimes(2);
+    const secondCallArgs = create.mock.calls[1]![0] as { messages: Anthropic.MessageParam[] };
+    expect(String(secondCallArgs.messages.at(-1)!.content)).toContain('could not be verified');
+  });
+
+  it('P4-04 AC4: a SECOND consecutive grounding failure throws GroundingFailedError and records the rejection metric', async () => {
+    const neverGroundedCh = fakeGroundedClickHouseClient([]);
+    const create = vi.fn().mockResolvedValue(finalTextResponse(CANNED_VERDICT_TEXT));
+    const fakeClient = { messages: { create } } as unknown as Anthropic;
+    const attempts = { add: vi.fn() };
+    const rejections = { add: vi.fn() };
+
+    const model = new AnthropicInvestigationModel({
+      apiKey: 'unused',
+      model: 'test-model',
+      client: fakeClient,
+      tools: { ch: neverGroundedCh, pool: null as never, logger: fakeLogger() },
+      groundingMetrics: { attempts: attempts as never, rejections: rejections as never },
+    });
+
+    await expect(
+      model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null }),
+    ).rejects.toThrow(GroundingFailedError);
+    // Exactly one repair attempt: a third call never happens.
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(attempts.add).toHaveBeenCalledTimes(1);
+    expect(rejections.add).toHaveBeenCalledTimes(1);
   });
 
   it('bounds the loop: gives up with UnparsableVerdictError rather than looping forever', async () => {
@@ -158,7 +218,7 @@ describe('AnthropicInvestigationModel tool-use loop', () => {
 
     const model = new AnthropicInvestigationModel({ apiKey: 'unused', model: 'test-model', client: fakeClient, tools: fakeDeps() });
 
-    await expect(model.investigate({ caseId: 'case-1', tenantId: 'tenant-1' })).rejects.toThrow(UnparsableVerdictError);
+    await expect(model.investigate({ caseId: 'case-1', tenantId: 'tenant-1', windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null })).rejects.toThrow(UnparsableVerdictError);
     expect(create).toHaveBeenCalledTimes(6);
   });
 });

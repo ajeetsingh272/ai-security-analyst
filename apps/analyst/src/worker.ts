@@ -14,6 +14,7 @@ import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey, parseCaseEventMessage } fr
 import { TenantConcurrencyLimiter } from './tenant-concurrency.js';
 import { withRetry, PermanentError, type RetryOptions } from './retry.js';
 import type { InvestigationModel, CaseContext } from './investigation-model.js';
+import { GroundingFailedError } from './investigation-model.js';
 
 export interface AnalystWorkerOptions {
   consumer: Consumer;
@@ -95,27 +96,34 @@ export class AnalystWorker {
     await this.tracer.startActiveSpan('case.investigate', async (span) => {
       span.setAttribute('tenant_id', tenantId);
       span.setAttribute('case_id', caseId);
+      let ctx: CaseContext | null = null;
       try {
-        const ctx = await this.fetchCaseContext(tenantId, caseId);
+        ctx = await this.fetchCaseContext(tenantId, caseId);
         if (!ctx) {
           this.logger.warn({ tenant_id: tenantId, case_id: caseId }, 'case no longer exists; dropping');
           return;
         }
 
         const verdict = await this.tracer.startActiveSpan('case.llm_investigation', (llmSpan) =>
-          withRetry(() => this.investigationModel.investigate(ctx), this.retryOpts).finally(() => llmSpan.end()),
+          withRetry(() => this.investigationModel.investigate(ctx!), this.retryOpts).finally(() => llmSpan.end()),
         );
 
         this.logger.info(
           { tenant_id: tenantId, case_id: caseId, verdict_severity: verdict.severity, claim_count: verdict.claims.length },
           'investigation produced a verdict',
         );
-        // P4-01's own scope ends here: persisting/validating/reporting
-        // the verdict is P4-03 (structured contract) / P4-04 (grounding
-        // validator) / P4-07 (report generation)'s job. This ticket's
-        // only claim is that the worker SKELETON reaches this point.
+        // The worker's own scope ends here: persisting/reporting the
+        // verdict is P4-07's job. This file's claim is that the worker
+        // reaches this point with a verdict that is schema-valid (P4-03)
+        // and grounded (P4-04) — enforced inside investigationModel
+        // itself, not here, which is exactly why a GroundingFailedError
+        // is caught below rather than this method re-checking anything.
       } catch (err) {
-        await this.handleFailure(tenantId, caseId, err);
+        if (err instanceof GroundingFailedError) {
+          await this.degradeToRuleOnlyAlert(tenantId, caseId, ctx, err);
+        } else {
+          await this.handleFailure(tenantId, caseId, err);
+        }
       } finally {
         span.end();
       }
@@ -127,7 +135,7 @@ export class AnalystWorker {
       try {
         const row = await withTenantContext(tenantId, () => new CasesRepository(this.pool).findById(caseId));
         if (!row) return null;
-        const ctx: CaseContext = { caseId: row.id, tenantId: row.tenantId };
+        const ctx: CaseContext = { caseId: row.id, tenantId: row.tenantId, windowStart: row.windowStart, windowEnd: row.windowEnd };
         if (row.severity !== null) ctx.severity = row.severity;
         if (row.title !== null) ctx.title = row.title;
         return ctx;
@@ -135,6 +143,34 @@ export class AnalystWorker {
         span.end();
       }
     });
+  }
+
+  /** P4-04 AC4: "on failure [...] degrade to a rule-only alert and page
+   * on-call" — the SECOND consecutive grounding failure (the model's
+   * own `investigate` already gave it one repair attempt) is not
+   * treated as a DLQ-worthy failure the way `handleFailure` treats
+   * everything else. It is a deliberate, successful-in-its-own-right
+   * outcome: the AI's own claims could not be verified, so this alert
+   * carries ONLY the case's deterministic fields (never the unverified
+   * verdict content) — honestly scoped the same way this codebase
+   * scopes every alert that has no dedicated delivery channel yet (no
+   * WhatsApp/Slack/email integration exists before P5's response
+   * plane): a real, structured, paged log line, not a fabricated send.
+   * The offset still commits normally afterward — this is not a
+   * failure needing reprocessing. */
+  private async degradeToRuleOnlyAlert(tenantId: string, caseId: string, ctx: CaseContext | null, err: GroundingFailedError): Promise<void> {
+    this.logger.error(
+      {
+        tenant_id: tenantId,
+        case_id: caseId,
+        severity: ctx?.severity ?? 'unknown',
+        title: ctx?.title ?? 'untitled',
+        grounding_errors: err.message,
+        page: true,
+        rule_only_alert: true,
+      },
+      'evidence grounding failed twice; degraded to a rule-only alert',
+    );
   }
 
   /** AC3: a permanent failure (or a transient one whose retry budget

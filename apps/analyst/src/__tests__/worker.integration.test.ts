@@ -22,6 +22,7 @@ import { AnalystWorker } from '../worker.js';
 import { CASES_TOPIC, CASES_DLQ_TOPIC, tenantCaseKey } from '../kafka.js';
 import { PermanentError } from '../retry.js';
 import type { InvestigationModel, CaseContext } from '../investigation-model.js';
+import { GroundingFailedError } from '../investigation-model.js';
 
 const BROKERS = [process.env.REDPANDA_BROKERS ?? 'localhost:19092'];
 const JAEGER_URL = 'http://localhost:16686';
@@ -268,6 +269,65 @@ describe('AnalystWorker', () => {
       5_000,
       'a paging-level error log line',
     );
+  });
+
+  it('P4-04 T5: a second consecutive grounding failure degrades to a rule-only alert and pages, never reaching the DLQ', async () => {
+    const { tenantId, caseId } = await createTenantAndCase();
+    cleanupTenants.push(tenantId);
+    const harness = newKafkaHarness();
+    activeConsumers.push(harness.consumer);
+    activeProducers.push(harness.producer);
+
+    const dlqConsumer = harness.kafka.consumer({ groupId: `${harness.groupId}-dlq-reader` });
+    activeConsumers.push(dlqConsumer);
+    await dlqConsumer.connect();
+    await dlqConsumer.subscribe({ topic: CASES_DLQ_TOPIC, fromBeginning: false });
+    const dlqMessages: Array<Record<string, unknown>> = [];
+    await dlqConsumer.run({
+      eachMessage: async ({ message }) => {
+        if (message.value) dlqMessages.push(JSON.parse(message.value.toString()));
+      },
+    });
+
+    // Simulates AnthropicInvestigationModel having already given the
+    // model its own one grounding-repair attempt internally (P4-04's
+    // own investigation-model.test.ts proves THAT loop) — from the
+    // worker's point of view, this is just what a model throws once
+    // its evidence is unverifiable even after revising.
+    const model = new FakeInvestigationModel(async () => {
+      throw new GroundingFailedError('claim 0\'s evidenceRef "evt_fake" does not resolve to a real event for this case', [
+        { claimIndex: 0, eventId: 'evt_fake', reason: 'not_found' },
+      ]);
+    });
+    const { logger, lines } = capturingLogger();
+    const worker = new AnalystWorker({
+      consumer: harness.consumer,
+      producer: harness.kafka.producer(),
+      pool,
+      investigationModel: model,
+      logger,
+      concurrencyPerTenant: 5,
+      partitionsConsumedConcurrently: 4,
+      retry: { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 100 },
+      isRetryable: () => false, // GroundingFailedError is never retryable
+    });
+    activeWorkers.push(worker);
+    await worker.start();
+
+    await publishCaseEvent(harness.producer, tenantId, caseId);
+
+    await waitUntil(
+      () => lines.some((l) => l.msg === 'evidence grounding failed twice; degraded to a rule-only alert' && l.case_id === caseId),
+      10_000,
+      'the rule-only-alert degrade log line',
+    );
+    const degradeLine = lines.find((l) => l.case_id === caseId && l.rule_only_alert === true)!;
+    expect(degradeLine).toMatchObject({ tenant_id: tenantId, page: true, severity: 'critical' });
+
+    // Give the DLQ consumer a fair chance to see a message that should
+    // never arrive before asserting its absence.
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(dlqMessages.some((m) => m.case_id === caseId)).toBe(false);
   });
 
   it('T4: shutdown drains an in-flight investigation before disconnecting', async () => {
