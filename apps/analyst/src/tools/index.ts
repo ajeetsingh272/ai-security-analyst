@@ -14,6 +14,7 @@ import { queryEvents, type QueryEventsArgs } from './query-events.js';
 import { getEntityBaseline, METRICS, type GetEntityBaselineArgs } from './entity-baseline.js';
 import { lookupThreatIntel, type LookupThreatIntelArgs } from './threat-intel.js';
 import { getCaseHistory, type GetCaseHistoryArgs } from './case-history.js';
+import { scanValueForInjectionAttempts, wrapUntrustedData } from '../injection-defense.js';
 
 export interface ToolDependencies {
   ch: ClickHouseClient;
@@ -82,17 +83,64 @@ export class UnknownToolError extends Error {
   }
 }
 
-export async function executeTool(name: string, tenantId: string, args: unknown, deps: ToolDependencies): Promise<unknown> {
+/** P4-09 AC4: a well-formed tool call never includes an identifier for
+ * who it's acting on behalf of at all (AC2's own design) — any of
+ * these keys showing up in the model's own `args` is either a client
+ * bug or an attempt to inject a tenant id, and either way must have
+ * ZERO effect, since every tool below reads `tenantId` only from this
+ * function's own second parameter, never from `args`. */
+const SUSPICIOUS_ARG_KEYS = ['tenantId', 'tenant_id', 'tenantID'];
+
+function detectSuspiciousArgKeys(args: unknown): string[] {
+  if (typeof args !== 'object' || args === null) return [];
+  return SUSPICIOUS_ARG_KEYS.filter((k) => k in (args as Record<string, unknown>));
+}
+
+export interface ToolExecutionOutcome {
+  /** Already wrapped as untrusted data (P4-09 AC1) — ready to use
+   * verbatim as a `tool_result` block's own `content`. */
+  content: string;
+  injectionDetected: boolean;
+}
+
+export async function executeTool(name: string, tenantId: string, args: unknown, deps: ToolDependencies): Promise<ToolExecutionOutcome> {
+  const suspiciousKeys = detectSuspiciousArgKeys(args);
+  if (suspiciousKeys.length > 0) {
+    deps.logger.warn(
+      { tool: name, tenantId, args, suspicious_arg_keys: suspiciousKeys },
+      'tool call arguments included a tenant-identifying key, which this tool never reads — possible injection attempt or client bug',
+    );
+  }
+
+  let result: unknown;
   switch (name) {
     case 'query_events':
-      return queryEvents(deps.ch, tenantId, args as QueryEventsArgs, deps.logger);
+      result = await queryEvents(deps.ch, tenantId, args as QueryEventsArgs, deps.logger);
+      break;
     case 'get_entity_baseline':
-      return getEntityBaseline(deps.ch, tenantId, args as GetEntityBaselineArgs, deps.logger);
+      result = await getEntityBaseline(deps.ch, tenantId, args as GetEntityBaselineArgs, deps.logger);
+      break;
     case 'lookup_threat_intel':
-      return lookupThreatIntel(tenantId, args as LookupThreatIntelArgs, deps.logger);
+      result = await lookupThreatIntel(tenantId, args as LookupThreatIntelArgs, deps.logger);
+      break;
     case 'get_case_history':
-      return getCaseHistory(deps.pool, tenantId, args as GetCaseHistoryArgs, deps.logger);
+      result = await getCaseHistory(deps.pool, tenantId, args as GetCaseHistoryArgs, deps.logger);
+      break;
     default:
       throw new UnknownToolError(name);
   }
+
+  // P4-09 AC3/AC5: scanned here, not only at the point of use, so
+  // every tool's result is checked the same way regardless of which
+  // one surfaced the attacker-controlled field.
+  const injectionPatterns = scanValueForInjectionAttempts(result);
+  const injectionDetected = injectionPatterns.length > 0;
+  if (injectionDetected) {
+    deps.logger.warn(
+      { tool: name, tenantId, injection_patterns: injectionPatterns },
+      'possible prompt-injection attempt detected in tool result content',
+    );
+  }
+
+  return { content: wrapUntrustedData(`tool_result:${name}`, JSON.stringify(result), injectionDetected), injectionDetected };
 }

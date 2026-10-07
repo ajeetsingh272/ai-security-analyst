@@ -21,6 +21,7 @@ import { validateVerdict, formatValidationErrors } from './verdict-validation.js
 import { PLAYBOOK_REGISTRY } from './playbook-registry.js';
 import { validateGrounding, formatGroundingErrors, type GroundingError } from './grounding.js';
 import { tenantContextBlock, type CacheMetrics, type CostRecording } from './triage.js';
+import { wrapUntrustedData, UNTRUSTED_DATA_INSTRUCTION } from './injection-defense.js';
 import { recordUsage } from './cost-budget.js';
 import { usageFromAnthropic } from './pricing.js';
 
@@ -83,7 +84,9 @@ export interface GroundingMetrics {
 }
 
 const SYSTEM_PROMPT = `You are a security analyst investigating an escalated case. You may call the available tools to gather evidence before answering. When you are done, respond with ONLY a JSON object matching this exact shape, no other text:
-{"severity": "critical"|"high"|"medium"|"low"|"info", "title": string, "claims": [{"text": string, "evidenceRef": string[] (non-empty, every claim must cite at least one piece of evidence)}], "attackChain": string[], "recommendedActions": [{"playbook": one of [${PLAYBOOK_REGISTRY.join(', ')}], "urgency": "now"|"today"|"later", "blastRadius": string}]}`;
+{"severity": "critical"|"high"|"medium"|"low"|"info", "title": string, "claims": [{"text": string, "evidenceRef": string[] (non-empty, every claim must cite at least one piece of evidence)}], "attackChain": string[], "recommendedActions": [{"playbook": one of [${PLAYBOOK_REGISTRY.join(', ')}], "urgency": "now"|"today"|"later", "blastRadius": string}]}
+
+${UNTRUSTED_DATA_INSTRUCTION}`;
 
 export interface AnthropicInvestigationModelOptions {
   apiKey: string;
@@ -132,10 +135,15 @@ export class AnthropicInvestigationModel implements InvestigationModel {
   }
 
   async investigate(ctx: CaseContext): Promise<Verdict> {
+    // P4-09 AC1: ctx.title ultimately traces back to signal/event data
+    // this pipeline never fully controls end to end — wrapped as
+    // untrusted the same as any tool result, even though severity/score
+    // are deterministic enum/numeric values from upstream correlation,
+    // not free text an attacker could shape.
     const messages: Anthropic.MessageParam[] = [
       {
         role: 'user',
-        content: `Case ${ctx.caseId} (tenant ${ctx.tenantId}): severity=${ctx.severity ?? 'unknown'}, title=${ctx.title ?? 'untitled'}, score=${ctx.score ?? 'unknown'}.`,
+        content: `Case ${ctx.caseId} (tenant ${ctx.tenantId}): severity=${ctx.severity ?? 'unknown'}, score=${ctx.score ?? 'unknown'}. ${wrapUntrustedData('case.title', ctx.title ?? 'untitled')}`,
       },
     ];
     // AC3 (P4-03) / AC4 (P4-04): each is exactly one chance across the
@@ -182,8 +190,8 @@ export class AnthropicInvestigationModel implements InvestigationModel {
         const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const block of toolUseBlocks) {
-          const result = await executeTool(block.name, ctx.tenantId, block.input, this.tools);
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          const outcome = await executeTool(block.name, ctx.tenantId, block.input, this.tools);
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: outcome.content });
         }
         messages.push({ role: 'user', content: toolResults });
         continue;
