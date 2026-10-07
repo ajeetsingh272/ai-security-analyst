@@ -44,10 +44,15 @@ echo "checked ${count} rule(s)"
 # actually produce, not just that it was once produced correctly.
 if [ -d services/detect/internal/detectgen ]; then
   echo "regenerating compiled detection rules..."
+  # sigmac-gen itself fails (non-zero exit, "ERROR" above never printed)
+  # when a rule's own MITRE tag is unknown, revoked or deprecated in the
+  # pinned ATT&CK catalogue (P2-07 AC1/AC2) — its own stderr already
+  # names the rule and the reason, so there is nothing more to check
+  # here beyond letting that exit code fail this script too.
   if ! (cd services/detect && go run ./cmd/sigmac-gen); then
     echo "ERROR: sigmac-gen failed to regenerate — see its own error above"
     fail=1
-  elif ! git diff --exit-code -- services/detect/internal/detectgen; then
+  elif ! git diff --exit-code -- services/detect/internal/detectgen docs/architecture/attack-coverage.md docs/architecture/attack-coverage.navigator.json; then
     echo "ERROR: regenerating produced a diff — commit 'go run ./cmd/sigmac-gen' output (run it from services/detect)"
     fail=1
   else
