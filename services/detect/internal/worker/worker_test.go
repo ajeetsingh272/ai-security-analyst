@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/sigmac"
@@ -21,7 +22,7 @@ func TestFlatten(t *testing.T) {
 		Unmapped:    map[string]string{"UserId": "user@example.com"},
 	}
 
-	flat := flatten(wev)
+	flat := flatten(wev, nil)
 
 	want := map[string]string{
 		"tenant_id":          "tenant-1",
@@ -41,6 +42,63 @@ func TestFlatten(t *testing.T) {
 		if flat[k] != v {
 			t.Errorf("flat[%q] = %q, want %q", k, flat[k], v)
 		}
+	}
+}
+
+type fakeEnricher struct {
+	byIP map[string]sentinelenrich.Classification
+}
+
+func (f fakeEnricher) Lookup(ip string) sentinelenrich.Classification {
+	return f.byIP[ip]
+}
+
+// P2-09: flatten attaches enrichment fields when the event carries a
+// ClientIP, and only then — proven directly against a fake Enricher so
+// this test needs no real feeds at all.
+func TestFlatten_AttachesEnrichmentWhenClientIPPresent(t *testing.T) {
+	enricher := fakeEnricher{byIP: map[string]sentinelenrich.Classification{
+		"198.51.100.7": {IsTorExit: true, Country: "RO", ASN: 64500, ASName: "Example Exit Operator"},
+	}}
+	wev := wireEvent{
+		TenantID: "tenant-1", EventID: "evt-1",
+		Unmapped: map[string]string{"ClientIP": "198.51.100.7"},
+	}
+
+	flat := flatten(wev, enricher)
+
+	if flat["metadata.is_anonymous_proxy"] != "true" {
+		t.Errorf("metadata.is_anonymous_proxy = %q, want true", flat["metadata.is_anonymous_proxy"])
+	}
+	if flat["metadata.is_vpn"] != "false" {
+		t.Errorf("metadata.is_vpn = %q, want false", flat["metadata.is_vpn"])
+	}
+	if flat["metadata.geo_country"] != "RO" {
+		t.Errorf("metadata.geo_country = %q, want RO", flat["metadata.geo_country"])
+	}
+	if flat["metadata.geo_asn"] != "64500" {
+		t.Errorf("metadata.geo_asn = %q, want 64500", flat["metadata.geo_asn"])
+	}
+}
+
+func TestFlatten_NoEnrichmentFieldsWithoutClientIP(t *testing.T) {
+	enricher := fakeEnricher{byIP: map[string]sentinelenrich.Classification{}}
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1"}
+
+	flat := flatten(wev, enricher)
+
+	for _, k := range []string{"metadata.is_anonymous_proxy", "metadata.is_vpn", "metadata.is_hosting_provider", "metadata.geo_country", "metadata.geo_asn"} {
+		if _, ok := flat[k]; ok {
+			t.Errorf("flat[%q] is set, want absent when the event has no ClientIP", k)
+		}
+	}
+}
+
+func TestFlatten_NilEnricherAttachesNothing(t *testing.T) {
+	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", Unmapped: map[string]string{"ClientIP": "198.51.100.7"}}
+	flat := flatten(wev, nil)
+	if _, ok := flat["metadata.is_anonymous_proxy"]; ok {
+		t.Error("expected no enrichment fields with a nil Enricher")
 	}
 }
 
@@ -119,7 +177,7 @@ func TestEvaluate_RecoversPanicAndContinues(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
 
-	signals, failures := evaluate(context.Background(), tree, wev)
+	signals, failures := evaluate(context.Background(), tree, wev, nil)
 
 	if len(failures) != 1 || failures[0].RuleID != "panic-rule" {
 		t.Fatalf("failures = %v, want exactly one failure for panic-rule", failures)
@@ -137,7 +195,7 @@ func TestEvaluate_SignalCarriesEventRuleAndTenant(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-42", EventID: "evt-99", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
 
-	signals, _ := evaluate(context.Background(), tree, wev)
+	signals, _ := evaluate(context.Background(), tree, wev, nil)
 
 	if len(signals) != 1 {
 		t.Fatalf("got %d signals, want 1", len(signals))
@@ -191,7 +249,7 @@ func TestEvaluate_SkipsWindowedEngineRules(t *testing.T) {
 	}
 
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-1", ClassUID: 3001, Metadata: map[string]string{"product": "m365"}}
-	signals, failures := evaluate(context.Background(), tree, wev)
+	signals, failures := evaluate(context.Background(), tree, wev, nil)
 
 	if len(signals) != 0 || len(failures) != 0 {
 		t.Fatalf("signals=%v failures=%v, want both empty — windowed rule must be skipped by the in-stream worker", signals, failures)
@@ -202,7 +260,7 @@ func TestEvaluate_NoCandidateProducesNoSignalsOrFailures(t *testing.T) {
 	tree := buildTestTree(t)
 	wev := wireEvent{TenantID: "tenant-1", EventID: "evt-2", ClassUID: 9999, Metadata: map[string]string{"product": "m365"}}
 
-	signals, failures := evaluate(context.Background(), tree, wev)
+	signals, failures := evaluate(context.Background(), tree, wev, nil)
 
 	if len(signals) != 0 || len(failures) != 0 {
 		t.Fatalf("signals=%v failures=%v, want both empty for a non-matching class_uid", signals, failures)

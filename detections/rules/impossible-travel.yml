@@ -5,9 +5,14 @@ description: >
   Detects more distinct source IPs for one user's sign-ins within a short
   window than is physically plausible to travel between. This rule
   captures only the volume-of-distinct-IPs signal the windowed engine
-  evaluates today; true geo-velocity (P2-09's enrichment feeding a
-  distance/time calculation) is this rule's own documented follow-up, not
-  something the parser subset in P2-01 needs to express.
+  evaluates today; true geo-velocity (feeding GeoCountry/GeoASN —
+  go/sentinelenrich, P2-09 — into an actual distance/time calculation)
+  remains this rule's own documented follow-up. P2-09 built the
+  enrichment feed and wired it into the IN-STREAM path only; attaching it
+  to historical events this rule's own windowed ClickHouse query reads
+  needs that data persisted at write time, which is a separate,
+  not-yet-built piece, not something the parser subset in P2-01 needs to
+  express.
 owner_description: >
   The same person signed in from two different places in a short amount
   of time — faster than someone could realistically travel between them.

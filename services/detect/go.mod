@@ -14,8 +14,11 @@ replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs => ../../go/
 
 replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelevents => ../../go/sentinelevents
 
+replace github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich => ../../go/sentinelenrich
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.0
+	github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelevents v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs v0.0.0-00010101000000-000000000000
 	github.com/ajeetsingh272/ai-security-analyst/go/sentinelsignal v0.0.0-00010101000000-000000000000

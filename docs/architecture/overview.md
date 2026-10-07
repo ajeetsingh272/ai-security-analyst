@@ -181,6 +181,16 @@ Both paths carry the same deterministic dedupe key (go/sentinelsignal.Signal.Ded
 downstream notifier can collapse a bypass alert and its later AI-investigated counterpart into
 one customer-facing notification once that notifier exists.
 
+**Threat-intel enrichment (go/sentinelenrich).** A sign-in's `ClientIP` is resolved against
+locally cached feeds — the Tor Project's own bulk exit list, X4BNet's maintained VPN/datacenter
+CIDR ranges, and GeoLite2-derived country/ASN tables (sapics/ip-location-db) — refreshed on a
+24h schedule and written to disk, so a lookup is always an in-memory map/range search, never a
+network call. A feed outage leaves the previously loaded data in place (stale, not silently
+empty) and raises an alert rather than degrading detection. Attached only on the in-stream path
+today, before dispatch; a windowed rule's own query reads ClickHouse history that does not yet
+persist this data, which is why `impossible-travel.yml`'s own true geo-velocity check remains a
+documented follow-up rather than something this ticket completed.
+
 ### 3.6 Correlation plane
 
 This is the component that makes the product viable, and it contains no AI.
