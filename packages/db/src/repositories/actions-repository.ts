@@ -8,6 +8,7 @@
  * class rather than duplicate it when it lands.
  */
 import { TenantScopedRepository } from '../tenant-context.js';
+import { writeAuditEntryTx } from '../audit/audit-log-writer.js';
 
 export interface ActionRow {
   id: string;
@@ -59,6 +60,33 @@ export class ActionsRepository extends TenantScopedRepository {
         createdAt: r.created_at,
         executedAt: r.executed_at,
       };
+    });
+  }
+
+  /**
+   * P5-03/ADR-0007: transitions a proposed action to approved and
+   * writes the audit entry in the SAME transaction — mirrors
+   * CasesRepository.challengeDismissal's own "read the current state,
+   * write one transition, audit it with the already-open client" shape.
+   * Returns false (no-op, not an error) when the action is missing,
+   * belongs to a different case, or was not in `proposed` — a second
+   * approval attempt on an already-decided action must not re-fire the
+   * audit entry or silently succeed twice.
+   */
+  async approve(actionId: string, caseId: string, approverId: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(`UPDATE actions SET status = 'approved' WHERE id = $1 AND case_id = $2 AND status = 'proposed'`, [actionId, caseId]);
+      if (result.rowCount !== 1) return false;
+
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'human',
+        actorId: approverId,
+        action: 'approval_granted',
+        subjectType: 'action',
+        subjectId: actionId,
+        payload: { case_id: caseId },
+      });
+      return true;
     });
   }
 }

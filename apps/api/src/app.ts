@@ -24,6 +24,8 @@ import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
+import { approvalsRoutes, approvalsConfigFromEnv, type ApprovalsConfig } from './routes/approvals.js';
+import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
 export interface BuildAppOptions {
@@ -47,6 +49,10 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can use a
    * fixed secret instead of real Meta credentials. */
   whatsappConfig?: WhatsAppConfig | undefined;
+  /** Defaults to reading APPROVAL_TOKEN_SECRET from the environment
+   * (undefined if unset, which routes/approvals.js handles with a 503,
+   * not a crash). Overridable so tests can use a fixed secret. */
+  approvalsConfig?: ApprovalsConfig | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -57,16 +63,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     m365OAuthConfig = m365OAuthConfigFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
+    approvalsConfig = approvalsConfigFromEnv(),
   } = options;
 
-  const app = Fastify();
+  // find-my-way's default maxParamLength (100) is sized for an ordinary
+  // id segment, not P5-03's own approval token — a base64url-encoded
+  // {caseId, actionId, tenantId, approverId, nonce, exp} payload plus
+  // its HMAC signature routinely runs several hundred characters.
+  // Without raising this, every request to /approvals/:token 414s
+  // before routing even reaches that route's own handler.
+  const app = Fastify({ routerOptions: { maxParamLength: 4096 } });
 
   app.get('/health', async (_request, reply) => reply.code(200).send({ ok: true }));
   app.get('/ready', async (_request, reply) => reply.code(200).send({ ok: true }));
 
   await app.register(authPlugin, { pool, redis, cookieSecure });
   await app.register(tenantContextPlugin, {
-    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp'],
+    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token'],
   });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
@@ -74,6 +87,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
+  await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
 
   return app;
 }

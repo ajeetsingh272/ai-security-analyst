@@ -86,6 +86,7 @@ export {
 } from './repositories/notification-preferences-repository.js';
 export { NotificationOptoutRepository } from './repositories/notification-optout-repository.js';
 export { ActionsRepository, type ActionRow } from './repositories/actions-repository.js';
+export { ApprovalNonceRepository } from './repositories/approval-nonce-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {

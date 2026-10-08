@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
+    "@sentinel/approval-tokens": "workspace:*",
     "@sentinel/db": "workspace:*",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.0",
