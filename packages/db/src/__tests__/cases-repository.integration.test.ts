@@ -7,6 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool, PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { createControlPlanePool, withTenantContext, CasesRepository, AiDismissalEmptyReasonError } from '../index.js';
 
 let pool: Pool;
@@ -244,5 +245,168 @@ describe('CasesRepository.challengeDismissal', () => {
       new CasesRepository(pool).challengeDismissal(caseId, 'analyst-probe', 'trying anyway'),
     );
     expect(result).toBeNull();
+  });
+});
+
+/** Full fixture for P6-02's list()/filterOptions(): a case, its initial
+ * 'open' transition (every real case gets exactly this at creation —
+ * see list()'s own doc comment), an entity with a human-readable alias,
+ * and one case_signal carrying a rule_id — everything list()'s filters
+ * and filterOptions() actually query against. */
+async function seedListCase(opts: {
+  severity: string;
+  score: number;
+  state: string;
+  createdAt: Date;
+  ruleId: string;
+  entityAlias: string;
+}): Promise<{ caseId: string; entityId: string }> {
+  return asAdmin(async (client) => {
+    await client.query('SELECT set_config($1, $2, true)', ['app.tenant_id', tenantId]);
+
+    const entityResult = await client.query<{ id: string }>(
+      `INSERT INTO entities (tenant_id, entity_type, status) VALUES ($1, 'user', 'resolved') RETURNING id`,
+      [tenantId],
+    );
+    const entityId = entityResult.rows[0]!.id;
+    await client.query(
+      `INSERT INTO entity_aliases (tenant_id, entity_id, alias_type, alias_value) VALUES ($1, $2, 'email', $3)`,
+      [tenantId, entityId, opts.entityAlias],
+    );
+
+    const caseResult = await client.query<{ id: string }>(
+      `INSERT INTO cases (tenant_id, severity, score, title, window_start, entity_ids, signal_count, created_at)
+       VALUES ($1, $2, $3, 'P6-02 list probe', $4, ARRAY[$5]::text[], 1, $4)
+       RETURNING id`,
+      [tenantId, opts.severity, opts.score, opts.createdAt, entityId],
+    );
+    const caseId = caseResult.rows[0]!.id;
+
+    await client.query(
+      `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason, occurred_at)
+       VALUES ($1, $2, NULL, 'open', 'system', 'correlate', 'first signal clustered', $3)`,
+      [tenantId, caseId, opts.createdAt],
+    );
+    if (opts.state !== 'open') {
+      await client.query(
+        `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason, occurred_at)
+         VALUES ($1, $2, 'open', $3, 'human', 'p6-02-probe', 'list test fixture', $4)`,
+        [tenantId, caseId, opts.state, opts.createdAt],
+      );
+    }
+
+    await client.query(
+      `INSERT INTO case_signals (tenant_id, case_id, signal_id, rule_id, entity_type, entity_id, severity, detected_at, dedupe_key)
+       VALUES ($1, $2, $3, $4, 'user', $5, $6, $7, $8)`,
+      [tenantId, caseId, randomUUID(), opts.ruleId, entityId, opts.severity, opts.createdAt, randomUUID()],
+    );
+
+    return { caseId, entityId };
+  });
+}
+
+describe('CasesRepository.list / filterOptions', () => {
+  it('T1: severity, state, entity, rule and date-range filters each produce the correct result set, and ranking sorts by severity then score', async () => {
+    const critical = await seedListCase({
+      severity: 'critical',
+      score: 90,
+      state: 'open',
+      createdAt: new Date('2026-04-01T00:00:00.000Z'),
+      ruleId: 'rule.impossible-travel',
+      entityAlias: 'critical-user@example.invalid',
+    });
+    const highLowerScore = await seedListCase({
+      severity: 'high',
+      score: 99, // higher raw score than the critical case, but severity still ranks first
+      state: 'investigating',
+      createdAt: new Date('2026-04-02T00:00:00.000Z'),
+      ruleId: 'rule.mailbox-rule-created',
+      entityAlias: 'high-user@example.invalid',
+    });
+    const dismissedLow = await seedListCase({
+      severity: 'low',
+      score: 10,
+      state: 'dismissed',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'), // well outside the date-range filter test below
+      ruleId: 'rule.impossible-travel',
+      entityAlias: 'low-user@example.invalid',
+    });
+
+    await withTenantContext(tenantId, async () => {
+      const repo = new CasesRepository(pool);
+
+      // This file's other describe blocks share the SAME tenantId and
+      // leave their own fixture cases behind — so every assertion below
+      // checks membership of these 3 known ids, never exact-equals the
+      // whole result set, which would otherwise be polluted by whatever
+      // those other blocks already seeded (confirmed the hard way: an
+      // exact-equals version of the `state: 'dismissed'` assertion below
+      // first failed against 6 unrelated dismissed cases from earlier
+      // blocks in this same file).
+
+      // Unfiltered: ranked critical, then high, then low — NOT by raw
+      // score, which would have put the high-severity case first.
+      const all = await repo.list({}, 1, 500);
+      const allIds = all.items.map((i) => i.id);
+      expect(allIds.indexOf(critical.caseId)).toBeLessThan(allIds.indexOf(highLowerScore.caseId));
+      expect(allIds.indexOf(highLowerScore.caseId)).toBeLessThan(allIds.indexOf(dismissedLow.caseId));
+
+      const bySeverity = await repo.list({ severity: 'critical' }, 1, 50);
+      const bySeverityIds = bySeverity.items.map((i) => i.id);
+      expect(bySeverityIds).toContain(critical.caseId);
+      expect(bySeverityIds).not.toContain(highLowerScore.caseId);
+      expect(bySeverityIds).not.toContain(dismissedLow.caseId);
+
+      const byState = await repo.list({ state: 'dismissed' }, 1, 50);
+      const byStateIds = byState.items.map((i) => i.id);
+      expect(byStateIds).toContain(dismissedLow.caseId);
+      expect(byStateIds).not.toContain(critical.caseId);
+      expect(byStateIds).not.toContain(highLowerScore.caseId);
+
+      const byEntity = await repo.list({ entityId: highLowerScore.entityId }, 1, 50);
+      const byEntityIds = byEntity.items.map((i) => i.id);
+      expect(byEntityIds).toContain(highLowerScore.caseId);
+      expect(byEntityIds).not.toContain(critical.caseId);
+      expect(byEntityIds).not.toContain(dismissedLow.caseId);
+
+      const byRule = await repo.list({ ruleId: 'rule.impossible-travel' }, 1, 50);
+      const byRuleIds = byRule.items.map((i) => i.id);
+      expect(byRuleIds).toContain(critical.caseId);
+      expect(byRuleIds).toContain(dismissedLow.caseId);
+      expect(byRuleIds).not.toContain(highLowerScore.caseId);
+
+      const byDateRange = await repo.list(
+        { createdAfter: '2026-03-25T00:00:00.000Z', createdBefore: '2026-04-30T23:59:59.000Z' },
+        1,
+        50,
+      );
+      const byDateRangeIds = byDateRange.items.map((i) => i.id);
+      expect(byDateRangeIds).toContain(critical.caseId);
+      expect(byDateRangeIds).toContain(highLowerScore.caseId);
+      expect(byDateRangeIds).not.toContain(dismissedLow.caseId);
+    });
+  });
+
+  it('paginates correctly: page size and total are both honoured', async () => {
+    await withTenantContext(tenantId, async () => {
+      const repo = new CasesRepository(pool);
+      const firstPage = await repo.list({}, 1, 2);
+      expect(firstPage.items.length).toBeLessThanOrEqual(2);
+      expect(firstPage.total).toBeGreaterThanOrEqual(3); // at least the 3 cases seeded above
+
+      const secondPage = await repo.list({}, 2, 2);
+      const firstIds = new Set(firstPage.items.map((i) => i.id));
+      for (const item of secondPage.items) {
+        expect(firstIds.has(item.id)).toBe(false); // no overlap between pages
+      }
+    });
+  });
+
+  it('filterOptions() returns human-readable entity labels and the distinct rule ids actually in use', async () => {
+    const options = await withTenantContext(tenantId, () => new CasesRepository(pool).filterOptions());
+
+    expect(options.entities.some((e) => e.label === 'critical-user@example.invalid')).toBe(true);
+    expect(options.rules.some((r) => r.value === 'rule.impossible-travel')).toBe(true);
+    expect(options.rules.some((r) => r.value === 'rule.mailbox-rule-created')).toBe(true);
   });
 });

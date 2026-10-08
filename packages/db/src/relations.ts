@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, tuningBacklogItems, tenantPlanStatus, feedback, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -30,14 +30,21 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	entities: many(entities),
 	entityAliases: many(entityAliases),
 	caseSignals: many(caseSignals),
+	scanJobs: many(scanJobs),
 	baselineCursors: many(baselineCursors),
 	entityMerges: many(entityMerges),
+	weeklyReports: many(weeklyReports),
 	llmUsages: many(llmUsage),
 	analystDegradedQueues: many(analystDegradedQueue),
 	tenantNotificationPreferences: many(tenantNotificationPreferences),
 	investigationTranscripts: many(investigationTranscripts),
 	notificationDeliveries: many(notificationDeliveries),
 	tenantPreApprovals: many(tenantPreApprovals),
+	tenantReportSchedules: many(tenantReportSchedule),
+	apiKeys: many(apiKeys),
+	tuningBacklogItems: many(tuningBacklogItems),
+	tenantPlanStatuses: many(tenantPlanStatus),
+	feedbacks: many(feedback),
 	notificationRecipientOptouts: many(notificationRecipientOptouts),
 	entityCriticalities: many(entityCriticality),
 }));
@@ -56,12 +63,20 @@ export const usersRelations = relations(users, ({many}) => ({
 	hotfixRules_revokedBy: many(hotfixRules, {
 		relationName: "hotfixRules_revokedBy_users_id"
 	}),
+	scanJobs: many(scanJobs),
 	tenantPreApprovals_grantedBy: many(tenantPreApprovals, {
 		relationName: "tenantPreApprovals_grantedBy_users_id"
 	}),
 	tenantPreApprovals_revokedBy: many(tenantPreApprovals, {
 		relationName: "tenantPreApprovals_revokedBy_users_id"
 	}),
+	apiKeys_createdBy: many(apiKeys, {
+		relationName: "apiKeys_createdBy_users_id"
+	}),
+	apiKeys_revokedBy: many(apiKeys, {
+		relationName: "apiKeys_revokedBy_users_id"
+	}),
+	feedbacks: many(feedback),
 }));
 
 export const caseTransitionsRelations = relations(caseTransitions, ({one}) => ({
@@ -86,6 +101,7 @@ export const casesRelations = relations(cases, ({one, many}) => ({
 	llmUsages: many(llmUsage),
 	analystDegradedQueues: many(analystDegradedQueue),
 	investigationTranscripts: many(investigationTranscripts),
+	tuningBacklogItems: many(tuningBacklogItems),
 }));
 
 export const actionsRelations = relations(actions, ({one, many}) => ({
@@ -205,6 +221,17 @@ export const caseSignalsRelations = relations(caseSignals, ({one}) => ({
 	}),
 }));
 
+export const scanJobsRelations = relations(scanJobs, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [scanJobs.tenantId],
+		references: [tenants.id]
+	}),
+	user: one(users, {
+		fields: [scanJobs.createdBy],
+		references: [users.id]
+	}),
+}));
+
 export const baselineCursorsRelations = relations(baselineCursors, ({one}) => ({
 	tenant: one(tenants, {
 		fields: [baselineCursors.tenantId],
@@ -226,6 +253,13 @@ export const entityMergesRelations = relations(entityMerges, ({one}) => ({
 		fields: [entityMerges.intoEntityId],
 		references: [entities.id],
 		relationName: "entityMerges_intoEntityId_entities_id"
+	}),
+}));
+
+export const weeklyReportsRelations = relations(weeklyReports, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [weeklyReports.tenantId],
+		references: [tenants.id]
 	}),
 }));
 
@@ -290,6 +324,59 @@ export const tenantPreApprovalsRelations = relations(tenantPreApprovals, ({one})
 		fields: [tenantPreApprovals.revokedBy],
 		references: [users.id],
 		relationName: "tenantPreApprovals_revokedBy_users_id"
+	}),
+}));
+
+export const tenantReportScheduleRelations = relations(tenantReportSchedule, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tenantReportSchedule.tenantId],
+		references: [tenants.id]
+	}),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [apiKeys.tenantId],
+		references: [tenants.id]
+	}),
+	user_createdBy: one(users, {
+		fields: [apiKeys.createdBy],
+		references: [users.id],
+		relationName: "apiKeys_createdBy_users_id"
+	}),
+	user_revokedBy: one(users, {
+		fields: [apiKeys.revokedBy],
+		references: [users.id],
+		relationName: "apiKeys_revokedBy_users_id"
+	}),
+}));
+
+export const tuningBacklogItemsRelations = relations(tuningBacklogItems, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tuningBacklogItems.tenantId],
+		references: [tenants.id]
+	}),
+	case: one(cases, {
+		fields: [tuningBacklogItems.caseId],
+		references: [cases.id]
+	}),
+}));
+
+export const tenantPlanStatusRelations = relations(tenantPlanStatus, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tenantPlanStatus.tenantId],
+		references: [tenants.id]
+	}),
+}));
+
+export const feedbackRelations = relations(feedback, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [feedback.tenantId],
+		references: [tenants.id]
+	}),
+	user: one(users, {
+		fields: [feedback.userId],
+		references: [users.id]
 	}),
 }));
 

@@ -24,6 +24,21 @@ export interface ActionRow {
 }
 
 export class ActionsRepository extends TenantScopedRepository {
+  /** P6-07: the weekly report's own "what did Sentinel actually do"
+   * count — actions created within the window, grouped by their
+   * CURRENT status (not the status at creation time; `actions` has no
+   * history table of its own, so "succeeded" here means "is succeeded
+   * right now," same as every other read of this table). */
+  async countByStatusInRange(from: Date, to: Date): Promise<Record<string, number>> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ status: string; count: string }>(
+        `SELECT status, count(*) AS count FROM actions WHERE created_at >= $1 AND created_at < $2 GROUP BY status`,
+        [from, to],
+      );
+      return Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
+    });
+  }
+
   /**
    * P5-06: the "propose an action" entry point this table has never
    * had until now — every other method here only reads or transitions
@@ -65,6 +80,46 @@ export class ActionsRepository extends TenantScopedRepository {
         createdAt: r.created_at,
         executedAt: r.executed_at,
       };
+    });
+  }
+
+  /** P6-03: every action ever proposed for a case, newest first — the
+   * case detail screen's own "recommended actions, with an approval
+   * control" panel. Deliberately not filtered to `status = 'proposed'`
+   * — an already-approved or already-failed action is still something
+   * the screen needs to show (so the approval control can correctly
+   * NOT be offered for it again), not just the ones still awaiting a
+   * decision. */
+  async listForCase(caseId: string): Promise<ActionRow[]> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{
+        id: string;
+        tenant_id: string;
+        case_id: string;
+        playbook: string;
+        target: unknown;
+        blast_radius: string;
+        status: string;
+        error: string | null;
+        created_at: string;
+        executed_at: string | null;
+      }>(
+        `SELECT id, tenant_id, case_id, playbook, target, blast_radius, status, error, created_at, executed_at
+         FROM actions WHERE case_id = $1 ORDER BY created_at DESC`,
+        [caseId],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        caseId: r.case_id,
+        playbook: r.playbook,
+        target: r.target,
+        blastRadius: r.blast_radius,
+        status: r.status,
+        error: r.error,
+        createdAt: r.created_at,
+        executedAt: r.executed_at,
+      }));
     });
   }
 

@@ -1,0 +1,22 @@
+/* theme.css's own first line is the Google Fonts @import — it must load
+ * before "tailwindcss" here too, or the build's CSS optimizer flattens
+ * everything into one file with that @import no longer first overall,
+ * which is invalid CSS (@import must precede all ordinary rules). */
+@import '@sentinel/design-tokens/theme.css';
+@import 'tailwindcss';
+@import '@sentinel/design-tokens/tailwind.css';
+
+/* Tailwind's automatic content detection only walks directories under this
+ * file's own package by default — @sentinel/ui's component source (where
+ * every Tailwind utility class this app actually renders is written) lives
+ * in a sibling package, so it needs to be named explicitly or its classes
+ * get tree-shaken out of the build as "unused." */
+@source '../../../../packages/ui/src';
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}

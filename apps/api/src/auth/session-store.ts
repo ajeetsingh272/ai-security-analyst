@@ -33,6 +33,22 @@ export class SessionStore {
     return sessionId;
   }
 
+  /** Merges `patch` into the stored session in place, preserving its
+   * remaining TTL (so switching tenant mid-session doesn't quietly extend
+   * or shorten how long the user stays signed in). Returns null without
+   * writing anything if the session doesn't exist (already expired or
+   * revoked) — a tenant switch has nothing to apply to in that case. */
+  async update(sessionId: string, patch: Partial<Session>): Promise<Session | null> {
+    const current = await this.get(sessionId);
+    if (!current) return null;
+    const updated: Session = { ...current, ...patch };
+    const ttl = await this.redis.ttl(keyFor(sessionId));
+    await this.redis.set(keyFor(sessionId), JSON.stringify(updated), {
+      EX: ttl > 0 ? ttl : DEFAULT_TTL_SECONDS,
+    });
+    return updated;
+  }
+
   async get(sessionId: string): Promise<Session | null> {
     const raw = await this.redis.get(keyFor(sessionId));
     if (!raw) return null;

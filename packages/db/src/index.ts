@@ -37,6 +37,11 @@ export {
   type CaseHistory,
   type CaseSignalRow,
   type CaseTransitionRow,
+  type CaseListItem,
+  type CaseListFilters,
+  type CaseListPage,
+  type CaseFilterOptions,
+  type FilterOption,
 } from './repositories/cases-repository.js';
 export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
 export { DegradedQueueRepository, listTenantsWithPendingDegradedCases, type DegradedQueueRow } from './repositories/degraded-queue-repository.js';
@@ -89,6 +94,43 @@ export { NotificationOptoutRepository } from './repositories/notification-optout
 export { ActionsRepository, type ActionRow } from './repositories/actions-repository.js';
 export { ApprovalNonceRepository } from './repositories/approval-nonce-repository.js';
 export { PreApprovalRepository, DestructivePlaybookCannotBePreApprovedError } from './repositories/pre-approval-repository.js';
+export { ScanJobsRepository, type ScanJobRow } from './repositories/scan-jobs-repository.js';
+export { MspRepository, type LinkedClient } from './repositories/msp-repository.js';
+export {
+  WeeklyReportRepository,
+  ReportScheduleRepository,
+  listTenantsDueForWeeklyReport,
+  type WeeklyReportRow,
+  type CreateWeeklyReportInput,
+  type ReportSchedule,
+} from './repositories/weekly-report-repository.js';
+export {
+  ApiKeysRepository,
+  findApiKeyByHash,
+  touchApiKeyLastUsed,
+  apiKeyScopesToRole,
+  type ApiKeyRow,
+  type ApiKeyScope,
+  type CreateApiKeyInput,
+} from './repositories/api-keys-repository.js';
+export {
+  TenantUsageRepository,
+  listTenantUsageSummaries,
+  listActiveTenantIds,
+  type PlanLimitStatus,
+  type TenantPlanStatusRow,
+  type UpsertPlanStatusInput,
+  type TenantUsageSummary,
+} from './repositories/tenant-usage-repository.js';
+export {
+  FeedbackRepository,
+  TuningBacklogRepository,
+  type FeedbackSubjectType,
+  type FeedbackRow,
+  type CreateFeedbackInput,
+  type TuningBacklogItemRow,
+} from './repositories/feedback-repository.js';
+export { listOnboardingFunnelSummaries, type OnboardingFunnelSummary } from './repositories/onboarding-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {

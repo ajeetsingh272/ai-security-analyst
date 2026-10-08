@@ -1,0 +1,197 @@
+[
+  {
+    "id": "T1078.004",
+    "name": "Valid Accounts: Cloud Accounts",
+    "description": "The same person signed in from two different places in a short amount of time — faster than someone could realistically travel between them. This usually means someone besides the real owner has their password.",
+    "ruleTitles": [
+      "Impossible travel between sign-ins",
+      "Sign-in using a legacy authentication protocol",
+      "Remote PowerShell access enabled for a mailbox user"
+    ]
+  },
+  {
+    "id": "T1090.003",
+    "name": "Proxy: Multi-hop Proxy",
+    "description": "Someone signed in to this account through a service that hides where they are really connecting from. Attackers commonly use this trick to hide their real location when they are using a stolen password.",
+    "ruleTitles": [
+      "Sign-in through a known anonymiser or proxy"
+    ]
+  },
+  {
+    "id": "T1098",
+    "name": "Account Manipulation",
+    "description": "An account was set up so its password never has to be changed. This removes a normal safety net — if that password were ever stolen, it would keep working indefinitely.",
+    "ruleTitles": [
+      "Account password set to never expire",
+      "SharePoint site permission level changed"
+    ]
+  },
+  {
+    "id": "T1098.001",
+    "name": "Account Manipulation: Additional Cloud Credentials",
+    "description": "A new app was registered with the company's Microsoft 365 account. This is a normal step for connecting new business tools, but it is also the first step someone would take before giving an app broad access to company data.",
+    "ruleTitles": [
+      "New application registration created",
+      "Credential added to an application's service principal"
+    ]
+  },
+  {
+    "id": "T1098.002",
+    "name": "Account Manipulation: Additional Email Delegate Permissions",
+    "description": "One person was given permission to fully open and read someone else's mailbox. This is sometimes needed for a real business reason, like covering for an assistant, but it should match something the company actually asked for.",
+    "ruleTitles": [
+      "Full access permission granted on another mailbox"
+    ]
+  },
+  {
+    "id": "T1098.003",
+    "name": "Account Manipulation: Additional Cloud Roles",
+    "description": "An administrator approved an outside app's access for everyone in the company at once, rather than just for themselves. If this was not planned, it is worth checking what that app can now see or do.",
+    "ruleTitles": [
+      "Tenant-wide admin consent granted to an application",
+      "High-privilege permission granted to a user-assigned application",
+      "Privileged directory role assignment",
+      "Member added to a privileged group",
+      "External guest granted access to a SharePoint site",
+      "Site collection administrator added"
+    ]
+  },
+  {
+    "id": "T1098.005",
+    "name": "Account Manipulation: Device Registration",
+    "description": "A new device was registered to the company's Microsoft 365 account. Attackers sometimes register their own device so it is trusted, which lets them keep signing in without extra checks.",
+    "ruleTitles": [
+      "New device registered to Azure AD",
+      "New mobile device linked to a mailbox"
+    ]
+  },
+  {
+    "id": "T1110.003",
+    "name": "Brute Force: Password Spraying",
+    "description": "One computer tried signing in to several different accounts and failed, all within a few minutes. This is a common way attackers try to guess passwords across many accounts at once, instead of guessing many passwords against just one account.",
+    "ruleTitles": [
+      "Password spray against multiple accounts from one source"
+    ]
+  },
+  {
+    "id": "T1114",
+    "name": "Email Collection",
+    "description": "A new route was set up for how email flows into the company. A connector added without IT's knowledge could be used to secretly redirect or copy company email.",
+    "ruleTitles": [
+      "Inbound or outbound mail connector added",
+      "Mailbox content exported to a local file"
+    ]
+  },
+  {
+    "id": "T1114.002",
+    "name": "Email Collection: Remote Email Collection",
+    "description": "An unusually large number of emails were opened or copied from one mailbox in a short time. This can happen when someone has broken into the account and is copying out its contents.",
+    "ruleTitles": [
+      "Mass mailbox item access within a short window"
+    ]
+  },
+  {
+    "id": "T1114.003",
+    "name": "Email Collection: Email Forwarding Rule",
+    "description": "A rule was set up on this mailbox that automatically sends a copy of incoming email to an outside address, often without the owner knowing. This is a common way attackers quietly read someone's email after breaking into their account.",
+    "ruleTitles": [
+      "New inbox forwarding rule to an external address",
+      "Mail flow rule created to forward mail externally"
+    ]
+  },
+  {
+    "id": "T1136.003",
+    "name": "Create Account: Cloud Account",
+    "description": "An outside guest account, not one of the company's own employees, was given admin-level access. This is unusual and worth checking, since guest accounts are not normally given this level of control.",
+    "ruleTitles": [
+      "Guest account added to a privileged directory role"
+    ]
+  },
+  {
+    "id": "T1213",
+    "name": "Data from Information Repositories",
+    "description": "A company-wide search was created that can look through many people's mailboxes and files at once. This tool is normally used by legal or compliance teams, but someone with admin access could misuse it to find sensitive information.",
+    "ruleTitles": [
+      "eDiscovery content search created"
+    ]
+  },
+  {
+    "id": "T1484.002",
+    "name": "Domain or Tenant Policy Modification: Trust Modification",
+    "description": "The company changed how one of its email domains proves who its users are when they sign in. This is a sensitive, rarely-changed setting — someone who changes it without permission could make Microsoft trust sign-ins they control.",
+    "ruleTitles": [
+      "Domain federation settings changed",
+      "Trusted network location added to sign-in policy"
+    ]
+  },
+  {
+    "id": "T1528",
+    "name": "Steal Application Access Token",
+    "description": "A connected app was given a powerful level of access to company data. If IT did not set this up on purpose, it is worth checking exactly what that app can now see or change.",
+    "ruleTitles": [
+      "High-privilege permission granted to an application",
+      "OAuth consent grant to an unverified application"
+    ]
+  },
+  {
+    "id": "T1530",
+    "name": "Data from Cloud Storage",
+    "description": "One person downloaded or deleted an unusually large number of files in a short time. This can happen when an account has been taken over and someone is copying or destroying company files.",
+    "ruleTitles": [
+      "Mass file download or deletion within a short window"
+    ]
+  },
+  {
+    "id": "T1556.006",
+    "name": "Modify Authentication Process: Multi-Factor Authentication",
+    "description": "Someone added a new way to prove their identity on this account (like a new phone number or app) outside of normal office hours. Attackers often do this right after stealing a password, so they can get back in even if the real owner changes it.",
+    "ruleTitles": [
+      "MFA method registration outside business hours",
+      "Multi-factor authentication disabled for a user"
+    ]
+  },
+  {
+    "id": "T1564.008",
+    "name": "Hide Artifacts: Email Hiding Rules",
+    "description": "A rule was created on this mailbox that automatically marks certain incoming emails as already read. Attackers use this to hide warning emails, like security alerts, from the real owner of the account.",
+    "ruleTitles": [
+      "Inbox rule created to hide incoming messages"
+    ]
+  },
+  {
+    "id": "T1567.002",
+    "name": "Exfiltration Over Web Service: Exfiltration to Cloud Storage",
+    "description": "A link was created that lets anyone who has it open a company file, without needing to sign in. This is convenient for sharing, but it means the file is no longer limited to people inside the company.",
+    "ruleTitles": [
+      "Anonymous sharing link created for a file"
+    ]
+  },
+  {
+    "id": "T1621",
+    "name": "Multi-Factor Authentication Request Generation",
+    "description": "One account received an unusual number of sign-in approval requests in a short time that were all turned down. Attackers sometimes send a flood of these requests, hoping the real owner will approve one by accident.",
+    "ruleTitles": [
+      "Repeated MFA prompt failures for one account"
+    ]
+  },
+  {
+    "id": "T1685",
+    "name": "Disable or Modify Tools",
+    "description": "A sign-in security rule for the company was turned off. These rules usually block risky sign-ins, so turning one off can open a door for an attacker.",
+    "ruleTitles": [
+      "Conditional access policy disabled",
+      "Data loss prevention policy disabled",
+      "Safe attachments protection disabled"
+    ]
+  },
+  {
+    "id": "T1685.002",
+    "name": "Disable or Modify Tools: Disable or Modify Cloud Log",
+    "description": "A specific account or app was excused from having its mailbox activity recorded. This is sometimes used for trusted internal tools, but it can also let someone's actions go unrecorded on purpose.",
+    "ruleTitles": [
+      "Mailbox audit bypass enabled for an account",
+      "Mailbox audit logging disabled",
+      "Tenant-wide unified audit logging disabled"
+    ]
+  }
+]
