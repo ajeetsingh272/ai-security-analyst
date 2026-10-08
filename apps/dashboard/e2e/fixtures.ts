@@ -50,6 +50,19 @@ export async function seedTenantAndUser(role: 'owner' | 'admin' | 'analyst' | 'r
   return { tenantId, userId, email };
 }
 
+/** P6-06: a bare client tenant (no user of its own needed — the MSP
+ * console only ever reads cases inside it, never signs a real user
+ * into it directly). */
+export async function seedClientTenant(name: string): Promise<string> {
+  const tenantId = randomUUID();
+  await asAdmin((c) => c.query('INSERT INTO tenants (id, name, plan) VALUES ($1, $2, $3)', [tenantId, name, 'trial']));
+  return tenantId;
+}
+
+export async function linkMspClient(mspTenantId: string, clientTenantId: string): Promise<void> {
+  await asAdmin((c) => c.query('INSERT INTO msp_links (msp_tenant_id, client_tenant_id) VALUES ($1, $2)', [mspTenantId, clientTenantId]), mspTenantId);
+}
+
 /** P6-02: a minimal real case, with the initial 'open' transition every
  * real case gets at creation (services/correlate's own lifecycle.Writer)
  * — without it, `state` would come back null and a `state` filter would
@@ -121,4 +134,8 @@ export async function auditActionsFor(tenantId: string, subjectId: string): Prom
 export async function cleanupUser(user: SeededUser): Promise<void> {
   await asAdmin((c) => c.query('DELETE FROM tenants WHERE id = $1', [user.tenantId]));
   await asAdmin((c) => c.query('DELETE FROM users WHERE id = $1', [user.userId]));
+}
+
+export async function cleanupTenant(tenantId: string): Promise<void> {
+  await asAdmin((c) => c.query('DELETE FROM tenants WHERE id = $1', [tenantId]));
 }
