@@ -219,6 +219,15 @@ export function CaseList() {
                         <dd>{item.windowEnd ? new Date(item.windowEnd).toLocaleString() : 'still open'}</dd>
                       </dl>
                     )}
+                    {expanded && (
+                      <a
+                        href={`/cases/${item.id}`}
+                        className="mt-2 inline-block font-ui text-body-s text-signal underline underline-offset-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View full case →
+                      </a>
+                    )}
                   </Card>
                 </li>
               );

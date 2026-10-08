@@ -69,6 +69,20 @@ export async function seedCase(tenantId: string, severity: string, title: string
   }, tenantId);
 }
 
+/** P6-03: a real, approvable action row for a case — `revoke_sessions`
+ * requires no step-up (P5-04's own DESTRUCTIVE_PLAYBOOKS set), so this
+ * is the one usable for a plain "click Approve" e2e test without also
+ * exercising the step-up password prompt. */
+export async function seedAction(tenantId: string, caseId: string, playbook: string): Promise<string> {
+  return asAdmin(async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO actions (tenant_id, case_id, playbook, target, blast_radius) VALUES ($1, $2, $3, '{}'::jsonb, 'single_user') RETURNING id`,
+      [tenantId, caseId, playbook],
+    );
+    return rows[0]!.id;
+  }, tenantId);
+}
+
 /** Tenants cascade-delete memberships, but `users` is a global table with
  * no tenant_id — left behind otherwise. Deliberately does not close the
  * shared `pool` — several spec files load this same module within one

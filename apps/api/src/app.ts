@@ -24,6 +24,8 @@ import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
 import { casesRoutes } from './routes/cases.js';
+import { caseDetailRoutes } from './routes/case-detail.js';
+import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import { approvalsRoutes, approvalsConfigFromEnv, acceptedTokenSecrets, type ApprovalsConfig } from './routes/approvals.js';
 import { preApprovalsRoutes } from './routes/pre-approvals.js';
@@ -73,6 +75,11 @@ export interface BuildAppOptions {
    * (undefined if unset, which routes/resend-webhook.js handles with
    * a 503, not a crash). Overridable so tests can use a fixed secret. */
   resendWebhookConfig?: ResendWebhookConfig | undefined;
+  /** Defaults to reading CLICKHOUSE_URL from the environment (undefined
+   * if unset, which case-detail.js's evidence route handles with a 503,
+   * not a crash — same pattern as every other optional integration
+   * above). Overridable so tests can point it at a local ClickHouse. */
+  clickhouseUrl?: string | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -87,7 +94,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     slackOAuthConfig = slackOAuthConfigFromEnv(),
     slackWebhookConfig = slackWebhookConfigFromEnv(),
     resendWebhookConfig = resendWebhookConfigFromEnv(),
+    clickhouseUrl = process.env.CLICKHOUSE_URL,
   } = options;
+  const clickhouse = clickhouseUrl ? createTenantScopedClickHouseClient(clickhouseUrl) : undefined;
 
   // find-my-way's default maxParamLength (100) is sized for an ordinary
   // id segment, not P5-03's own approval token — a base64url-encoded
@@ -110,6 +119,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
   await app.register(casesRoutes, { pool });
+  await app.register(caseDetailRoutes, { pool, clickhouse });
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
   await app.register(preApprovalsRoutes, { pool });
