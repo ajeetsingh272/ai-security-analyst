@@ -83,4 +83,20 @@ export class ConnectorsRepository extends TenantScopedRepository {
       return rows.map((row) => mapRow(row, now));
     });
   }
+
+  /** P5-05: the encrypted credentials blob for this tenant's connector
+   * of the given kind, still healthy — null for "never connected,"
+   * "revoked," or anything else not currently usable. Decrypting it is
+   * TenantCredentialVault's own job (this repository has no KMS
+   * dependency), the same read/decrypt split m365-connector.ts's own
+   * callback handler already uses. */
+  async getHealthyCredentials(kind: string): Promise<Buffer | null> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ credentials: Buffer | null }>(
+        `SELECT credentials FROM connectors WHERE kind = $1 AND status = 'healthy'`,
+        [kind],
+      );
+      return rows[0]?.credentials ?? null;
+    });
+  }
 }

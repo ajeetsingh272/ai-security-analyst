@@ -158,21 +158,27 @@ describe('POST /approvals/:token', () => {
     expect(rows[0]!.status).toBe('proposed');
   });
 
-  it('approves the action and writes an audit entry', async () => {
+  it('approves the action (writes approval_granted) before P5-05 execution takes over', async () => {
     const freshActionId = await createFreshAction();
     const token = tokenFor({ actionId: freshActionId });
     const res = await app.inject({ method: 'POST', url: `/approvals/${token}` });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, alreadyDecided: false });
 
-    const { rows } = await asAdmin((c) => c.query('SELECT status FROM actions WHERE id = $1', [freshActionId]), tenantId);
-    expect(rows[0]!.status).toBe('approved');
-
     const audit = await asAdmin(
       (c) => c.query(`SELECT actor_type, actor_id FROM audit_log WHERE tenant_id = $1 AND action = 'approval_granted' AND subject_id = $2`, [tenantId, freshActionId]),
       tenantId,
     );
     expect(audit.rows).toEqual([{ actor_type: 'human', actor_id: 'approver-1' }]);
+
+    // P5-05: approval is immediately followed by execution in the same
+    // request — this fixture's empty `{}` target can never execute for
+    // real (see approvals-execution.integration.test.ts for the full
+    // execution-path assertions), so the FINAL status here is 'failed',
+    // not 'approved'. 'approved' is a real but transient intermediate
+    // state now, not an end state.
+    const { rows } = await asAdmin((c) => c.query('SELECT status FROM actions WHERE id = $1', [freshActionId]), tenantId);
+    expect(rows[0]!.status).toBe('failed');
   });
 
   it('a rejected (expired) token still writes an audit entry', async () => {

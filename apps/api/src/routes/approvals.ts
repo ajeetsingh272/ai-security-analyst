@@ -16,13 +16,21 @@
  * the four failure kinds — is audited (ADR: "failure is closed...
  * explicit message, and an audit entry").
  *
- * This route only decides and records APPROVAL — it does not execute
- * the underlying playbook (P5-05's own job, consuming an action once
- * its status is 'approved'). P5-04: a destructive playbook
- * (step-up.ts's own DESTRUCTIVE_PLAYBOOKS) additionally requires a
- * correct `stepUpPassword` in the POST body — a valid token alone is
- * refused (401) for these, and the refusal is itself audited, same as
- * every other rejection kind.
+ * P5-04: a destructive playbook (step-up.ts's own
+ * DESTRUCTIVE_PLAYBOOKS) additionally requires a correct
+ * `stepUpPassword` in the POST body — a valid token alone is refused
+ * (401) for these, and the refusal is itself audited, same as every
+ * other rejection kind.
+ *
+ * P5-05: once approved, the playbook executes immediately, in the same
+ * request — matching the brief's own "tap Approve, fixed within
+ * minutes" latency target, and avoiding a second piece of queue/worker
+ * infrastructure this ticket does not otherwise need. A premise
+ * mismatch or execution failure marks the action `failed` (with
+ * `error`/manual steps recorded) and returns the CASE to
+ * `awaiting_approval` (CasesRepository.returnToAwaitingApproval) so a
+ * human sees it needs attention again, rather than it sitting wherever
+ * its last successful state happened to be.
  *
  * Rendering an actual human-friendly confirmation PAGE (as opposed to
  * this JSON response) is dashboard/frontend scope — every other route
@@ -31,9 +39,26 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { AuditLogWriter, ActionsRepository, withTenantContext } from '@sentinel/db';
+import { AuditLogWriter, ActionsRepository, CasesRepository, withTenantContext } from '@sentinel/db';
 import { verifyApprovalTokenShape, verifyAndConsume, type ApprovalTokenVerifyError, type ApprovalTokenVerifyResult, type NonceStore } from '@sentinel/approval-tokens';
+import { executePlaybook, FetchGraphClient, type GraphClient, type GraphResponse, type PlaybookTarget } from '@sentinel/playbooks';
 import { requiresStepUp, verifyStepUpPassword } from '../approvals/step-up.js';
+import { getM365AccessToken } from '../approvals/graph-access.js';
+
+/** AC3/P5-05: used whenever no M365 connection exists for this tenant
+ * — every call fails the same way a real outage would, so playbooks
+ * that DO call Graph (disable_user, revoke_sessions, ...) get the
+ * honest "can't reach it" failure through their own normal error
+ * path, while the two not-yet-integrated playbooks (block_ip,
+ * isolate_device), which never call `graph` at all, are entirely
+ * unaffected by whether a connection exists. */
+const UNAVAILABLE_GRAPH_RESPONSE: GraphResponse = { status: 503, body: null };
+const unavailableGraphClient: GraphClient = {
+  get: async () => UNAVAILABLE_GRAPH_RESPONSE,
+  patch: async () => UNAVAILABLE_GRAPH_RESPONSE,
+  post: async () => UNAVAILABLE_GRAPH_RESPONSE,
+  delete: async () => UNAVAILABLE_GRAPH_RESPONSE,
+};
 
 export interface ApprovalsConfig {
   tokenSecret: string;
@@ -134,7 +159,32 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
       }
 
       const approved = await actions.approve(payload.actionId, payload.caseId, payload.approverId, requiresStepUp(action.playbook) ? true : undefined);
-      return { kind: 'decided' as const, approved };
+      if (!approved) return { kind: 'decided' as const, approved: false };
+
+      // P5-05: execute now that the action is genuinely approved.
+      // markExecuting's own guard (approved -> executing) means this
+      // never double-executes even if somehow reached twice.
+      if (!(await actions.markExecuting(payload.actionId))) return { kind: 'decided' as const, approved: true };
+
+      const accessToken = await getM365AccessToken(pool, payload.tenantId);
+      const graph = accessToken ? new FetchGraphClient(accessToken) : unavailableGraphClient;
+      const execResult = await executePlaybook(action.playbook, graph, action.target as PlaybookTarget);
+
+      if (execResult.kind === 'executed' && execResult.outcome.ok) {
+        await actions.markSucceeded(payload.actionId);
+        return { kind: 'decided' as const, approved: true };
+      }
+
+      const { error, manualSteps } =
+        execResult.kind === 'executed' && !execResult.outcome.ok
+          ? { error: execResult.outcome.error, manualSteps: execResult.outcome.manualSteps }
+          : execResult.kind === 'premise_mismatch'
+            ? { error: execResult.reason, manualSteps: `The premise for this action no longer holds (${execResult.reason}) — review the case and act manually if still needed.` }
+            : { error: `unknown playbook: ${action.playbook}`, manualSteps: 'This action references a playbook this version does not recognise — resolve it manually.' };
+
+      await actions.markFailed(payload.actionId, error, manualSteps);
+      await new CasesRepository(pool).returnToAwaitingApproval(payload.caseId, `action ${payload.actionId} (${action.playbook}) failed: ${error}`);
+      return { kind: 'decided' as const, approved: true };
     });
 
     if (outcome.kind === 'not_found') return reply.code(404).send({ error: 'not_found', message: 'This action no longer exists.' });

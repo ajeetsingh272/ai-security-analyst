@@ -15,6 +15,7 @@
     "@fastify/cookie": "^11.1.2",
     "@sentinel/approval-tokens": "workspace:*",
     "@sentinel/db": "workspace:*",
+    "@sentinel/playbooks": "workspace:*",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.0",
     "pg": "^8.13.1",
