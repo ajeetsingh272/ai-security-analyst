@@ -185,6 +185,30 @@ function mapRow(row: Record<string, unknown>): CaseRow {
 
 export class CasesRepository extends TenantScopedRepository {
   /**
+   * P6-06: the MSP console's own "rank clients by open critical cases"
+   * — called once per linked client tenant, each under that tenant's
+   * own `withTenantContext`, never as a single cross-tenant query (this
+   * schema has no role that bypasses RLS — every read stays scoped to
+   * exactly one tenant at a time, same discipline as every other
+   * repository method here). "Open" means not yet closed or dismissed
+   * — the same LATERAL-latest-transition join `list()` uses, since
+   * state has no column of its own on `cases`.
+   */
+  async countOpenCritical(): Promise<number> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*) AS count
+           FROM cases c
+           JOIN LATERAL (
+             SELECT to_state FROM case_transitions WHERE case_id = c.id ORDER BY id DESC LIMIT 1
+           ) ct ON true
+          WHERE c.severity = 'critical' AND ct.to_state NOT IN ('closed', 'dismissed')`,
+      );
+      return Number(rows[0]?.count ?? 0);
+    });
+  }
+
+  /**
    * Deliberately has NO `WHERE tenant_id = ...` clause. That omission is the
    * point of this method: the query relies entirely on the RLS policy set up
    * by `withTransaction`'s `SET LOCAL app.tenant_id`, which is exactly
