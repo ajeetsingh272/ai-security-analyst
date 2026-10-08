@@ -174,8 +174,13 @@ describe('the full connect -> callback flow', () => {
       url: `/connectors/m365/callback?code=real-looking-auth-code&state=${state}`,
       cookies: { sentinel_session: cookie },
     });
-    expect(callbackRes.statusCode).toBe(200);
-    expect(callbackRes.json()).toMatchObject({ ok: true, connector: 'm365', status: 'healthy' });
+    // P6-04: redirects into the dashboard's own /connectors page rather
+    // than returning JSON — a real browser following Microsoft's own
+    // redirect here has no way to read a JSON body.
+    expect(callbackRes.statusCode).toBe(302);
+    const redirectUrl = new URL(callbackRes.headers.location as string);
+    expect(redirectUrl.pathname).toBe('/connectors');
+    expect(redirectUrl.searchParams.get('m365')).toBe('connected');
     expect(mock.exchangedCodes).toContain('real-looking-auth-code');
 
     const { rows } = await asAdmin((c) => c.query('SELECT status, credentials, dek_id FROM connectors WHERE tenant_id = $1 AND kind = $2', [tenantId, 'm365']), tenantId);
@@ -200,11 +205,13 @@ describe('the full connect -> callback flow', () => {
       url: '/connectors/m365/callback?code=whatever&state=not-a-real-state',
       cookies: { sentinel_session: cookie },
     });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe('invalid_or_expired_state');
+    expect(res.statusCode).toBe(302);
+    const redirectUrl = new URL(res.headers.location as string);
+    expect(redirectUrl.searchParams.get('m365')).toBe('error');
+    expect(redirectUrl.searchParams.get('reason')).toBe('invalid_or_expired_state');
   });
 
-  it('surfaces a declined consent as a 400, not a 500', async () => {
+  it('surfaces a declined consent as a redirect back into the wizard, not a 500', async () => {
     const cookie = await signIn();
     const connectRes = await app.inject({ method: 'GET', url: '/connectors/m365/connect', cookies: { sentinel_session: cookie } });
     const state = new URL(connectRes.headers.location as string).searchParams.get('state')!;
@@ -214,8 +221,10 @@ describe('the full connect -> callback flow', () => {
       url: `/connectors/m365/callback?error=access_denied&error_description=The+admin+declined&state=${state}`,
       cookies: { sentinel_session: cookie },
     });
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe('consent_declined');
+    expect(res.statusCode).toBe(302);
+    const redirectUrl = new URL(res.headers.location as string);
+    expect(redirectUrl.searchParams.get('m365')).toBe('error');
+    expect(redirectUrl.searchParams.get('reason')).toBe('consent_declined');
   });
 });
 

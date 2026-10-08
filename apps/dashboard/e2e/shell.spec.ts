@@ -39,7 +39,8 @@ test.describe('T1: authenticated navigation across every top-level route', () =>
       // marker now (getByText would also match "severity" inside the
       // empty-state prose this owner's own case-free tenant shows).
       if (label === 'Cases') await expect(page.getByLabel('Severity')).toBeVisible();
-      else if (label === 'Connectors') await expect(page.getByText('coming in P6-04')).toBeVisible();
+      // P6-04 replaced the Connectors placeholder with the real wizard.
+      else if (label === 'Connectors') await expect(page.getByRole('link', { name: 'Connect Microsoft 365' })).toBeVisible();
       else if (label === 'Reports') await expect(page.getByText('coming in P6-07')).toBeVisible();
       else await expect(page.getByText('coming in a later ticket')).toBeVisible();
       // AC4: no horizontal scroll at the AC's own minimum width.

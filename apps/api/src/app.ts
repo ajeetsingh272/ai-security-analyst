@@ -19,7 +19,7 @@ import type { RedisClientType } from 'redis';
 import { authPlugin } from './auth/auth-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
 import { connectorsRoutes } from './routes/connectors.js';
-import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-connector.js';
+import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
@@ -48,6 +48,9 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can point it
    * at a local mock token endpoint instead. */
   m365OAuthConfig?: M365OAuthConfig | undefined;
+  /** P6-04: overridable so tests can assert the OAuth callback's
+   * redirect lands on a known URL instead of the real dashboard. */
+  dashboardBaseUrl?: string;
   /** Defaults to reading PLATFORM_OPS_TENANT_ID from the environment
    * (undefined if unset, which routes/hotfix-rules.js handles with a
    * 503, not a crash). Overridable so tests can point it at a fixture
@@ -88,6 +91,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     redis,
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
+    dashboardBaseUrl = dashboardBaseUrlFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
     approvalsConfig = approvalsConfigFromEnv(),
@@ -114,7 +118,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token', '/webhooks/slack/interactions', '/webhooks/resend'],
   });
   await app.register(connectorsRoutes, { pool });
-  await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
+  await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
