@@ -242,6 +242,8 @@ export const cases = pgTable("cases", {
 	// fragments (confirmed against psql's own \d cases output, which
 	// shows the real, complete expression) — hand-corrected the same way
 	// 0023's own index definition reads, not a schema change of its own.
+	// Re-triggered by every db:pull since introspection re-runs fresh
+	// each time; re-apply this same fix after any future pull too.
 	index("cases_tenant_severity_rank_score_idx").using(
 		"btree",
 		table.tenantId.asc().nullsLast().op("uuid_ops"),
@@ -375,6 +377,32 @@ export const caseSignals = pgTable("case_signals", {
 		}).onDelete("cascade"),
 	unique("case_signals_tenant_id_dedupe_key_key").on(table.tenantId, table.dedupeKey),
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
+export const scanJobs = pgTable("scan_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	status: text().default('completed').notNull(),
+	windowStart: timestamp("window_start", { withTimezone: true, mode: 'string' }).notNull(),
+	windowEnd: timestamp("window_end", { withTimezone: true, mode: 'string' }).notNull(),
+	createdBy: uuid("created_by").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completedAt: timestamp("completed_at", { withTimezone: true, mode: 'string' }),
+	error: text(),
+}, (table) => [
+	index("scan_jobs_tenant_created_idx").using("btree", table.tenantId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "scan_jobs_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.createdBy],
+			foreignColumns: [users.id],
+			name: "scan_jobs_created_by_fkey"
+		}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("scan_jobs_status_check", sql`status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])`),
 ]);
 
 export const baselineCursors = pgTable("baseline_cursors", {

@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -30,6 +30,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	entities: many(entities),
 	entityAliases: many(entityAliases),
 	caseSignals: many(caseSignals),
+	scanJobs: many(scanJobs),
 	baselineCursors: many(baselineCursors),
 	entityMerges: many(entityMerges),
 	llmUsages: many(llmUsage),
@@ -56,6 +57,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	hotfixRules_revokedBy: many(hotfixRules, {
 		relationName: "hotfixRules_revokedBy_users_id"
 	}),
+	scanJobs: many(scanJobs),
 	tenantPreApprovals_grantedBy: many(tenantPreApprovals, {
 		relationName: "tenantPreApprovals_grantedBy_users_id"
 	}),
@@ -202,6 +204,17 @@ export const caseSignalsRelations = relations(caseSignals, ({one}) => ({
 	case: one(cases, {
 		fields: [caseSignals.caseId],
 		references: [cases.id]
+	}),
+}));
+
+export const scanJobsRelations = relations(scanJobs, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [scanJobs.tenantId],
+		references: [tenants.id]
+	}),
+	user: one(users, {
+		fields: [scanJobs.createdBy],
+		references: [users.id]
 	}),
 }));
 

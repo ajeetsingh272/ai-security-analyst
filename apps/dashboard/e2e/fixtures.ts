@@ -101,6 +101,16 @@ export async function seedConnector(tenantId: string, status: 'healthy' | 'revok
   );
 }
 
+/** P6-05 T4: the funnel's own real evidence — reads straight from
+ * audit_log rather than trusting the UI's own claim that something
+ * happened. */
+export async function auditActionsFor(tenantId: string, subjectId: string): Promise<string[]> {
+  return asAdmin(
+    (c) => c.query<{ action: string }>(`SELECT action FROM audit_log WHERE subject_id = $1 ORDER BY id ASC`, [subjectId]).then((r) => r.rows.map((row) => row.action)),
+    tenantId,
+  );
+}
+
 /** Tenants cascade-delete memberships, but `users` is a global table with
  * no tenant_id — left behind otherwise. Deliberately does not close the
  * shared `pool` — several spec files load this same module within one
