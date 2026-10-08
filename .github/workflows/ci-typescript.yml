@@ -99,6 +99,16 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # P6-07's own weekly-report-render.test.ts launches a real headless
+      # Chromium via playwright-core (pinned to the same version
+      # @playwright/test uses, so this provisions both) as part of the
+      # ordinary `test:unit` run, not only the e2e suite — a fresh
+      # runner has no browser binary at all without this, confirmed by
+      # a real CI failure, not caught locally since this sandbox had
+      # one already cached from earlier e2e work.
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Unit tests
         run: pnpm test:unit
 

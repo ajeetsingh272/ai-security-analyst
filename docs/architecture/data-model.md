@@ -27,6 +27,7 @@ none of them has to be taken on trust:
 |---|---|---|---|---|
 | `actions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `analyst_degraded_queue` | NOT NULL | yes | yes | `tenant_isolation` |
+| `api_keys` | NOT NULL | yes | yes | `tenant_isolation` |
 | `approval_nonces` | NOT NULL | yes | yes | `tenant_isolation` |
 | `audit_log` | NOT NULL | yes | yes | `tenant_isolation` |
 | `baseline_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -39,6 +40,7 @@ none of them has to be taken on trust:
 | `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_merges` | NOT NULL | yes | yes | `tenant_isolation` |
+| `feedback` | NOT NULL | yes | yes | `tenant_isolation` |
 | `investigation_transcripts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -48,8 +50,10 @@ none of them has to be taken on trust:
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_plan_status` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_pre_approvals` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_report_schedule` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tuning_backlog_items` | NOT NULL | yes | yes | `tenant_isolation` |
 | `weekly_reports` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
@@ -155,6 +159,55 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `api_keys`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `name` | `text` | no | — |
+| `key_prefix` | `text` | no | — |
+| `key_hash` | `text` | no | — |
+| `scopes` | `text[]` | no | `ARRAY['read'::text]` |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `last_used_at` | `timestamptz` | yes | — |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+
+**Primary key**
+
+- `api_keys_pkey` — `PRIMARY KEY (id)`
+
+**Unique**
+
+- `api_keys_key_hash_key` — `UNIQUE (key_hash)`
+
+**Foreign keys**
+
+- `api_keys_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `api_keys_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+- `api_keys_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `api_keys_name_check` — `CHECK ((length(TRIM(BOTH FROM name)) > 0))`
+- `api_keys_scopes_check` — `CHECK (((scopes <@ ARRAY['read'::text, 'write'::text]) AND (array_length(scopes, 1) > 0)))`
+
+**Indexes**
+
+- `idx_api_keys_tenant` — `CREATE INDEX idx_api_keys_tenant ON public.api_keys USING btree (tenant_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 
 ### `approval_nonces`
 
@@ -631,6 +684,46 @@ END) DESC, score DESC)`
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
+### `feedback`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `subject_type` | `text` | no | — |
+| `subject_id` | `uuid` | no | — |
+| `user_id` | `uuid` | no | — |
+| `is_false_positive` | `boolean` | no | `false` |
+| `comment` | `text` | yes | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `feedback_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `feedback_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+- `feedback_user_id_fkey` — `FOREIGN KEY (user_id) REFERENCES users(id)`
+
+**Checks**
+
+- `feedback_subject_type_check` — `CHECK ((subject_type = ANY (ARRAY['case'::text, 'weekly_report'::text])))`
+
+**Indexes**
+
+- `idx_feedback_tenant_subject` — `CREATE INDEX idx_feedback_tenant_subject ON public.feedback USING btree (tenant_id, subject_type, subject_id)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
+
 ### `hotfix_rules`
 
 | Column | Type | Null | Default |
@@ -1062,6 +1155,41 @@ END) DESC, score DESC)`
 
 - `sentinel_app`: INSERT, SELECT, UPDATE
 
+### `tenant_plan_status`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `seats_status` | `text` | no | `'ok'::text` |
+| `event_volume_status` | `text` | no | `'ok'::text` |
+| `cost_status` | `text` | no | `'ok'::text` |
+| `evaluated_at` | `timestamptz` | no | `now()` |
+| `soft_notified_at` | `timestamptz` | yes | — |
+
+**Primary key**
+
+- `tenant_plan_status_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_plan_status_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tenant_plan_status_cost_status_check` — `CHECK ((cost_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])))`
+- `tenant_plan_status_event_volume_status_check` — `CHECK ((event_volume_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])))`
+- `tenant_plan_status_seats_status_check` — `CHECK ((seats_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
 ### `tenant_pre_approvals`
 
 | Column | Type | Null | Default |
@@ -1161,6 +1289,46 @@ END) DESC, score DESC)`
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `tuning_backlog_items`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `case_id` | `uuid` | yes | — |
+| `rule_id` | `text` | yes | — |
+| `source` | `text` | no | `'customer_feedback'::text` |
+| `reason` | `text` | yes | — |
+| `status` | `text` | no | `'open'::text` |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tuning_backlog_items_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `tuning_backlog_items_case_id_fkey` — `FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE SET NULL`
+- `tuning_backlog_items_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tuning_backlog_items_status_check` — `CHECK ((status = ANY (ARRAY['open'::text, 'reviewed'::text, 'applied'::text, 'dismissed'::text])))`
+
+**Indexes**
+
+- `idx_tuning_backlog_tenant_status` — `CREATE INDEX idx_tuning_backlog_tenant_status ON public.tuning_backlog_items USING btree (tenant_id, status)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 
 ### `users`
 
