@@ -27,6 +27,10 @@ export default tseslint.config(
       // never an edit to the file, which the next pull would discard anyway.
       'packages/db/src/schema.ts',
       'packages/db/src/relations.ts',
+      // Next.js's own generated bootstrap file — rewritten by `next dev`/
+      // `next build` on every run (its own banner says not to edit it),
+      // so a lint complaint here is never actionable.
+      '**/next-env.d.ts',
     ],
   },
 
@@ -92,14 +96,16 @@ export default tseslint.config(
     },
   },
 
-  // P0-08 AC1: no hardcoded hex colour anywhere in packages/ui. Every colour
-  // must come through a design token (a Tailwind utility class generated from
-  // one, or a value imported from @sentinel/design-tokens) so the token
-  // package stays the single place a colour decision can be changed. Scoped
-  // to packages/ui/src only — @sentinel/design-tokens itself is where hex
-  // values are legitimately defined, and this rule would be nonsensical there.
+  // P0-08 AC1 / P6-01: no hardcoded hex colour anywhere in packages/ui or
+  // apps/dashboard. Every colour must come through a design token (a
+  // Tailwind utility class generated from one, or a value imported from
+  // @sentinel/design-tokens) so the token package stays the single place a
+  // colour decision can be changed. @sentinel/design-tokens itself is where
+  // hex values are legitimately defined, and this rule would be nonsensical
+  // there, so it is scoped everywhere else those colours get consumed —
+  // docs/design/ui-ux-spec.md §10 states the intent as covering both.
   {
-    files: ['packages/ui/src/**/*.{ts,tsx}'],
+    files: ['packages/ui/src/**/*.{ts,tsx}', 'apps/dashboard/src/**/*.{ts,tsx}'],
     plugins: {
       'control-room': {
         rules: {
