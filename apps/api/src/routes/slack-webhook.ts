@@ -44,7 +44,11 @@ export interface SlackWebhookConfig {
 export interface SlackWebhookRoutesOptions {
   pool: Pool;
   nonceStore: NonceStore;
-  tokenSecret?: string | undefined;
+  /** approvals.ts's own acceptedTokenSecrets(approvalsConfig) — the
+   * Slack "approve" button reaches the identical decideApproval() a
+   * WhatsApp/dashboard click does, so it accepts the same secret
+   * rotation window, not a narrower one (P5-11). */
+  tokenSecret?: string | readonly string[] | undefined;
   config?: SlackWebhookConfig | undefined;
 }
 
@@ -69,7 +73,7 @@ interface SlackInteractionPayload {
   actions?: Array<{ action_id: string; value: string }>;
 }
 
-async function auditCallMeFirst(pool: Pool, tokenSecret: string, token: string): Promise<void> {
+async function auditCallMeFirst(pool: Pool, tokenSecret: string | readonly string[], token: string): Promise<void> {
   const shape = verifyApprovalTokenShape(token, tokenSecret);
   if (!shape.ok) return; // nothing trustworthy to scope an audit entry to
   const { payload } = shape;

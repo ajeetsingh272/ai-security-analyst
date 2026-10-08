@@ -49,7 +49,13 @@ async function auditRejection(pool: Pool, result: Extract<ApprovalTokenVerifyRes
   );
 }
 
-export async function decideApproval(pool: Pool, nonceStore: NonceStore, tokenSecret: string, token: string, stepUpPassword: string | undefined): Promise<DecideApprovalOutcome> {
+export async function decideApproval(
+  pool: Pool,
+  nonceStore: NonceStore,
+  tokenSecret: string | readonly string[],
+  token: string,
+  stepUpPassword: string | undefined,
+): Promise<DecideApprovalOutcome> {
   const result = await verifyAndConsume(token, tokenSecret, nonceStore);
   if (!result.ok) {
     await auditRejection(pool, result);

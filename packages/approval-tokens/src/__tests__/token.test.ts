@@ -106,3 +106,32 @@ describe('T1/T4/T6: single-use enforcement via NonceStore', () => {
     expect(store.used.size).toBe(0);
   });
 });
+
+describe('P5-11: secret rotation with overlapping validity', () => {
+  const OLD_SECRET = 'old-approval-token-secret';
+  const NEW_SECRET = 'new-approval-token-secret';
+
+  it('a token signed under the OLD secret still verifies when BOTH secrets are accepted', () => {
+    const token = signApprovalToken(payload(), OLD_SECRET);
+    expect(verifyApprovalTokenShape(token, [NEW_SECRET, OLD_SECRET]).ok).toBe(true);
+  });
+
+  it('a token signed under the NEW secret ALSO verifies, in the same overlap window', () => {
+    const token = signApprovalToken(payload(), NEW_SECRET);
+    expect(verifyApprovalTokenShape(token, [NEW_SECRET, OLD_SECRET]).ok).toBe(true);
+  });
+
+  it('a token signed under neither accepted secret still fails — rotation widens what is accepted, it does not disable verification', () => {
+    const token = signApprovalToken(payload(), 'some-third-secret-nobody-configured');
+    expect(verifyApprovalTokenShape(token, [NEW_SECRET, OLD_SECRET])).toEqual({ ok: false, error: 'bad_signature' });
+  });
+
+  it('T2: verifyAndConsume (the mutating path a real approval POST uses) also accepts either secret during the overlap', async () => {
+    const store = new FakeNonceStore();
+    const oldToken = signApprovalToken(payload({ nonce: 'rotation-nonce-old' }), OLD_SECRET);
+    const newToken = signApprovalToken(payload({ nonce: 'rotation-nonce-new' }), NEW_SECRET);
+
+    expect((await verifyAndConsume(oldToken, [NEW_SECRET, OLD_SECRET], store)).ok).toBe(true);
+    expect((await verifyAndConsume(newToken, [NEW_SECRET, OLD_SECRET], store)).ok).toBe(true);
+  });
+});
