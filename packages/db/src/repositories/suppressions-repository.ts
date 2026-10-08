@@ -20,6 +20,12 @@ export interface SuppressionRow {
   expiresAt: string;
   revokedAt: string | null;
   revokedBy: string | null;
+  /** P6-08: "listed with their creator" — resolved via a join to `users`
+   * rather than leaving the dashboard to show a bare UUID. `users` is a
+   * global (non-tenant-scoped) table, so this is a plain join, not a
+   * second tenant-scoped query. */
+  createdByEmail: string | null;
+  revokedByEmail: string | null;
   /** AC5: "what they have suppressed" — incremented atomically by
    * services/detect/internal/suppression.PostgresChecker every time this
    * suppression actually silences a signal. */
@@ -38,6 +44,8 @@ function mapRow(row: Record<string, unknown>): SuppressionRow {
     expiresAt: String(row['expires_at']),
     revokedAt: (row['revoked_at'] as string | null) ?? null,
     revokedBy: (row['revoked_by'] as string | null) ?? null,
+    createdByEmail: (row['created_by_email'] as string | null) ?? null,
+    revokedByEmail: (row['revoked_by_email'] as string | null) ?? null,
     suppressedCount: Number(row['suppressed_count']),
   };
 }
@@ -69,7 +77,9 @@ export interface RenewSuppressionInput {
 }
 
 const SELECT_COLUMNS =
-  'id, tenant_id, rule_id, entity_id, reason, created_by, created_at, expires_at, revoked_at, revoked_by, suppressed_count';
+  's.id, s.tenant_id, s.rule_id, s.entity_id, s.reason, s.created_by, s.created_at, s.expires_at, s.revoked_at, s.revoked_by, s.suppressed_count, ' +
+  'creator.email AS created_by_email, revoker.email AS revoked_by_email';
+const SELECT_FROM = 'FROM suppressions s LEFT JOIN users creator ON creator.id = s.created_by LEFT JOIN users revoker ON revoker.id = s.revoked_by';
 
 export class SuppressionsRepository extends TenantScopedRepository {
   async create(input: CreateSuppressionInput): Promise<SuppressionRow> {
@@ -77,28 +87,24 @@ export class SuppressionsRepository extends TenantScopedRepository {
       throw new SuppressionEmptyReasonError();
     }
     return this.withTransaction(async (client) => {
-      const { rows } = await client.query(
+      const { rows: inserted } = await client.query<{ id: string }>(
         `INSERT INTO suppressions (tenant_id, rule_id, entity_id, reason, created_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING ${SELECT_COLUMNS}`,
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [this.tenantId, input.ruleId, input.entityId ?? null, input.reason, input.createdBy, input.expiresAt],
       );
+      const { rows } = await client.query(`SELECT ${SELECT_COLUMNS} ${SELECT_FROM} WHERE s.id = $1`, [inserted[0]!.id]);
       return mapRow(rows[0]);
     });
   }
 
-  /**
-   * AC5: "the dashboard shows active suppressions" — exposed today through
-   * apps/api only. apps/dashboard has no real UI framework yet (a bare
-   * scaffold; the actual dashboard build is P6-01/P6-08), matching the
-   * P1-11 AC4 precedent of satisfying a "dashboard" AC via the API surface.
-   */
+  /** AC5: "the dashboard shows active suppressions" — consumed by P6-08's
+   * dashboard UI via GET /suppressions. */
   async listActive(): Promise<SuppressionRow[]> {
     return this.withTransaction(async (client) => {
       const { rows } = await client.query(
-        `SELECT ${SELECT_COLUMNS} FROM suppressions
-         WHERE revoked_at IS NULL AND expires_at > now()
-         ORDER BY created_at DESC`,
+        `SELECT ${SELECT_COLUMNS} ${SELECT_FROM}
+         WHERE s.revoked_at IS NULL AND s.expires_at > now()
+         ORDER BY s.created_at DESC`,
       );
       return rows.map(mapRow);
     });
@@ -106,13 +112,14 @@ export class SuppressionsRepository extends TenantScopedRepository {
 
   async revoke(id: string, revokedBy: string): Promise<SuppressionRow | null> {
     return this.withTransaction(async (client) => {
-      const { rows } = await client.query(
+      const { rows: updated } = await client.query<{ id: string }>(
         `UPDATE suppressions SET revoked_at = now(), revoked_by = $2
-         WHERE id = $1 AND revoked_at IS NULL
-         RETURNING ${SELECT_COLUMNS}`,
+         WHERE id = $1 AND revoked_at IS NULL RETURNING id`,
         [id, revokedBy],
       );
-      return rows.length > 0 ? mapRow(rows[0]) : null;
+      if (updated.length === 0) return null;
+      const { rows } = await client.query(`SELECT ${SELECT_COLUMNS} ${SELECT_FROM} WHERE s.id = $1`, [id]);
+      return mapRow(rows[0]);
     });
   }
 
@@ -126,13 +133,14 @@ export class SuppressionsRepository extends TenantScopedRepository {
       throw new SuppressionEmptyReasonError();
     }
     return this.withTransaction(async (client) => {
-      const { rows } = await client.query(
+      const { rows: updated } = await client.query<{ id: string }>(
         `UPDATE suppressions SET reason = $2, expires_at = $3
-         WHERE id = $1 AND revoked_at IS NULL
-         RETURNING ${SELECT_COLUMNS}`,
+         WHERE id = $1 AND revoked_at IS NULL RETURNING id`,
         [id, input.reason, input.expiresAt],
       );
-      return rows.length > 0 ? mapRow(rows[0]) : null;
+      if (updated.length === 0) return null;
+      const { rows } = await client.query(`SELECT ${SELECT_COLUMNS} ${SELECT_FROM} WHERE s.id = $1`, [id]);
+      return mapRow(rows[0]);
     });
   }
 }
