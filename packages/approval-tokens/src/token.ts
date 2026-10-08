@@ -33,24 +33,41 @@ export function signApprovalToken(payload: ApprovalTokenPayload, secret: string)
   return `${encodedPayload}.${sign(encodedPayload, secret)}`;
 }
 
-/** Signature, shape and expiry only — never touches the nonce store.
+/**
+ * Signature, shape and expiry only — never touches the nonce store.
  * Safe for a GET (confirmation-page) handler; see this file's own
- * doc comment for why that distinction is load-bearing, not stylistic. */
-export function verifyApprovalTokenShape(token: string, secret: string, now: Date = new Date()): ApprovalTokenVerifyResult {
+ * doc comment for why that distinction is load-bearing, not stylistic.
+ *
+ * `secret` accepts more than one value specifically for rotation
+ * (docs/runbooks/approval-token-secret-rotation.md): a token signed
+ * minutes ago under the OLD secret, and a token signed just now under
+ * the NEW one, must both still verify during the overlap window — a
+ * 15-minute-lived token (ADR-0007) that happens to be in flight at the
+ * exact moment of rotation would otherwise fail for no reason the
+ * approver did anything wrong. Each candidate is tried in order with
+ * the SAME timing-safe comparison; `signApprovalToken` itself always
+ * signs with a single secret (the current one) — only verification
+ * needs to accept more than one.
+ */
+export function verifyApprovalTokenShape(token: string, secret: string | readonly string[], now: Date = new Date()): ApprovalTokenVerifyResult {
   const dotIndex = token.indexOf('.');
   if (dotIndex < 0) return { ok: false, error: 'malformed' };
   const encodedPayload = token.slice(0, dotIndex);
   const providedSignature = token.slice(dotIndex + 1);
 
-  const expectedSignature = sign(encodedPayload, secret);
-  const expectedBuf = Buffer.from(expectedSignature, 'base64url');
   let providedBuf: Buffer;
   try {
     providedBuf = Buffer.from(providedSignature, 'base64url');
   } catch {
     return { ok: false, error: 'malformed' };
   }
-  if (providedBuf.length !== expectedBuf.length || !timingSafeEqual(providedBuf, expectedBuf)) {
+
+  const candidates = typeof secret === 'string' ? [secret] : secret;
+  const signatureMatches = candidates.some((candidate) => {
+    const expectedBuf = Buffer.from(sign(encodedPayload, candidate), 'base64url');
+    return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
+  });
+  if (!signatureMatches) {
     return { ok: false, error: 'bad_signature' };
   }
 
@@ -82,7 +99,7 @@ export function verifyApprovalTokenShape(token: string, secret: string, now: Dat
 /** The mutating, POST-only path: shape/signature/expiry (above) AND
  * single-use enforcement. Fails closed on every error kind, per the
  * ADR's own "invalid, expired, reused or malformed means no action." */
-export async function verifyAndConsume(token: string, secret: string, nonceStore: NonceStore, now: Date = new Date()): Promise<ApprovalTokenVerifyResult> {
+export async function verifyAndConsume(token: string, secret: string | readonly string[], nonceStore: NonceStore, now: Date = new Date()): Promise<ApprovalTokenVerifyResult> {
   const shapeResult = verifyApprovalTokenShape(token, secret, now);
   if (!shapeResult.ok) return shapeResult;
 

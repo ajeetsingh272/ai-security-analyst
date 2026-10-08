@@ -24,7 +24,7 @@ import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
-import { approvalsRoutes, approvalsConfigFromEnv, type ApprovalsConfig } from './routes/approvals.js';
+import { approvalsRoutes, approvalsConfigFromEnv, acceptedTokenSecrets, type ApprovalsConfig } from './routes/approvals.js';
 import { preApprovalsRoutes } from './routes/pre-approvals.js';
 import { slackConnectorRoutes, slackOAuthConfigFromEnv } from './routes/slack-connector.js';
 import { slackWebhookRoutes, slackWebhookConfigFromEnv, type SlackWebhookConfig } from './routes/slack-webhook.js';
@@ -112,7 +112,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
   await app.register(preApprovalsRoutes, { pool });
   await app.register(slackConnectorRoutes, { pool, redis, oauthConfig: slackOAuthConfig });
-  await app.register(slackWebhookRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), tokenSecret: approvalsConfig?.tokenSecret, config: slackWebhookConfig });
+  await app.register(slackWebhookRoutes, {
+    pool,
+    nonceStore: new RedisPostgresNonceStore(redis, pool),
+    tokenSecret: approvalsConfig ? acceptedTokenSecrets(approvalsConfig) : undefined,
+    config: slackWebhookConfig,
+  });
   await app.register(resendWebhookRoutes, { pool, config: resendWebhookConfig });
   await app.register(auditExportRoutes, { pool });
 

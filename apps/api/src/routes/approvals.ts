@@ -46,6 +46,12 @@ import { decideApproval, APPROVAL_ERROR_MESSAGES } from '../approvals/decide-app
 
 export interface ApprovalsConfig {
   tokenSecret: string;
+  /** P5-11/docs/runbooks/approval-token-secret-rotation.md: a token
+   * signed under the secret BEFORE the most recent rotation, still
+   * accepted for verification (never for signing new tokens) during
+   * the overlap window — see @sentinel/approval-tokens' own doc
+   * comment on verifyApprovalTokenShape for why this exists at all. */
+  previousTokenSecret?: string;
 }
 
 export interface ApprovalsRoutesOptions {
@@ -54,13 +60,22 @@ export interface ApprovalsRoutesOptions {
   config?: ApprovalsConfig | undefined;
 }
 
+/** Every secret a token is allowed to verify against right now — the
+ * current one always, the previous one too during a rotation's own
+ * overlap window. Exported so slack-webhook.ts's own `decideApproval`
+ * call (the Slack "approve" button reaches the identical verification
+ * path, P5-07) accepts the same rotation window, not a narrower one. */
+export function acceptedTokenSecrets(config: ApprovalsConfig): readonly string[] {
+  return config.previousTokenSecret ? [config.tokenSecret, config.previousTokenSecret] : [config.tokenSecret];
+}
+
 export async function approvalsRoutes(fastify: FastifyInstance, options: ApprovalsRoutesOptions): Promise<void> {
   const { pool, nonceStore, config } = options;
 
   fastify.get<{ Params: { token: string } }>('/approvals/:token', async (request, reply) => {
     if (!config) return reply.code(503).send({ error: 'approvals_not_configured' });
 
-    const result = verifyApprovalTokenShape(request.params.token, config.tokenSecret);
+    const result = verifyApprovalTokenShape(request.params.token, acceptedTokenSecrets(config));
     if (!result.ok) {
       return reply.code(400).send({ error: result.error, message: APPROVAL_ERROR_MESSAGES[result.error] });
     }
@@ -84,7 +99,7 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
   fastify.post<{ Params: { token: string }; Body: { stepUpPassword?: string } }>('/approvals/:token', async (request, reply) => {
     if (!config) return reply.code(503).send({ error: 'approvals_not_configured' });
 
-    const outcome = await decideApproval(pool, nonceStore, config.tokenSecret, request.params.token, request.body?.stepUpPassword);
+    const outcome = await decideApproval(pool, nonceStore, acceptedTokenSecrets(config), request.params.token, request.body?.stepUpPassword);
 
     if (outcome.kind === 'rejected') return reply.code(400).send({ error: outcome.error, message: APPROVAL_ERROR_MESSAGES[outcome.error] });
     if (outcome.kind === 'not_found') return reply.code(404).send({ error: 'not_found', message: 'This action no longer exists.' });
@@ -98,5 +113,6 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
 export function approvalsConfigFromEnv(): ApprovalsConfig | undefined {
   const tokenSecret = process.env['APPROVAL_TOKEN_SECRET'];
   if (!tokenSecret) return undefined;
-  return { tokenSecret };
+  const previousTokenSecret = process.env['APPROVAL_TOKEN_SECRET_PREVIOUS'];
+  return previousTokenSecret ? { tokenSecret, previousTokenSecret } : { tokenSecret };
 }
