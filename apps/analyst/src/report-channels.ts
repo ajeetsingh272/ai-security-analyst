@@ -72,28 +72,76 @@ function escapeHtml(text: string): string {
 
 function htmlActionList(actions: Report['actionsNow']): string {
   if (actions.length === 0) return '';
-  return `<ul>${actions.map((a) => `<li>${escapeHtml(a.plainDescription)} (${escapeHtml(a.blastRadius)})</li>`).join('')}</ul>`;
+  const items = actions.map((a) => `<li style="margin: 0 0 4px;">${escapeHtml(a.plainDescription)} (${escapeHtml(a.blastRadius)})</li>`).join('');
+  return `<ul style="margin: 0; padding-left: 20px;">${items}</ul>`;
+}
+
+const EMAIL_FONT_STYLE = "font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; font-size: 14px; line-height: 1.5;";
+
+/** One full-width table row, mirroring a `<section>` — Outlook's own
+ * rendering engine (Word, not a browser engine) does not reliably
+ * apply CSS from a `<style>` block or respect flexbox/grid/margin
+ * shorthand; `<table>`/`<tr>`/`<td>` layout with every rule INLINE is
+ * the one approach every major client (Outlook, Gmail, Apple Mail)
+ * has rendered consistently for two decades, which is the actual
+ * reason AC2 asks for it, not a stylistic preference. */
+function emailSectionRow(innerHtml: string): string {
+  return `<tr><td style="padding: 12px 24px; ${EMAIL_FONT_STYLE}">${innerHtml}</td></tr>`;
 }
 
 /**
- * Plain, well-formed HTML — every piece of report text is escaped
- * (AC3's own evidence ultimately traces back to model-authored claim
- * text; even though P4-03/P4-04 already validated its SHAPE and
- * GROUNDING, it is still untrusted for HTML-ENCODING purposes, the
- * same way any user-controlled string would be before it reaches a
- * browser).
+ * Well-formed, table-based, inline-styled HTML (AC2 — Outlook
+ * compatibility) — every piece of report text is escaped (AC3's own
+ * evidence ultimately traces back to model-authored claim text; even
+ * though P4-03/P4-04 already validated its SHAPE and GROUNDING, it is
+ * still untrusted for HTML-ENCODING purposes, the same way any
+ * user-controlled string would be before it reaches a browser).
  */
 export function renderForEmail(report: Report): string {
-  return [
-    '<!doctype html><html><body>',
-    `<h1>${escapeHtml(report.title)}</h1>`,
-    report.whatHappened ? `<h2>What happened</h2><p>${escapeHtml(report.whatHappened)}</p>` : '',
-    report.whyItMatters ? `<h2>Why it matters</h2><p>${escapeHtml(report.whyItMatters)}</p>` : '',
-    report.actionsNow.length ? `<h2>Do now</h2>${htmlActionList(report.actionsNow)}` : '',
-    report.actionsToday.length ? `<h2>Do today</h2>${htmlActionList(report.actionsToday)}` : '',
-    report.actionsLater.length ? `<h2>Do later</h2>${htmlActionList(report.actionsLater)}` : '',
-    '</body></html>',
+  const rows = [
+    emailSectionRow(`<h1 style="margin: 0; font-size: 18px;">${escapeHtml(report.title)}</h1>`),
+    report.whatHappened ? emailSectionRow(`<h2 style="margin: 0 0 6px; font-size: 15px;">What happened</h2><p style="margin: 0;">${escapeHtml(report.whatHappened)}</p>`) : '',
+    report.whyItMatters ? emailSectionRow(`<h2 style="margin: 0 0 6px; font-size: 15px;">Why it matters</h2><p style="margin: 0;">${escapeHtml(report.whyItMatters)}</p>`) : '',
+    report.actionsNow.length ? emailSectionRow(`<h2 style="margin: 0 0 6px; font-size: 15px;">Do now</h2>${htmlActionList(report.actionsNow)}`) : '',
+    report.actionsToday.length ? emailSectionRow(`<h2 style="margin: 0 0 6px; font-size: 15px;">Do today</h2>${htmlActionList(report.actionsToday)}`) : '',
+    report.actionsLater.length ? emailSectionRow(`<h2 style="margin: 0 0 6px; font-size: 15px;">Do later</h2>${htmlActionList(report.actionsLater)}`) : '',
   ].join('');
+
+  return [
+    '<!doctype html>',
+    '<html>',
+    '<body style="margin: 0; padding: 0; background-color: #f4f4f4;">',
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4;"><tr><td align="center" style="padding: 24px 0;">',
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; ${EMAIL_FONT_STYLE}">`,
+    rows,
+    '</table>',
+    '</td></tr></table>',
+    '</body>',
+    '</html>',
+  ].join('');
+}
+
+function plainTextActionList(actions: Report['actionsNow']): string {
+  return actions.map((a) => `  - ${a.plainDescription} (${a.blastRadius})`).join('\n');
+}
+
+/**
+ * AC5: "a plain-text alternative is always included" — email's own
+ * multipart/alternative convention, for a client that can't or won't
+ * render HTML, and for spam filters that weight a missing text part
+ * against deliverability (part of why AC1's authentication alone is
+ * not sufficient on its own).
+ */
+export function renderPlainTextForEmail(report: Report): string {
+  const parts = [
+    report.title,
+    report.whatHappened ? `What happened\n${report.whatHappened}` : '',
+    report.whyItMatters ? `Why it matters\n${report.whyItMatters}` : '',
+    report.actionsNow.length ? `Do now\n${plainTextActionList(report.actionsNow)}` : '',
+    report.actionsToday.length ? `Do today\n${plainTextActionList(report.actionsToday)}` : '',
+    report.actionsLater.length ? `Do later\n${plainTextActionList(report.actionsLater)}` : '',
+  ].filter(Boolean);
+  return parts.join('\n\n');
 }
 
 /** The dashboard consumes the already-structured Report directly — no

@@ -42,8 +42,12 @@ none of them has to be taken on trust:
 | `investigation_transcripts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
+| `notification_deliveries` | NOT NULL | yes | yes | `tenant_isolation` |
+| `notification_recipient_optouts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_pre_approvals` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -447,7 +451,7 @@ part of the control and not merely a description of it.
 
 **Checks**
 
-- `connectors_kind_check` — `CHECK ((kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text])))`
+- `connectors_kind_check` — `CHECK ((kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text, 'slack'::text])))`
 - `connectors_status_check` — `CHECK ((status = ANY (ARRAY['pending'::text, 'healthy'::text, 'degraded'::text, 'revoked'::text, 'error'::text])))`
 
 **Row-level security**
@@ -816,6 +820,79 @@ part of the control and not merely a description of it.
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
+### `notification_deliveries`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `dedupe_key` | `text` | no | — |
+| `channel` | `text` | no | — |
+| `attempt` | `integer` | no | `1` |
+| `status` | `text` | no | — |
+| `content` | `jsonb` | yes | — |
+| `error` | `text` | yes | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `notification_deliveries_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `notification_deliveries_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `notification_deliveries_channel_check` — `CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])))`
+- `notification_deliveries_status_check` — `CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))`
+
+**Indexes**
+
+- `idx_notification_deliveries_dedupe` — `CREATE INDEX idx_notification_deliveries_dedupe ON public.notification_deliveries USING btree (tenant_id, dedupe_key)`
+- `idx_notification_deliveries_sent_once` — `CREATE UNIQUE INDEX idx_notification_deliveries_sent_once ON public.notification_deliveries USING btree (tenant_id, dedupe_key, channel) WHERE (status = 'sent'::text)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
+
+### `notification_recipient_optouts`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `channel` | `text` | no | — |
+| `recipient` | `text` | no | — |
+| `opted_out_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `notification_recipient_optouts_pkey` — `PRIMARY KEY (tenant_id, channel, recipient)`
+
+**Foreign keys**
+
+- `notification_recipient_optouts_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `notification_recipient_optouts_channel_check` — `CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT
+
 ### `schema_migrations`
 
 | Column | Type | Null | Default |
@@ -906,6 +983,73 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `tenant_notification_preferences`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `channel_order` | `text[]` | no | `ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text]` |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tenant_notification_preferences_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_notification_preferences_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
+### `tenant_pre_approvals`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `playbook` | `text` | no | — |
+| `granted_by` | `uuid` | no | — |
+| `granted_at` | `timestamptz` | no | `now()` |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+
+**Primary key**
+
+- `tenant_pre_approvals_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `tenant_pre_approvals_granted_by_fkey` — `FOREIGN KEY (granted_by) REFERENCES users(id)`
+- `tenant_pre_approvals_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+- `tenant_pre_approvals_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tenant_pre_approvals_no_destructive_playbooks` — `CHECK ((playbook <> ALL (ARRAY['disable_user'::text, 'isolate_device'::text, 'force_password_reset'::text])))`
+- `tenant_pre_approvals_playbook_check` — `CHECK ((playbook = ANY (ARRAY['disable_user'::text, 'revoke_sessions'::text, 'delete_inbox_rule'::text, 'block_ip'::text, 'force_password_reset'::text, 'isolate_device'::text])))`
+
+**Indexes**
+
+- `idx_tenant_pre_approvals_one_active` — `CREATE UNIQUE INDEX idx_tenant_pre_approvals_one_active ON public.tenant_pre_approvals USING btree (tenant_id, playbook) WHERE (revoked_at IS NULL)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 
 ### `tenants`
 

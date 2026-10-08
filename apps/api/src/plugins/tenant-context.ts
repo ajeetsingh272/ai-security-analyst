@@ -81,7 +81,25 @@ function tenantContextPluginImpl(
   const publicPaths = new Set(options.publicPaths ?? DEFAULT_PUBLIC_PATHS);
 
   fastify.addHook('onRequest', async (request: FastifyRequest, reply) => {
-    if (publicPaths.has(request.url)) return;
+    // `request.routeOptions.url` is the REGISTERED route pattern
+    // (e.g. `/approvals/:token`), not the literal incoming path (e.g.
+    // `/approvals/eyJhbGci...`) — onRequest fires after routing in
+    // Fastify's own request lifecycle, so this is already available
+    // here. Matching the pattern rather than `request.url` fixes two
+    // problems at once: a route with a path PARAMETER (P5-03's
+    // `/approvals/:token`, one token per request) could never appear in
+    // an exact-string allowlist at all if matched by literal path, and
+    // `request.url` also carries the query string (P5-02's WhatsApp
+    // verification handshake arrives as
+    // `/webhooks/whatsapp?hub.mode=subscribe&...`), which an exact match
+    // would also have rejected. Every existing publicPaths entry
+    // (`/health`, `/ready`, `/auth/sign-in`, `/auth/sign-out`) has no
+    // path parameters, so its own route pattern equals its own literal
+    // path — this changes nothing for them. Falls back to `request.url`
+    // only for the one case `routeOptions.url` is undefined (a 404,
+    // where routing matched nothing at all).
+    const matchedPath = request.routeOptions.url ?? request.url;
+    if (publicPaths.has(matchedPath)) return;
 
     const tenantId = request.session?.tenantId;
     if (!tenantId) {

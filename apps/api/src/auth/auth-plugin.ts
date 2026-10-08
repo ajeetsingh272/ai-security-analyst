@@ -23,7 +23,7 @@ import cookie from '@fastify/cookie';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { AuditLogWriter, withTenantContext } from '@sentinel/db';
-import { verifyPassword } from './password.js';
+import { verifyPassword, DUMMY_PASSWORD_HASH } from './password.js';
 import { SessionStore } from './session-store.js';
 import { isRateLimited, recordFailedSignIn, clearFailedSignIns } from './rate-limiter.js';
 import type { Role } from './session.js';
@@ -112,9 +112,7 @@ async function authPluginImpl(
     // short-circuit return — otherwise "unknown email" answers faster than
     // "wrong password", and that timing difference is an account-enumeration
     // oracle. A fixed dummy hash makes both paths do the same scrypt work.
-    const hashToCheck =
-      user?.password_hash ??
-      'scrypt$131072$8$1$0000000000000000000000000000000000000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
+    const hashToCheck = user?.password_hash ?? DUMMY_PASSWORD_HASH;
     const passwordOk = await verifyPassword(password, hashToCheck);
 
     if (!user || !passwordOk) {

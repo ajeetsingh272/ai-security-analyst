@@ -22,8 +22,18 @@ export interface OAuthState {
   /** PKCE code_verifier — the authorize request sends only its SHA-256
    * challenge; this is what proves the token-exchange request came from
    * the same party that started the flow, not just anyone who observed
-   * the authorization code in a redirect (RFC 7636). */
+   * the authorization code in a redirect (RFC 7636). Unused by Slack's
+   * own install flow (slack-connector.ts) — Slack's real OAuth v2
+   * contract has no PKCE parameter at all, not an omission here. */
   codeVerifier: string;
+  /** P5-07: the channel an admin picked, in the SAME request that
+   * started the Slack install flow, to receive the post-install test
+   * alert (T1) and become the tenant's initial default severity
+   * route. Slack's own callback only ever echoes back `code`/`state`
+   * — nothing else we set on the authorize request — so this has to
+   * round-trip through the state store, the same reason codeVerifier
+   * does for PKCE. */
+  testChannelId?: string;
 }
 
 function keyFor(state: string): string {
@@ -36,7 +46,7 @@ export class OAuthStateStore {
   async create(state: Omit<OAuthState, 'codeVerifier'> & { codeVerifier?: string }): Promise<{ state: string; codeVerifier: string }> {
     const stateToken = randomBytes(32).toString('hex');
     const codeVerifier = state.codeVerifier ?? randomBytes(32).toString('base64url');
-    const value: OAuthState = { tenantId: state.tenantId, userId: state.userId, codeVerifier };
+    const value: OAuthState = { tenantId: state.tenantId, userId: state.userId, codeVerifier, ...(state.testChannelId !== undefined ? { testChannelId: state.testChannelId } : {}) };
     await this.redis.set(keyFor(stateToken), JSON.stringify(value), { EX: TTL_SECONDS });
     return { state: stateToken, codeVerifier };
   }

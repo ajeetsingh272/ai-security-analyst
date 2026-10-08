@@ -87,9 +87,18 @@ importers:
       '@fastify/cookie':
         specifier: ^11.1.2
         version: 11.1.2
+      '@sentinel/approval-tokens':
+        specifier: workspace:*
+        version: link:../../packages/approval-tokens
       '@sentinel/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sentinel/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
+      '@sentinel/playbooks':
+        specifier: workspace:*
+        version: link:../../packages/playbooks
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
@@ -103,6 +112,9 @@ importers:
         specifier: ^6.3.0
         version: 6.3.0(@opentelemetry/api@1.9.1)
     devDependencies:
+      '@sentinel/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@types/pg':
         specifier: ^8.11.10
         version: 8.23.1
@@ -114,6 +126,15 @@ importers:
         version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
 
   apps/dashboard:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
+
+  packages/approval-tokens:
     devDependencies:
       typescript:
         specifier: ^5.7.2
@@ -162,6 +183,28 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
 
+  packages/notifications:
+    dependencies:
+      '@sentinel/observability':
+        specifier: workspace:*
+        version: link:../observability
+    devDependencies:
+      '@sentinel/db':
+        specifier: workspace:*
+        version: link:../db
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.23.1
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
+
   packages/observability:
     dependencies:
       '@opentelemetry/api':
@@ -201,6 +244,15 @@ importers:
       '@opentelemetry/sdk-trace-node':
         specifier: ^2.11.0
         version: 2.11.0(@opentelemetry/api@1.9.1)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
+
+  packages/playbooks:
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

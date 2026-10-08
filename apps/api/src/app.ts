@@ -23,7 +23,16 @@ import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-conne
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
+import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
+import { approvalsRoutes, approvalsConfigFromEnv, acceptedTokenSecrets, type ApprovalsConfig } from './routes/approvals.js';
+import { preApprovalsRoutes } from './routes/pre-approvals.js';
+import { slackConnectorRoutes, slackOAuthConfigFromEnv } from './routes/slack-connector.js';
+import { slackWebhookRoutes, slackWebhookConfigFromEnv, type SlackWebhookConfig } from './routes/slack-webhook.js';
+import { resendWebhookRoutes, resendWebhookConfigFromEnv, type ResendWebhookConfig } from './routes/resend-webhook.js';
+import { auditExportRoutes } from './routes/audit-export.js';
+import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
+import type { SlackOAuthConfig } from './connectors/slack-oauth.js';
 
 export interface BuildAppOptions {
   pool: Pool;
@@ -41,6 +50,28 @@ export interface BuildAppOptions {
    * 503, not a crash). Overridable so tests can point it at a fixture
    * tenant instead. */
   opsTenantId?: string | undefined;
+  /** Defaults to reading WHATSAPP_VERIFY_TOKEN/WHATSAPP_APP_SECRET from
+   * the environment (undefined if unset, which routes/whatsapp-webhook.js
+   * handles with a 503, not a crash). Overridable so tests can use a
+   * fixed secret instead of real Meta credentials. */
+  whatsappConfig?: WhatsAppConfig | undefined;
+  /** Defaults to reading APPROVAL_TOKEN_SECRET from the environment
+   * (undefined if unset, which routes/approvals.js handles with a 503,
+   * not a crash). Overridable so tests can use a fixed secret. */
+  approvalsConfig?: ApprovalsConfig | undefined;
+  /** Defaults to reading SLACK_CLIENT_ID/SECRET/REDIRECT_URI from the
+   * environment (undefined if unset, which routes/slack-connector.js
+   * handles with a 503, not a crash). Overridable so tests can point
+   * it at a local mock OAuth endpoint instead of real Slack. */
+  slackOAuthConfig?: SlackOAuthConfig | undefined;
+  /** Defaults to reading SLACK_SIGNING_SECRET from the environment
+   * (undefined if unset, which routes/slack-webhook.js handles with a
+   * 503, not a crash). Overridable so tests can use a fixed secret. */
+  slackWebhookConfig?: SlackWebhookConfig | undefined;
+  /** Defaults to reading RESEND_WEBHOOK_SECRET from the environment
+   * (undefined if unset, which routes/resend-webhook.js handles with
+   * a 503, not a crash). Overridable so tests can use a fixed secret. */
+  resendWebhookConfig?: ResendWebhookConfig | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -50,20 +81,45 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
+    whatsappConfig = whatsappConfigFromEnv(),
+    approvalsConfig = approvalsConfigFromEnv(),
+    slackOAuthConfig = slackOAuthConfigFromEnv(),
+    slackWebhookConfig = slackWebhookConfigFromEnv(),
+    resendWebhookConfig = resendWebhookConfigFromEnv(),
   } = options;
 
-  const app = Fastify();
+  // find-my-way's default maxParamLength (100) is sized for an ordinary
+  // id segment, not P5-03's own approval token — a base64url-encoded
+  // {caseId, actionId, tenantId, approverId, nonce, exp} payload plus
+  // its HMAC signature routinely runs several hundred characters.
+  // Without raising this, every request to /approvals/:token 414s
+  // before routing even reaches that route's own handler.
+  const app = Fastify({ routerOptions: { maxParamLength: 4096 } });
 
   app.get('/health', async (_request, reply) => reply.code(200).send({ ok: true }));
   app.get('/ready', async (_request, reply) => reply.code(200).send({ ok: true }));
 
   await app.register(authPlugin, { pool, redis, cookieSecure });
-  await app.register(tenantContextPlugin, { publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out'] });
+  await app.register(tenantContextPlugin, {
+    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token', '/webhooks/slack/interactions', '/webhooks/resend'],
+  });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
+  await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
+  await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
+  await app.register(preApprovalsRoutes, { pool });
+  await app.register(slackConnectorRoutes, { pool, redis, oauthConfig: slackOAuthConfig });
+  await app.register(slackWebhookRoutes, {
+    pool,
+    nonceStore: new RedisPostgresNonceStore(redis, pool),
+    tokenSecret: approvalsConfig ? acceptedTokenSecrets(approvalsConfig) : undefined,
+    config: slackWebhookConfig,
+  });
+  await app.register(resendWebhookRoutes, { pool, config: resendWebhookConfig });
+  await app.register(auditExportRoutes, { pool });
 
   return app;
 }
