@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, tenantPlanStatus, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -42,6 +42,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	tenantPreApprovals: many(tenantPreApprovals),
 	tenantReportSchedules: many(tenantReportSchedule),
 	apiKeys: many(apiKeys),
+	tenantPlanStatuses: many(tenantPlanStatus),
 	notificationRecipientOptouts: many(notificationRecipientOptouts),
 	entityCriticalities: many(entityCriticality),
 }));
@@ -343,6 +344,13 @@ export const apiKeysRelations = relations(apiKeys, ({one}) => ({
 		fields: [apiKeys.revokedBy],
 		references: [users.id],
 		relationName: "apiKeys_revokedBy_users_id"
+	}),
+}));
+
+export const tenantPlanStatusRelations = relations(tenantPlanStatus, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tenantPlanStatus.tenantId],
+		references: [tenants.id]
 	}),
 }));
 
