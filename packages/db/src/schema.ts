@@ -9,7 +9,7 @@
 // database — which means an edit here that looks correct is strictly worse than
 // no edit at all.
 
-import { pgTable, index, pgPolicy, check, bigserial, uuid, timestamp, text, jsonb, smallint, integer, foreignKey, unique, numeric, uniqueIndex, primaryKey } from "drizzle-orm/pg-core"
+import { pgTable, index, pgPolicy, check, bigserial, uuid, timestamp, text, jsonb, smallint, integer, foreignKey, unique, numeric, boolean, uniqueIndex, primaryKey } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 import { bytea, citext } from "./types";
 
@@ -452,6 +452,27 @@ export const entityMerges = pgTable("entity_merges", {
 	check("entity_merges_actor_type_check", sql`actor_type = ANY (ARRAY['human'::text, 'system'::text])`),
 ]);
 
+export const weeklyReports = pgTable("weekly_reports", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	windowStart: timestamp("window_start", { withTimezone: true, mode: 'string' }).notNull(),
+	windowEnd: timestamp("window_end", { withTimezone: true, mode: 'string' }).notNull(),
+	headline: text().notNull(),
+	oneImprovement: text("one_improvement"),
+	isQuiet: boolean("is_quiet").default(false).notNull(),
+	data: jsonb().notNull(),
+	generatedAt: timestamp("generated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	emailedAt: timestamp("emailed_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("weekly_reports_tenant_generated_idx").using("btree", table.tenantId.asc().nullsLast().op("timestamptz_ops"), table.generatedAt.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "weekly_reports_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+]);
+
 export const llmUsage = pgTable("llm_usage", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	tenantId: uuid("tenant_id").notNull(),
@@ -593,6 +614,21 @@ export const tenantPreApprovals = pgTable("tenant_pre_approvals", {
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 	check("tenant_pre_approvals_playbook_check", sql`playbook = ANY (ARRAY['disable_user'::text, 'revoke_sessions'::text, 'delete_inbox_rule'::text, 'block_ip'::text, 'force_password_reset'::text, 'isolate_device'::text])`),
 	check("tenant_pre_approvals_no_destructive_playbooks", sql`playbook <> ALL (ARRAY['disable_user'::text, 'isolate_device'::text, 'force_password_reset'::text])`),
+]);
+
+export const tenantReportSchedule = pgTable("tenant_report_schedule", {
+	tenantId: uuid("tenant_id").primaryKey().notNull(),
+	dayOfWeek: smallint("day_of_week").default(1).notNull(),
+	enabled: boolean().default(true).notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tenant_report_schedule_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("tenant_report_schedule_day_of_week_check", sql`(day_of_week >= 0) AND (day_of_week <= 6)`),
 ]);
 
 export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {

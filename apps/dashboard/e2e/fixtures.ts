@@ -124,6 +124,21 @@ export async function auditActionsFor(tenantId: string, subjectId: string): Prom
   );
 }
 
+/** P6-07: a weekly report row, seeded directly so a read_only viewer's
+ * page (which cannot itself call POST /reports/weekly) has something
+ * real to render. */
+export async function seedWeeklyReport(tenantId: string, headline: string, oneImprovement: string | null): Promise<void> {
+  await asAdmin(
+    (c) =>
+      c.query(
+        `INSERT INTO weekly_reports (tenant_id, window_start, window_end, headline, one_improvement, is_quiet, data)
+         VALUES ($1, now() - interval '7 days', now(), $2, $3, $4, $5::jsonb)`,
+        [tenantId, headline, oneImprovement, oneImprovement === null, JSON.stringify({ totalCases: 0, bySeverity: {}, actionsByStatus: {}, entitiesAffected: 0, topCase: null })],
+      ),
+    tenantId,
+  );
+}
+
 /** Tenants cascade-delete memberships, but `users` is a global table with
  * no tenant_id — left behind otherwise. Deliberately does not close the
  * shared `pool` — several spec files load this same module within one

@@ -9,6 +9,8 @@
 import pg from 'pg';
 import { createClient } from 'redis';
 import { buildApp } from './app.js';
+import { startWeeklyReportScheduler } from './weekly-report-scheduler.js';
+import { resendConfigFromEnv } from './weekly-report-email.js';
 
 async function main(): Promise<void> {
   const pool = new pg.Pool({
@@ -29,7 +31,13 @@ async function main(): Promise<void> {
   await app.listen({ port, host: '0.0.0.0' });
   app.log.info(`@sentinel/api listening on :${port}`);
 
+  // P6-07 AC1: the weekly report's own schedule — see this file's own
+  // doc comment in weekly-report-scheduler.ts for why an hourly
+  // in-process timer, not an external cron.
+  const stopWeeklyReportScheduler = startWeeklyReportScheduler(pool, resendConfigFromEnv(), app.log);
+
   async function shutdown(): Promise<void> {
+    stopWeeklyReportScheduler();
     await app.close();
     await redis.quit();
     await pool.end();
