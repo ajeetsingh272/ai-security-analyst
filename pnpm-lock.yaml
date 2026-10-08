@@ -93,6 +93,9 @@ importers:
       '@sentinel/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sentinel/playbooks':
+        specifier: workspace:*
+        version: link:../../packages/playbooks
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
@@ -235,6 +238,15 @@ importers:
       '@opentelemetry/sdk-trace-node':
         specifier: ^2.11.0
         version: 2.11.0(@opentelemetry/api@1.9.1)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
+
+  packages/playbooks:
+    devDependencies:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

@@ -95,4 +95,49 @@ export class ActionsRepository extends TenantScopedRepository {
       return true;
     });
   }
+
+  /** P5-05: approved -> executing, guarded the same way approve() is —
+   * only an action genuinely in `approved` can start executing, so a
+   * duplicate trigger (e.g. a retried request) cannot start two
+   * concurrent executions of the same action. */
+  async markExecuting(actionId: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(`UPDATE actions SET status = 'executing' WHERE id = $1 AND status = 'approved'`, [actionId]);
+      return result.rowCount === 1;
+    });
+  }
+
+  /** executing -> succeeded, with the "before and after" audit entry
+   * AC5 asks for (approve()'s own approval_granted write is the
+   * "before"; this is the "after"). */
+  async markSucceeded(actionId: string): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(`UPDATE actions SET status = 'succeeded', executed_at = now() WHERE id = $1`, [actionId]);
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'system',
+        actorId: 'sentinel-response',
+        action: 'action_completed',
+        subjectType: 'action',
+        subjectId: actionId,
+      });
+    });
+  }
+
+  /** executing -> failed. AC4: "a recorded, recoverable state with
+   * explicit manual steps" — `manualSteps` and `error` both land in
+   * the action's own row (queryable without digging through the audit
+   * log) AND in the audit entry's payload (the permanent record). */
+  async markFailed(actionId: string, error: string, manualSteps: string): Promise<void> {
+    await this.withTransaction(async (client) => {
+      await client.query(`UPDATE actions SET status = 'failed', error = $2 WHERE id = $1`, [actionId, error]);
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'system',
+        actorId: 'sentinel-response',
+        action: 'action_failed',
+        subjectType: 'action',
+        subjectId: actionId,
+        payload: { error, manual_steps: manualSteps },
+      });
+    });
+  }
 }

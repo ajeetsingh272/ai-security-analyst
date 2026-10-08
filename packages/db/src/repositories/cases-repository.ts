@@ -191,6 +191,28 @@ export class CasesRepository extends TenantScopedRepository {
     });
   }
 
+  /**
+   * P5-05 AC4/T4: "partial failure returns the case to
+   * awaiting_approval" — a playbook execution that fails partway
+   * writes this transition so a human sees the case needs their
+   * attention again, rather than it silently sitting wherever its
+   * last successful state happened to be. Mirrors recordAiDismissal's
+   * own "read current to_state, write one transition" shape.
+   */
+  async returnToAwaitingApproval(caseId: string, reason: string): Promise<void> {
+    await this.withTransaction(async (client) => {
+      const current = await client.query<{ to_state: string | null }>(
+        'SELECT to_state FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1',
+        [caseId],
+      );
+      await client.query(
+        `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+         VALUES ($1, $2, $3, 'awaiting_approval', 'system', 'sentinel-response', $4)`,
+        [this.tenantId, caseId, current.rows[0]?.to_state ?? null, reason],
+      );
+    });
+  }
+
   /** The current to_state of a case, derived the same way
    * services/correlate/internal/lifecycle.CurrentState is: the most
    * recently written case_transitions row, nothing stored

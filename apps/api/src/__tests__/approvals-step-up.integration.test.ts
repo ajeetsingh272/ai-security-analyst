@@ -134,11 +134,17 @@ describe('step-up authentication for destructive playbooks', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true, alreadyDecided: false });
 
-    const { rows } = await asAdmin((c) => c.query('SELECT status FROM actions WHERE id = $1', [actionId]), tenantId);
-    expect(rows[0]!.status).toBe('approved');
-
     const audit = await asAdmin((c) => c.query(`SELECT payload FROM audit_log WHERE tenant_id = $1 AND action = 'approval_granted' AND subject_id = $2`, [tenantId, actionId]), tenantId);
     expect(audit.rows[0]!.payload).toMatchObject({ step_up_verified: true });
+
+    // P5-05: approval (just asserted above, via the audit entry) is
+    // immediately followed by execution in the same request — this
+    // fixture's empty `{}` target can never execute for real (see
+    // approvals-execution.integration.test.ts), so the final status is
+    // 'failed', not 'approved'. 'approved' is a transient intermediate
+    // state now, not an end state.
+    const { rows } = await asAdmin((c) => c.query('SELECT status FROM actions WHERE id = $1', [actionId]), tenantId);
+    expect(rows[0]!.status).toBe('failed');
   });
 
   it('a non-destructive playbook approves without any step-up password at all, unaffected by this ticket', async () => {
