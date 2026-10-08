@@ -15,8 +15,19 @@ export interface Session {
   userId: string;
   role: Role;
   /** Present only for an MSP user acting on a client tenant through a
-   * msp_links grant, rather than acting on their own tenant directly. */
-  actingViaMspTenantId?: string;
+   * msp_links grant, rather than acting on their own tenant directly.
+   * Explicitly `| undefined` (not just optional) so `switch-tenant`'s
+   * "back to home" path can clear it via SessionStore.update's merge
+   * under `exactOptionalPropertyTypes`. */
+  actingViaMspTenantId?: string | undefined;
+  /** The tenant this session originally signed into — set at sign-in,
+   * never changed afterward. Absent is equivalent to "equal to tenantId"
+   * (every session created before P6-01 had no notion of switching, so
+   * that's the correct default rather than a migration). This is what
+   * `POST /auth/switch-tenant` (P6-01) checks `canActAsTenant` against and
+   * switches back to, since `tenantId` itself gets overwritten while
+   * acting on a client. */
+  homeTenantId?: string;
 }
 
 declare module 'fastify' {

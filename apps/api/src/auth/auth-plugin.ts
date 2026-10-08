@@ -27,6 +27,7 @@ import { verifyPassword, DUMMY_PASSWORD_HASH } from './password.js';
 import { SessionStore } from './session-store.js';
 import { isRateLimited, recordFailedSignIn, clearFailedSignIns } from './rate-limiter.js';
 import type { Role } from './session.js';
+import { canActAsTenant } from './msp-access.js';
 
 export interface AuthPluginOptions {
   pool: Pool;
@@ -168,6 +169,7 @@ async function authPluginImpl(
 
     const sessionId = await sessions.create({
       tenantId: membership.tenant_id,
+      homeTenantId: membership.tenant_id,
       userId: user.id,
       role: membership.role,
     });
@@ -194,6 +196,93 @@ async function authPluginImpl(
     }
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return reply.code(200).send({ ok: true });
+  });
+
+  // P6-01: the dashboard shell's one source of truth for "who is signed in,
+  // as which tenant, with which role" — needed to render role-filtered nav
+  // server-side and to refuse an unauthorised route before any client code
+  // runs. Not public (tenant-context's allowlist doesn't include it), so a
+  // request with no session already gets 401 before this handler runs.
+  fastify.get('/auth/me', async (request, reply) => {
+    const session = request.session;
+    if (!session) {
+      // Unreachable in production (tenant-context rejects first), but the
+      // type is `Session | undefined` and this keeps the handler honest
+      // about it rather than asserting with `!`.
+      return reply.code(401).send({ error: 'unauthenticated' });
+    }
+    const result = await pool.query<{ email: string | null; display_name: string | null }>(
+      'SELECT email, display_name FROM users WHERE id = $1',
+      [session.userId],
+    );
+    const tenantResult = await pool.query<{ name: string }>(
+      'SELECT name FROM tenants WHERE id = $1',
+      [session.tenantId],
+    );
+    const isActingAsClient = session.homeTenantId != null && session.homeTenantId !== session.tenantId;
+    const homeTenantResult = isActingAsClient
+      ? await pool.query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [session.homeTenantId])
+      : undefined;
+    return reply.code(200).send({
+      userId: session.userId,
+      email: result.rows[0]?.email ?? null,
+      displayName: result.rows[0]?.display_name ?? null,
+      tenantId: session.tenantId,
+      tenantName: tenantResult.rows[0]?.name ?? null,
+      role: session.role,
+      actingViaMspTenantId: session.actingViaMspTenantId ?? null,
+      isActingAsClient,
+      homeTenantId: isActingAsClient ? session.homeTenantId : null,
+      homeTenantName: homeTenantResult?.rows[0]?.name ?? null,
+    });
+  });
+
+  // P6-01's tenant switcher, backed by the real cross-tenant check P0-09
+  // already established (canActAsTenant) but never wired to an HTTP route
+  // before this — the full MSP console (P6-06) builds its client-ranking
+  // view on top of this, it doesn't reinvent the switch itself.
+  fastify.post<{ Body: { targetTenantId: string | null } }>('/auth/switch-tenant', async (request, reply) => {
+    const session = request.session;
+    if (!session) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const sessionId = request.cookies[SESSION_COOKIE];
+    if (!sessionId) return reply.code(401).send({ error: 'unauthenticated' });
+
+    const homeTenantId = session.homeTenantId ?? session.tenantId;
+    const targetTenantId = request.body?.targetTenantId ?? homeTenantId;
+
+    if (targetTenantId === homeTenantId) {
+      // Switching back to the user's own tenant is always allowed — no
+      // link check needed, and this is also how a client gives up acting
+      // on a linked tenant.
+      const homeMembership = await pool.query<MembershipRow>(
+        'SELECT tenant_id, role FROM memberships WHERE user_id = $1 AND tenant_id = $2',
+        [session.userId, homeTenantId],
+      );
+      const role = homeMembership.rows[0]?.role ?? session.role;
+      await sessions.update(sessionId, { tenantId: homeTenantId, role, actingViaMspTenantId: undefined });
+      await auditAuthEvent(pool, homeTenantId, session.userId, 'auth.tenant_switch', { to: homeTenantId, home: true });
+      return reply.code(200).send({ ok: true, tenantId: homeTenantId });
+    }
+
+    const allowed = await withTenantContext(homeTenantId, () => canActAsTenant(pool, homeTenantId, targetTenantId));
+    if (!allowed) {
+      return reply.code(403).send({
+        error: 'not_linked',
+        message: 'Your tenant has no active link to that client tenant.',
+      });
+    }
+
+    // No membership row exists in the client tenant for an MSP user acting
+    // through a link — there is nothing to grant a role FROM there, so this
+    // caps access to read_only rather than presuming the user's home-tenant
+    // role (owner at the MSP doesn't imply owner at every linked client).
+    // P6-06 may introduce a per-link granted role; until it does, read_only
+    // is the honest default, not a placeholder silently treated as more.
+    const clientRole: Role = 'read_only';
+    await sessions.update(sessionId, { tenantId: targetTenantId, role: clientRole, actingViaMspTenantId: targetTenantId });
+    await auditAuthEvent(pool, homeTenantId, session.userId, 'auth.tenant_switch', { to: targetTenantId, home: false });
+    return reply.code(200).send({ ok: true, tenantId: targetTenantId, role: clientRole });
   });
 
   // Populates request.session from the cookie, for the tenant-context

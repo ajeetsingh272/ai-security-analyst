@@ -19,4 +19,16 @@ export type { EmptyStateProps } from './EmptyState.js';
 export { ErrorState } from './ErrorState.js';
 export type { ErrorStateProps } from './ErrorState.js';
 
+export { AppShell } from './AppShell.js';
+export type { AppShellProps } from './AppShell.js';
+
+export { NavLink } from './NavLink.js';
+export type { NavLinkProps } from './NavLink.js';
+
+export { ThemeToggleButton } from './ThemeToggleButton.js';
+export type { ThemeToggleButtonProps } from './ThemeToggleButton.js';
+
+export { TenantSwitcher } from './TenantSwitcher.js';
+export type { TenantSwitcherProps, TenantOption } from './TenantSwitcher.js';
+
 export { cn } from './lib/cn.js';
