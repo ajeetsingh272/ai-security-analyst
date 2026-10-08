@@ -8,17 +8,20 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
+    "build:mitre-glossary": "node scripts/build-mitre-glossary.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run -c vitest.integration.config.ts --passWithNoTests"
   },
   "dependencies": {
+    "@clickhouse/client": "^1.24.0",
     "@fastify/cookie": "^11.1.2",
     "@sentinel/approval-tokens": "workspace:*",
     "@sentinel/db": "workspace:*",
     "@sentinel/notifications": "workspace:*",
     "@sentinel/playbooks": "workspace:*",
+    "@sentinel/schema": "workspace:*",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.0",
     "pg": "^8.13.1",
@@ -29,6 +32,7 @@
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "yaml": "^2.9.1"
   }
 }

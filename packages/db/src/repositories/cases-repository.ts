@@ -39,6 +39,9 @@ export interface CaseSignalRow {
   entityId: string;
   severity: string;
   detectedAt: string;
+  /** P6-03: the case detail screen's own "MITRE technique, plain-
+   * English explanation" panel reads this per signal. */
+  mitreIds: string[];
 }
 
 export interface CaseTransitionRow {
@@ -427,8 +430,9 @@ export class CasesRepository extends TenantScopedRepository {
         entity_id: string;
         severity: string;
         detected_at: string;
+        mitre_ids: string[] | null;
       }>(
-        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at
+        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at, mitre_ids
            FROM case_signals WHERE case_id = $1 ORDER BY detected_at DESC LIMIT $2`,
         [caseId, limit + 1],
       );
@@ -453,6 +457,10 @@ export class CasesRepository extends TenantScopedRepository {
           entityId: r.entity_id,
           severity: r.severity,
           detectedAt: r.detected_at,
+          // The column's own default is `['']`, for a row written
+          // before P6-03 ever cared about this field — filtered out
+          // rather than surfaced as a fake empty "technique."
+          mitreIds: (r.mitre_ids ?? []).filter((id) => id.length > 0),
         })),
         transitions: transitionResult.rows.map((r) => ({
           fromState: r.from_state,

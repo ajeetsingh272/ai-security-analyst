@@ -68,6 +68,46 @@ export class ActionsRepository extends TenantScopedRepository {
     });
   }
 
+  /** P6-03: every action ever proposed for a case, newest first — the
+   * case detail screen's own "recommended actions, with an approval
+   * control" panel. Deliberately not filtered to `status = 'proposed'`
+   * — an already-approved or already-failed action is still something
+   * the screen needs to show (so the approval control can correctly
+   * NOT be offered for it again), not just the ones still awaiting a
+   * decision. */
+  async listForCase(caseId: string): Promise<ActionRow[]> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{
+        id: string;
+        tenant_id: string;
+        case_id: string;
+        playbook: string;
+        target: unknown;
+        blast_radius: string;
+        status: string;
+        error: string | null;
+        created_at: string;
+        executed_at: string | null;
+      }>(
+        `SELECT id, tenant_id, case_id, playbook, target, blast_radius, status, error, created_at, executed_at
+         FROM actions WHERE case_id = $1 ORDER BY created_at DESC`,
+        [caseId],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        caseId: r.case_id,
+        playbook: r.playbook,
+        target: r.target,
+        blastRadius: r.blast_radius,
+        status: r.status,
+        error: r.error,
+        createdAt: r.created_at,
+        executedAt: r.executed_at,
+      }));
+    });
+  }
+
   /** Returns null both when the id does not exist AND when it belongs
    * to a different tenant (RLS filters it out identically either way) —
    * a caller cannot distinguish "wrong id" from "someone else's action"
