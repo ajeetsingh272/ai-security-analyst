@@ -42,8 +42,10 @@ none of them has to be taken on trust:
 | `investigation_transcripts` | NOT NULL | yes | yes | `tenant_isolation` |
 | `llm_usage` | NOT NULL | yes | yes | `tenant_isolation` |
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
+| `notification_deliveries` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -816,6 +818,48 @@ part of the control and not merely a description of it.
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
 
+### `notification_deliveries`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `dedupe_key` | `text` | no | — |
+| `channel` | `text` | no | — |
+| `attempt` | `integer` | no | `1` |
+| `status` | `text` | no | — |
+| `content` | `jsonb` | yes | — |
+| `error` | `text` | yes | — |
+| `created_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `notification_deliveries_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `notification_deliveries_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `notification_deliveries_channel_check` — `CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text])))`
+- `notification_deliveries_status_check` — `CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))`
+
+**Indexes**
+
+- `idx_notification_deliveries_dedupe` — `CREATE INDEX idx_notification_deliveries_dedupe ON public.notification_deliveries USING btree (tenant_id, dedupe_key)`
+- `idx_notification_deliveries_sent_once` — `CREATE UNIQUE INDEX idx_notification_deliveries_sent_once ON public.notification_deliveries USING btree (tenant_id, dedupe_key, channel) WHERE (status = 'sent'::text)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT
+
 ### `schema_migrations`
 
 | Column | Type | Null | Default |
@@ -906,6 +950,32 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `tenant_notification_preferences`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `channel_order` | `text[]` | no | `ARRAY['whatsapp'::text, 'slack'::text, 'email'::text, 'dashboard_banner'::text]` |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tenant_notification_preferences_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_notification_preferences_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 
 ### `tenants`
 

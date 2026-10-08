@@ -1,0 +1,28 @@
+{
+  "name": "@sentinel/notifications",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "P5-01: notification channel abstraction with ordered failover, retry and delivery tracking",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run -c vitest.integration.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@sentinel/observability": "workspace:*"
+  },
+  "devDependencies": {
+    "@sentinel/db": "workspace:*",
+    "@types/pg": "^8.11.10",
+    "pg": "^8.13.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

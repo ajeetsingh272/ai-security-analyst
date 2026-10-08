@@ -162,6 +162,28 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
 
+  packages/notifications:
+    dependencies:
+      '@sentinel/observability':
+        specifier: workspace:*
+        version: link:../observability
+    devDependencies:
+      '@sentinel/db':
+        specifier: workspace:*
+        version: link:../db
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.23.1
+      pg:
+        specifier: ^8.13.1
+        version: 8.23.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@30.1.2)
+
   packages/observability:
     dependencies:
       '@opentelemetry/api':
