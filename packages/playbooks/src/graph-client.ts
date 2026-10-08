@@ -17,13 +17,26 @@
  */
 import type { GraphClient, GraphResponse } from './types.js';
 
-const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
+const DEFAULT_GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
 
 export class FetchGraphClient implements GraphClient {
-  constructor(private readonly accessToken: string) {}
+  private readonly baseUrl: string;
+
+  /** `baseUrl` overridable — P5-10's own end-to-end scenario test is
+   * the first caller that needs this: a local mock speaking Graph's
+   * real documented contract (mirroring mock-m365-token-endpoint.ts's
+   * own "closest honest substitute" pattern), since no real M365 test
+   * tenant exists in this environment to execute `revoke_sessions`/
+   * `delete_inbox_rule` against for real. */
+  constructor(
+    private readonly accessToken: string,
+    baseUrl?: string,
+  ) {
+    this.baseUrl = baseUrl ?? DEFAULT_GRAPH_BASE_URL;
+  }
 
   private async request(method: string, path: string, body?: unknown): Promise<GraphResponse> {
-    const response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+    const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.accessToken}`,

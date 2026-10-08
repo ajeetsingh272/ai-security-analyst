@@ -43,7 +43,10 @@ export async function executeApprovedAction(pool: Pool, tenantId: string, action
   if (!(await actions.markExecuting(action.id))) return;
 
   const accessToken = await getM365AccessToken(pool, tenantId);
-  const graph = accessToken ? new FetchGraphClient(accessToken) : unavailableGraphClient;
+  // GRAPH_API_BASE_URL overrides the real Microsoft Graph host —
+  // unset in every real deployment; P5-10's own end-to-end scenario
+  // test is the one caller that sets it, to point at a local mock.
+  const graph = accessToken ? new FetchGraphClient(accessToken, process.env['GRAPH_API_BASE_URL']) : unavailableGraphClient;
   const execResult = await executePlaybook(action.playbook, graph, action.target as PlaybookTarget);
 
   if (execResult.kind === 'executed' && execResult.outcome.ok) {
