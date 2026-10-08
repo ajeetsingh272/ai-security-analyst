@@ -70,29 +70,6 @@ export const memberships = pgTable("memberships", {
 	check("memberships_role_check", sql`role = ANY (ARRAY['owner'::text, 'admin'::text, 'analyst'::text, 'read_only'::text])`),
 ]);
 
-export const connectors = pgTable("connectors", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	tenantId: uuid("tenant_id").notNull(),
-	kind: text().notNull(),
-	status: text().default('pending').notNull(),
-	credentials: bytea("credentials"),
-	dekId: text("dek_id"),
-	lastError: text("last_error"),
-	lastSyncAt: timestamp("last_sync_at", { withTimezone: true, mode: 'string' }),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	foreignKey({
-			columns: [table.tenantId],
-			foreignColumns: [tenants.id],
-			name: "connectors_tenant_id_fkey"
-		}).onDelete("cascade"),
-	unique("connectors_id_tenant_key").on(table.id, table.tenantId),
-	unique("connectors_tenant_id_kind_key").on(table.tenantId, table.kind),
-	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
-	check("connectors_kind_check", sql`kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text])`),
-	check("connectors_status_check", sql`status = ANY (ARRAY['pending'::text, 'healthy'::text, 'degraded'::text, 'revoked'::text, 'error'::text])`),
-]);
-
 export const caseTransitions = pgTable("case_transitions", {
 	id: bigserial({ mode: "bigint" }).primaryKey().notNull(),
 	tenantId: uuid("tenant_id").notNull(),
@@ -267,6 +244,29 @@ export const cases = pgTable("cases", {
 		}).onDelete("cascade"),
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 	check("cases_severity_check", sql`severity = ANY (ARRAY['critical'::text, 'high'::text, 'medium'::text, 'low'::text, 'info'::text])`),
+]);
+
+export const connectors = pgTable("connectors", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	kind: text().notNull(),
+	status: text().default('pending').notNull(),
+	credentials: bytea("credentials"),
+	dekId: text("dek_id"),
+	lastError: text("last_error"),
+	lastSyncAt: timestamp("last_sync_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "connectors_tenant_id_fkey"
+		}).onDelete("cascade"),
+	unique("connectors_id_tenant_key").on(table.id, table.tenantId),
+	unique("connectors_tenant_id_kind_key").on(table.tenantId, table.kind),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("connectors_status_check", sql`status = ANY (ARRAY['pending'::text, 'healthy'::text, 'degraded'::text, 'revoked'::text, 'error'::text])`),
+	check("connectors_kind_check", sql`kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text, 'slack'::text])`),
 ]);
 
 export const hotfixRules = pgTable("hotfix_rules", {

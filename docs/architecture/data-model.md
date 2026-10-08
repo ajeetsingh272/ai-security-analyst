@@ -451,7 +451,7 @@ part of the control and not merely a description of it.
 
 **Checks**
 
-- `connectors_kind_check` — `CHECK ((kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text])))`
+- `connectors_kind_check` — `CHECK ((kind = ANY (ARRAY['m365'::text, 'google_workspace'::text, 'aws'::text, 'azure'::text, 'syslog'::text, 'slack'::text])))`
 - `connectors_status_check` — `CHECK ((status = ANY (ARRAY['pending'::text, 'healthy'::text, 'degraded'::text, 'revoked'::text, 'error'::text])))`
 
 **Row-level security**
