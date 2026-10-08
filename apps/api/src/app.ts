@@ -26,8 +26,11 @@ import { dismissalsRoutes } from './routes/dismissals.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import { approvalsRoutes, approvalsConfigFromEnv, type ApprovalsConfig } from './routes/approvals.js';
 import { preApprovalsRoutes } from './routes/pre-approvals.js';
+import { slackConnectorRoutes, slackOAuthConfigFromEnv } from './routes/slack-connector.js';
+import { slackWebhookRoutes, slackWebhookConfigFromEnv, type SlackWebhookConfig } from './routes/slack-webhook.js';
 import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
+import type { SlackOAuthConfig } from './connectors/slack-oauth.js';
 
 export interface BuildAppOptions {
   pool: Pool;
@@ -54,6 +57,15 @@ export interface BuildAppOptions {
    * (undefined if unset, which routes/approvals.js handles with a 503,
    * not a crash). Overridable so tests can use a fixed secret. */
   approvalsConfig?: ApprovalsConfig | undefined;
+  /** Defaults to reading SLACK_CLIENT_ID/SECRET/REDIRECT_URI from the
+   * environment (undefined if unset, which routes/slack-connector.js
+   * handles with a 503, not a crash). Overridable so tests can point
+   * it at a local mock OAuth endpoint instead of real Slack. */
+  slackOAuthConfig?: SlackOAuthConfig | undefined;
+  /** Defaults to reading SLACK_SIGNING_SECRET from the environment
+   * (undefined if unset, which routes/slack-webhook.js handles with a
+   * 503, not a crash). Overridable so tests can use a fixed secret. */
+  slackWebhookConfig?: SlackWebhookConfig | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -65,6 +77,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
     approvalsConfig = approvalsConfigFromEnv(),
+    slackOAuthConfig = slackOAuthConfigFromEnv(),
+    slackWebhookConfig = slackWebhookConfigFromEnv(),
   } = options;
 
   // find-my-way's default maxParamLength (100) is sized for an ordinary
@@ -80,7 +94,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(authPlugin, { pool, redis, cookieSecure });
   await app.register(tenantContextPlugin, {
-    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token'],
+    publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token', '/webhooks/slack/interactions'],
   });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
@@ -90,6 +104,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
   await app.register(preApprovalsRoutes, { pool });
+  await app.register(slackConnectorRoutes, { pool, redis, oauthConfig: slackOAuthConfig });
+  await app.register(slackWebhookRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), tokenSecret: approvalsConfig?.tokenSecret, config: slackWebhookConfig });
 
   return app;
 }

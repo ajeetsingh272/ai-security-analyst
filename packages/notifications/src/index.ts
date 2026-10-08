@@ -19,3 +19,4 @@ export {
   type WhatsAppConfig,
   type OptoutChecker,
 } from './channels/whatsapp-channel.js';
+export { buildSlackChannel, type SlackMessageContent, type SlackConfig, type SlackBlock } from './channels/slack-channel.js';

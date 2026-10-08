@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, connectors, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, baselineCursors, entityMerges, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -14,7 +14,6 @@ export const membershipsRelations = relations(memberships, ({one}) => ({
 
 export const tenantsRelations = relations(tenants, ({many}) => ({
 	memberships: many(memberships),
-	connectors: many(connectors),
 	caseTransitions: many(caseTransitions),
 	actions: many(actions),
 	approvalNonces: many(approvalNonces),
@@ -27,6 +26,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	suppressions: many(suppressions),
 	tenantDeks: many(tenantDeks),
 	cases: many(cases),
+	connectors: many(connectors),
 	entities: many(entities),
 	entityAliases: many(entityAliases),
 	caseSignals: many(caseSignals),
@@ -62,14 +62,6 @@ export const usersRelations = relations(users, ({many}) => ({
 	tenantPreApprovals_revokedBy: many(tenantPreApprovals, {
 		relationName: "tenantPreApprovals_revokedBy_users_id"
 	}),
-}));
-
-export const connectorsRelations = relations(connectors, ({one, many}) => ({
-	tenant: one(tenants, {
-		fields: [connectors.tenantId],
-		references: [tenants.id]
-	}),
-	connectorCursors: many(connectorCursors),
 }));
 
 export const caseTransitionsRelations = relations(caseTransitions, ({one}) => ({
@@ -154,6 +146,14 @@ export const tenantDeksRelations = relations(tenantDeks, ({one}) => ({
 		fields: [tenantDeks.tenantId],
 		references: [tenants.id]
 	}),
+}));
+
+export const connectorsRelations = relations(connectors, ({one, many}) => ({
+	tenant: one(tenants, {
+		fields: [connectors.tenantId],
+		references: [tenants.id]
+	}),
+	connectorCursors: many(connectorCursors),
 }));
 
 export const hotfixRulesRelations = relations(hotfixRules, ({one}) => ({
