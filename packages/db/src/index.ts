@@ -104,6 +104,15 @@ export {
   type CreateWeeklyReportInput,
   type ReportSchedule,
 } from './repositories/weekly-report-repository.js';
+export {
+  ApiKeysRepository,
+  findApiKeyByHash,
+  touchApiKeyLastUsed,
+  apiKeyScopesToRole,
+  type ApiKeyRow,
+  type ApiKeyScope,
+  type CreateApiKeyInput,
+} from './repositories/api-keys-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {

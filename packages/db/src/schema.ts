@@ -237,13 +237,10 @@ export const cases = pgTable("cases", {
 }, (table) => [
 	index("cases_entities_idx").using("gin", table.entityIds.asc().nullsLast().op("array_ops")),
 	index("cases_tenant_created_idx").using("btree", table.tenantId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
-	// drizzle-kit's introspection mangles a multi-line CASE expression
-	// containing string literals into broken, truncated `sql` template
-	// fragments (confirmed against psql's own \d cases output, which
-	// shows the real, complete expression) — hand-corrected the same way
-	// 0023's own index definition reads, not a schema change of its own.
-	// Re-triggered by every db:pull since introspection re-runs fresh
-	// each time; re-apply this same fix after any future pull too.
+	// drizzle-kit's introspection mangles this multi-line CASE expression
+	// into a broken, truncated sql fragment on every db:pull — re-apply
+	// this exact hand-correction after any future pull (recurring bug,
+	// documented at every prior occurrence: P6-02, P6-03, P6-05, P6-07).
 	index("cases_tenant_severity_rank_score_idx").using(
 		"btree",
 		table.tenantId.asc().nullsLast().op("uuid_ops"),
@@ -629,6 +626,45 @@ export const tenantReportSchedule = pgTable("tenant_report_schedule", {
 		}).onDelete("cascade"),
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 	check("tenant_report_schedule_day_of_week_check", sql`(day_of_week >= 0) AND (day_of_week <= 6)`),
+]);
+
+export const apiKeys = pgTable("api_keys", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	name: text().notNull(),
+	keyPrefix: text("key_prefix").notNull(),
+	keyHash: text("key_hash").notNull(),
+	// Hand-fixed: drizzle-kit's introspection also mangles an array
+	// column's `ARRAY['read'::text]` default into a broken string
+	// literal on db:pull — same category of bug as the CASE expression
+	// above, re-apply after any future pull.
+	scopes: text().array().default(['read']).notNull(),
+	createdBy: uuid("created_by").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: 'string' }),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+	revokedBy: uuid("revoked_by"),
+}, (table) => [
+	index("idx_api_keys_tenant").using("btree", table.tenantId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "api_keys_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.createdBy],
+			foreignColumns: [users.id],
+			name: "api_keys_created_by_fkey"
+		}),
+	foreignKey({
+			columns: [table.revokedBy],
+			foreignColumns: [users.id],
+			name: "api_keys_revoked_by_fkey"
+		}),
+	unique("api_keys_key_hash_key").on(table.keyHash),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("api_keys_name_check", sql`length(TRIM(BOTH FROM name)) > 0`),
+	check("api_keys_scopes_check", sql`(scopes <@ ARRAY['read'::text, 'write'::text]) AND (array_length(scopes, 1) > 0)`),
 ]);
 
 export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {

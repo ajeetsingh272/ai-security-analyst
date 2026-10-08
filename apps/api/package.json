@@ -17,6 +17,7 @@
   "dependencies": {
     "@clickhouse/client": "^1.24.0",
     "@fastify/cookie": "^11.1.2",
+    "@fastify/swagger": "^9.9.1",
     "@sentinel/approval-tokens": "workspace:*",
     "@sentinel/db": "workspace:*",
     "@sentinel/notifications": "workspace:*",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@sentinel/observability": "workspace:*",
     "@types/pg": "^8.11.10",
+    "ajv": "^8.20.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",
