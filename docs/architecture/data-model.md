@@ -44,10 +44,13 @@ none of them has to be taken on trust:
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `notification_deliveries` | NOT NULL | yes | yes | `tenant_isolation` |
 | `notification_recipient_optouts` | NOT NULL | yes | yes | `tenant_isolation` |
+| `scan_jobs` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_pre_approvals` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_report_schedule` | NOT NULL | yes | yes | `tenant_isolation` |
+| `weekly_reports` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -377,6 +380,14 @@ part of the control and not merely a description of it.
 
 - `cases_entities_idx` — `CREATE INDEX cases_entities_idx ON public.cases USING gin (entity_ids)`
 - `cases_tenant_created_idx` — `CREATE INDEX cases_tenant_created_idx ON public.cases USING btree (tenant_id, created_at DESC)`
+- `cases_tenant_severity_rank_score_idx` — `CREATE INDEX cases_tenant_severity_rank_score_idx ON public.cases USING btree (tenant_id, (
+CASE severity
+    WHEN 'critical'::text THEN 4
+    WHEN 'high'::text THEN 3
+    WHEN 'medium'::text THEN 2
+    WHEN 'low'::text THEN 1
+    ELSE 0
+END) DESC, score DESC)`
 
 **Row-level security**
 
@@ -893,6 +904,47 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: DELETE, INSERT, SELECT
 
+### `scan_jobs`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `status` | `text` | no | `'completed'::text` |
+| `window_start` | `timestamptz` | no | — |
+| `window_end` | `timestamptz` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `completed_at` | `timestamptz` | yes | — |
+| `error` | `text` | yes | — |
+
+**Primary key**
+
+- `scan_jobs_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `scan_jobs_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `scan_jobs_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `scan_jobs_status_check` — `CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))`
+
+**Indexes**
+
+- `scan_jobs_tenant_created_idx` — `CREATE INDEX scan_jobs_tenant_created_idx ON public.scan_jobs USING btree (tenant_id, created_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
 ### `schema_migrations`
 
 | Column | Type | Null | Default |
@@ -1051,6 +1103,37 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: INSERT, SELECT, UPDATE
 
+### `tenant_report_schedule`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `day_of_week` | `smallint` | no | `1` |
+| `enabled` | `boolean` | no | `true` |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tenant_report_schedule_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_report_schedule_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tenant_report_schedule_day_of_week_check` — `CHECK (((day_of_week >= 0) AND (day_of_week <= 6)))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
 ### `tenants`
 
 | Column | Type | Null | Default |
@@ -1097,3 +1180,40 @@ part of the control and not merely a description of it.
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `weekly_reports`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `window_start` | `timestamptz` | no | — |
+| `window_end` | `timestamptz` | no | — |
+| `headline` | `text` | no | — |
+| `one_improvement` | `text` | yes | — |
+| `is_quiet` | `boolean` | no | `false` |
+| `data` | `jsonb` | no | — |
+| `generated_at` | `timestamptz` | no | `now()` |
+| `emailed_at` | `timestamptz` | yes | — |
+
+**Primary key**
+
+- `weekly_reports_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `weekly_reports_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `weekly_reports_tenant_generated_idx` — `CREATE INDEX weekly_reports_tenant_generated_idx ON public.weekly_reports USING btree (tenant_id, generated_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE

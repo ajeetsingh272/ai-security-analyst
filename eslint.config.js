@@ -74,6 +74,9 @@ export default tseslint.config(
       // Schema tooling that ships with the package it serves, e.g.
       // packages/db/scripts/*.mjs — same role as the root scripts above.
       'packages/*/scripts/**/*.{js,mjs}',
+      // apps/api/scripts/build-mitre-glossary.mjs (P6-03) — same role,
+      // an app owning its own generator rather than a package.
+      'apps/*/scripts/**/*.{js,mjs}',
       'eslint.config.js',
     ],
     languageOptions: { globals: globals.node },

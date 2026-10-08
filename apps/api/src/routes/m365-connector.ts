@@ -21,10 +21,21 @@ export interface M365ConnectorRoutesOptions {
    * when this is unset, so the rest of this service functions normally
    * without it. */
   oauthConfig?: M365OAuthConfig | undefined;
+  /** P6-04: where the browser lands after Microsoft redirects back here
+   * — the dashboard's own origin, never this API's. Defaults to reading
+   * DASHBOARD_BASE_URL from the environment. */
+  dashboardBaseUrl?: string;
+}
+
+function callbackRedirectUrl(dashboardBaseUrl: string, outcome: 'connected' | 'error', reason?: string): string {
+  const url = new URL('/connectors', dashboardBaseUrl);
+  url.searchParams.set('m365', outcome);
+  if (reason) url.searchParams.set('reason', reason);
+  return url.toString();
 }
 
 async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365ConnectorRoutesOptions): Promise<void> {
-  const { pool, redis, oauthConfig } = options;
+  const { pool, redis, oauthConfig, dashboardBaseUrl = dashboardBaseUrlFromEnv() } = options;
   const stateStore = new OAuthStateStore(redis);
 
   function requireConfig(reply: { code: (n: number) => { send: (b: unknown) => unknown } }): M365OAuthConfig | undefined {
@@ -65,6 +76,21 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
 
     const session = request.session!; // requireRole already guarantees a session exists
     const { state, codeVerifier } = await stateStore.create({ tenantId: session.tenantId, userId: session.userId });
+
+    // P6-12: the onboarding funnel's own "started but maybe never
+    // finished" signal — only written once the config check above has
+    // passed (a 503 here means nothing actually started). Paired with
+    // 'connector.consent_granted' in the callback below; a tenant with
+    // the former but never the latter is this funnel's own concrete
+    // drop-off point.
+    await new AuditLogWriter(pool).insert({
+      actorType: 'human',
+      actorId: session.userId,
+      action: 'onboarding.connector_connect_started',
+      subjectType: 'connector',
+      subjectId: 'm365',
+    });
+
     const url = buildAuthorizeUrl(config, state, codeVerifier);
     return reply.redirect(url);
   });
@@ -78,11 +104,15 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
       const { code, state, error, error_description: errorDescription } = request.query;
       if (error) {
         // The admin declined consent, or Microsoft rejected the request —
-        // either way this is the ADMIN's outcome to see, not a 500.
-        return reply.code(400).send({ error: 'consent_declined', message: errorDescription ?? error });
+        // either way this is the ADMIN's outcome to see, not a 500. P6-04:
+        // redirected into the wizard, not returned as raw JSON, since a
+        // real browser following Microsoft's own redirect here has no way
+        // to read a JSON body.
+        fastify.log.info({ error, errorDescription }, 'm365 consent declined or rejected');
+        return reply.redirect(callbackRedirectUrl(dashboardBaseUrl, 'error', 'consent_declined'));
       }
       if (!code || !state) {
-        return reply.code(400).send({ error: 'invalid_callback', message: 'Missing code or state.' });
+        return reply.redirect(callbackRedirectUrl(dashboardBaseUrl, 'error', 'invalid_callback'));
       }
 
       const oauthState = await stateStore.consume(state);
@@ -90,7 +120,7 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
         // Expired (AC3's 10-minute TTL), already used, or forged — in
         // every case the right answer is "start the consent flow again,"
         // never "trust this anyway."
-        return reply.code(400).send({ error: 'invalid_or_expired_state' });
+        return reply.redirect(callbackRedirectUrl(dashboardBaseUrl, 'error', 'invalid_or_expired_state'));
       }
 
       let tokens;
@@ -98,7 +128,7 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
         tokens = await exchangeCodeForTokens(config, code, oauthState.codeVerifier);
       } catch (err) {
         fastify.log.error({ err }, 'm365 token exchange failed');
-        return reply.code(502).send({ error: 'token_exchange_failed' });
+        return reply.redirect(callbackRedirectUrl(dashboardBaseUrl, 'error', 'token_exchange_failed'));
       }
 
       const kms = requireKms(reply);
@@ -130,7 +160,7 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
         payload: { scope: tokens.scope },
       });
 
-      return reply.code(200).send({ ok: true, connector: 'm365', status: 'healthy' });
+      return reply.redirect(callbackRedirectUrl(dashboardBaseUrl, 'connected'));
     },
   );
 
@@ -176,4 +206,12 @@ export function m365OAuthConfigFromEnv(authorityBaseUrl?: string): M365OAuthConf
   const redirectUri = process.env['M365_REDIRECT_URI'];
   if (!clientId || !clientSecret || !redirectUri) return undefined;
   return { clientId, clientSecret, redirectUri, authorityBaseUrl };
+}
+
+/** P6-04: where the OAuth callback sends the browser once Microsoft
+ * redirects back here — always the dashboard app's own origin, never
+ * this API's. APP_BASE_URL already exists in .env.example (P0
+ * foundation) for exactly this purpose, just unused until now. */
+export function dashboardBaseUrlFromEnv(): string {
+  return process.env['APP_BASE_URL'] ?? 'http://localhost:3000';
 }

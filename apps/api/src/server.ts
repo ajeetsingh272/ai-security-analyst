@@ -9,6 +9,9 @@
 import pg from 'pg';
 import { createClient } from 'redis';
 import { buildApp } from './app.js';
+import { startWeeklyReportScheduler } from './weekly-report-scheduler.js';
+import { startPlanUsageSweep } from './plan-usage-sweep.js';
+import { resendConfigFromEnv } from './weekly-report-email.js';
 
 async function main(): Promise<void> {
   const pool = new pg.Pool({
@@ -29,7 +32,20 @@ async function main(): Promise<void> {
   await app.listen({ port, host: '0.0.0.0' });
   app.log.info(`@sentinel/api listening on :${port}`);
 
+  // P6-07 AC1: the weekly report's own schedule — see this file's own
+  // doc comment in weekly-report-scheduler.ts for why an hourly
+  // in-process timer, not an external cron.
+  const stopWeeklyReportScheduler = startWeeklyReportScheduler(pool, resendConfigFromEnv(), app.log);
+  // P6-10: evaluates every active tenant's plan usage hourly — see
+  // plan-usage-sweep.ts's own doc comment for why this runs
+  // independently of (and does not strictly need to precede) the
+  // weekly-report scheduler above, which only reads whatever status
+  // this last recorded.
+  const stopPlanUsageSweep = startPlanUsageSweep(pool, resendConfigFromEnv(), app.log);
+
   async function shutdown(): Promise<void> {
+    stopWeeklyReportScheduler();
+    stopPlanUsageSweep();
     await app.close();
     await redis.quit();
     await pool.end();

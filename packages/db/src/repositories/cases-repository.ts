@@ -39,6 +39,9 @@ export interface CaseSignalRow {
   entityId: string;
   severity: string;
   detectedAt: string;
+  /** P6-03: the case detail screen's own "MITRE technique, plain-
+   * English explanation" panel reads this per signal. */
+  mitreIds: string[];
 }
 
 export interface CaseTransitionRow {
@@ -54,6 +57,84 @@ export interface CaseHistory {
   case: CaseRow | null;
   signals: CaseSignalRow[];
   transitions: CaseTransitionRow[];
+}
+
+/** P6-02's own list row — deliberately a separate type from `CaseRow`
+ * rather than widening it: `CaseRow` is used by call sites (dismissals.ts)
+ * that have no business depending on `state`/`score`/`entityIds` just
+ * because this ticket added them somewhere else in the same file. */
+export interface CaseListItem {
+  id: string;
+  tenantId: string;
+  severity: string | null;
+  title: string | null;
+  score: number | null;
+  /** Derived from the latest case_transitions row, same as
+   * `currentState()` — every case gets an initial 'open' transition at
+   * creation (services/correlate's own lifecycle.Writer), so this is
+   * never actually null in practice, but the column it comes from can be,
+   * and this type says so rather than asserting it away. */
+  state: string | null;
+  entityIds: string[];
+  signalCount: number;
+  createdAt: string;
+  windowStart: string;
+  windowEnd: string | null;
+}
+
+export interface CaseListFilters {
+  severity?: string | undefined;
+  state?: string | undefined;
+  entityId?: string | undefined;
+  ruleId?: string | undefined;
+  createdAfter?: string | undefined;
+  createdBefore?: string | undefined;
+}
+
+export interface CaseListPage {
+  items: CaseListItem[];
+  total: number;
+}
+
+export interface FilterOption {
+  value: string;
+  label: string;
+}
+
+export interface CaseFilterOptions {
+  entities: FilterOption[];
+  rules: FilterOption[];
+}
+
+/** `pg` parses a `timestamptz` column into a real JS `Date`, regardless
+ * of what a query's own TS generic claims its type is — `String(date)`
+ * then calls `Date.prototype.toString()` (a locale-formatted, not ISO,
+ * string: "Thu Oct 08 2026 13:08:11 GMT+0530 ..."), not `.toISOString()`.
+ * `mapRow` above has this same latent bug (pre-existing, out of this
+ * ticket's scope — nothing exposed its output through a real JSON API
+ * before `list()` did), but `mapListRow` is new in this ticket and feeds
+ * a real browser via `GET /cases`, so it gets the correct conversion.
+ * Handles either a `Date` or an already-string value, since which one a
+ * given query path returns isn't guaranteed by the type annotations
+ * alone. */
+function toIsoString(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
+}
+
+function mapListRow(row: Record<string, unknown>): CaseListItem {
+  return {
+    id: String(row['id']),
+    tenantId: String(row['tenant_id']),
+    severity: (row['severity'] as string | null) ?? null,
+    title: (row['title'] as string | null) ?? null,
+    score: row['score'] == null ? null : Number(row['score']),
+    state: (row['state'] as string | null) ?? null,
+    entityIds: (row['entity_ids'] as string[] | null) ?? [],
+    signalCount: Number(row['signal_count']),
+    createdAt: toIsoString(row['created_at']),
+    windowStart: toIsoString(row['window_start']),
+    windowEnd: row['window_end'] == null ? null : toIsoString(row['window_end']),
+  };
 }
 
 export interface DismissalDigestRow {
@@ -104,6 +185,30 @@ function mapRow(row: Record<string, unknown>): CaseRow {
 
 export class CasesRepository extends TenantScopedRepository {
   /**
+   * P6-06: the MSP console's own "rank clients by open critical cases"
+   * — called once per linked client tenant, each under that tenant's
+   * own `withTenantContext`, never as a single cross-tenant query (this
+   * schema has no role that bypasses RLS — every read stays scoped to
+   * exactly one tenant at a time, same discipline as every other
+   * repository method here). "Open" means not yet closed or dismissed
+   * — the same LATERAL-latest-transition join `list()` uses, since
+   * state has no column of its own on `cases`.
+   */
+  async countOpenCritical(): Promise<number> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        `SELECT count(*) AS count
+           FROM cases c
+           JOIN LATERAL (
+             SELECT to_state FROM case_transitions WHERE case_id = c.id ORDER BY id DESC LIMIT 1
+           ) ct ON true
+          WHERE c.severity = 'critical' AND ct.to_state NOT IN ('closed', 'dismissed')`,
+      );
+      return Number(rows[0]?.count ?? 0);
+    });
+  }
+
+  /**
    * Deliberately has NO `WHERE tenant_id = ...` clause. That omission is the
    * point of this method: the query relies entirely on the RLS policy set up
    * by `withTransaction`'s `SET LOCAL app.tenant_id`, which is exactly
@@ -119,6 +224,104 @@ export class CasesRepository extends TenantScopedRepository {
         'SELECT id, tenant_id, severity, title, signal_count, created_at, window_start, window_end FROM cases ORDER BY created_at DESC',
       );
       return rows.map(mapRow);
+    });
+  }
+
+  /**
+   * P6-02: the dashboard's case list — filtered by severity, current
+   * state, entity, rule and/or a creation date range; ranked by severity
+   * then score (the same CASE expression 0023's own index mirrors, so the
+   * planner can actually use it instead of a sequential scan + sort at
+   * the ticket's stated 10,000-case scale).
+   *
+   * `state` has no column of its own on `cases` (see `currentState()`'s
+   * own comment) — the LATERAL join below is the one extra cost a plain
+   * `WHERE` can't avoid, but `case_transitions_case_idx (case_id, id)`
+   * keeps "the single latest row per case" an index lookup, not a scan,
+   * for every row this query otherwise considers.
+   */
+  async list(filters: CaseListFilters, page: number, pageSize: number): Promise<CaseListPage> {
+    return this.withTransaction(async (client) => {
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      function addCondition(sqlFragment: string, value: unknown): void {
+        params.push(value);
+        conditions.push(sqlFragment.replace('$$', `$${params.length}`));
+      }
+
+      if (filters.severity) addCondition('c.severity = $$', filters.severity);
+      if (filters.entityId) addCondition('c.entity_ids @> ARRAY[$$]::text[]', filters.entityId);
+      if (filters.createdAfter) addCondition('c.created_at >= $$', filters.createdAfter);
+      if (filters.createdBefore) addCondition('c.created_at <= $$', filters.createdBefore);
+      if (filters.ruleId) {
+        addCondition('EXISTS (SELECT 1 FROM case_signals cs WHERE cs.case_id = c.id AND cs.rule_id = $$)', filters.ruleId);
+      }
+      if (filters.state) {
+        addCondition('ct.to_state = $$', filters.state);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const baseFrom = `
+        FROM cases c
+        JOIN LATERAL (
+          SELECT to_state FROM case_transitions WHERE case_id = c.id ORDER BY id DESC LIMIT 1
+        ) ct ON true
+        ${whereClause}`;
+
+      const countResult = await client.query<{ total: string }>(`SELECT count(*) AS total ${baseFrom}`, params);
+      const total = Number(countResult.rows[0]?.total ?? 0);
+
+      const limitParamIndex = params.length + 1;
+      const offsetParamIndex = params.length + 2;
+      const { rows } = await client.query(
+        `SELECT c.id, c.tenant_id, c.severity, c.title, c.score, c.signal_count, c.created_at,
+                c.window_start, c.window_end, c.entity_ids, ct.to_state AS state
+         ${baseFrom}
+         ORDER BY
+           (CASE c.severity
+             WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0
+           END) DESC,
+           c.score DESC NULLS LAST,
+           c.created_at DESC
+         LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
+        [...params, pageSize, (page - 1) * pageSize],
+      );
+
+      return { items: rows.map(mapListRow), total };
+    });
+  }
+
+  /**
+   * Filter dropdown data for the case list. There is no rules CATALOG
+   * table anywhere in this schema (per-signal `rule_id` is a free-text
+   * column on `case_signals`, not a foreign key into a lookup table), so
+   * a rule's own id IS its label here — an honest limitation, not a
+   * placeholder silently treated as more. Entities at least have
+   * human-readable aliases (email, username, ...) to use as a label when
+   * one exists.
+   */
+  async filterOptions(): Promise<CaseFilterOptions> {
+    return this.withTransaction(async (client) => {
+      const entityResult = await client.query<{ id: string; entity_type: string; label: string | null }>(
+        `SELECT e.id, e.entity_type,
+                (SELECT alias_value FROM entity_aliases WHERE entity_id = e.id ORDER BY created_at ASC LIMIT 1) AS label
+           FROM entities e
+          WHERE e.id IN (
+            SELECT DISTINCT val::uuid FROM (SELECT unnest(entity_ids) AS val FROM cases) t WHERE val <> ''
+          )
+          ORDER BY label NULLS LAST
+          LIMIT 200`,
+      );
+      const ruleResult = await client.query<{ rule_id: string }>(
+        `SELECT DISTINCT rule_id FROM case_signals ORDER BY rule_id LIMIT 200`,
+      );
+
+      return {
+        entities: entityResult.rows.map((r) => ({ value: r.id, label: r.label ?? `${r.entity_type}:${r.id}` })),
+        rules: ruleResult.rows.map((r) => ({ value: r.rule_id, label: r.rule_id })),
+      };
     });
   }
 
@@ -251,8 +454,9 @@ export class CasesRepository extends TenantScopedRepository {
         entity_id: string;
         severity: string;
         detected_at: string;
+        mitre_ids: string[] | null;
       }>(
-        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at
+        `SELECT signal_id, rule_id, entity_type, entity_id, severity, detected_at, mitre_ids
            FROM case_signals WHERE case_id = $1 ORDER BY detected_at DESC LIMIT $2`,
         [caseId, limit + 1],
       );
@@ -277,6 +481,10 @@ export class CasesRepository extends TenantScopedRepository {
           entityId: r.entity_id,
           severity: r.severity,
           detectedAt: r.detected_at,
+          // The column's own default is `['']`, for a row written
+          // before P6-03 ever cared about this field — filtered out
+          // rather than surfaced as a fake empty "technique."
+          mitreIds: (r.mitre_ids ?? []).filter((id) => id.length > 0),
         })),
         transitions: transitionResult.rows.map((r) => ({
           fromState: r.from_state,

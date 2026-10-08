@@ -31,4 +31,7 @@ export type { ThemeToggleButtonProps } from './ThemeToggleButton.js';
 export { TenantSwitcher } from './TenantSwitcher.js';
 export type { TenantSwitcherProps, TenantOption } from './TenantSwitcher.js';
 
+export { Pagination } from './Pagination.js';
+export type { PaginationProps } from './Pagination.js';
+
 export { cn } from './lib/cn.js';

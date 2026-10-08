@@ -19,6 +19,7 @@
     "@opentelemetry/api": "^1.9.1",
     "@sentinel/db": "workspace:*",
     "@sentinel/observability": "workspace:*",
+    "@sentinel/readability": "workspace:*",
     "@sentinel/schema": "workspace:*",
     "kafkajs": "^2.2.4",
     "pg": "^8.13.1"

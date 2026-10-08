@@ -17,12 +17,27 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { authPlugin } from './auth/auth-plugin.js';
+import { apiKeyPlugin } from './auth/api-key-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
+import { apiKeysRoutes } from './routes/api-keys.js';
+import { v1CasesRoutes } from './routes/v1/cases.js';
+import { v1ReportsRoutes } from './routes/v1/reports.js';
+import { registerOpenApi } from './openapi.js';
 import { connectorsRoutes } from './routes/connectors.js';
-import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-connector.js';
+import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
+import { opsRoutes } from './routes/ops.js';
+import { pilotRoutes } from './routes/pilot.js';
+import { feedbackRoutes } from './routes/feedback.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
+import { casesRoutes } from './routes/cases.js';
+import { caseDetailRoutes } from './routes/case-detail.js';
+import { scanRoutes } from './routes/scan.js';
+import { mspRoutes } from './routes/msp.js';
+import { weeklyReportRoutes } from './routes/weekly-report.js';
+import { resendConfigFromEnv } from './weekly-report-email.js';
+import { createTenantScopedClickHouseClient } from './clickhouse.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import { approvalsRoutes, approvalsConfigFromEnv, acceptedTokenSecrets, type ApprovalsConfig } from './routes/approvals.js';
 import { preApprovalsRoutes } from './routes/pre-approvals.js';
@@ -45,6 +60,9 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can point it
    * at a local mock token endpoint instead. */
   m365OAuthConfig?: M365OAuthConfig | undefined;
+  /** P6-04: overridable so tests can assert the OAuth callback's
+   * redirect lands on a known URL instead of the real dashboard. */
+  dashboardBaseUrl?: string;
   /** Defaults to reading PLATFORM_OPS_TENANT_ID from the environment
    * (undefined if unset, which routes/hotfix-rules.js handles with a
    * 503, not a crash). Overridable so tests can point it at a fixture
@@ -72,6 +90,11 @@ export interface BuildAppOptions {
    * (undefined if unset, which routes/resend-webhook.js handles with
    * a 503, not a crash). Overridable so tests can use a fixed secret. */
   resendWebhookConfig?: ResendWebhookConfig | undefined;
+  /** Defaults to reading CLICKHOUSE_URL from the environment (undefined
+   * if unset, which case-detail.js's evidence route handles with a 503,
+   * not a crash — same pattern as every other optional integration
+   * above). Overridable so tests can point it at a local ClickHouse. */
+  clickhouseUrl?: string | undefined;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -80,13 +103,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     redis,
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
+    dashboardBaseUrl = dashboardBaseUrlFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
     approvalsConfig = approvalsConfigFromEnv(),
     slackOAuthConfig = slackOAuthConfigFromEnv(),
     slackWebhookConfig = slackWebhookConfigFromEnv(),
     resendWebhookConfig = resendWebhookConfigFromEnv(),
+    clickhouseUrl = process.env.CLICKHOUSE_URL,
   } = options;
+  const clickhouse = clickhouseUrl ? createTenantScopedClickHouseClient(clickhouseUrl) : undefined;
 
   // find-my-way's default maxParamLength (100) is sized for an ordinary
   // id segment, not P5-03's own approval token — a base64url-encoded
@@ -99,15 +125,36 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/health', async (_request, reply) => reply.code(200).send({ ok: true }));
   app.get('/ready', async (_request, reply) => reply.code(200).send({ ok: true }));
 
+  // Must register before any route whose `schema` it should capture
+  // (see openapi.ts's own doc comment) — @fastify/swagger hooks into
+  // `onRoute`, which only fires for routes registered AFTER this.
+  await registerOpenApi(app);
+
   await app.register(authPlugin, { pool, redis, cookieSecure });
+  // P6-09: after authPlugin (so a cookie session always takes
+  // precedence), before tenantContextPlugin (so an api-key-derived
+  // session is just as real to it as a cookie one) — see
+  // api-key-plugin.ts's own doc comment for the full ordering rationale.
+  await app.register(apiKeyPlugin, { pool, redis });
   await app.register(tenantContextPlugin, {
     publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token', '/webhooks/slack/interactions', '/webhooks/resend'],
   });
+  await app.register(apiKeysRoutes, { pool });
+  await app.register(v1CasesRoutes, { pool });
+  await app.register(v1ReportsRoutes, { pool });
   await app.register(connectorsRoutes, { pool });
-  await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig });
+  await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
+  await app.register(opsRoutes, { pool, opsTenantId });
+  await app.register(pilotRoutes, { pool, opsTenantId });
+  await app.register(feedbackRoutes, { pool });
   await app.register(dismissalsRoutes, { pool });
+  await app.register(casesRoutes, { pool });
+  await app.register(caseDetailRoutes, { pool, clickhouse });
+  await app.register(scanRoutes, { pool });
+  await app.register(mspRoutes, { pool });
+  await app.register(weeklyReportRoutes, { pool, resendConfig: resendConfigFromEnv() });
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
   await app.register(preApprovalsRoutes, { pool });

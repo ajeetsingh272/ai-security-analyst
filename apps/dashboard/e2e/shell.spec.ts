@@ -32,14 +32,20 @@ test.describe('T1: authenticated navigation across every top-level route', () =>
 
     await expect(page.getByText('Sentinel', { exact: true })).toBeVisible();
 
-    for (const [label, headingText] of [
-      ['Cases', 'coming in P6-02'],
-      ['Connectors', 'coming in P6-04'],
-      ['Reports', 'coming in P6-07'],
-      ['Settings', 'coming in a later ticket'],
-    ] as const) {
+    for (const label of ['Cases', 'Connectors', 'Reports', 'Settings'] as const) {
       await page.getByRole('link', { name: label, exact: true }).click();
-      await expect(page.getByText(headingText)).toBeVisible();
+      // P6-02 replaced the Cases placeholder with the real case list —
+      // its filter bar's own accessible label is this route's stable
+      // marker now (getByText would also match "severity" inside the
+      // empty-state prose this owner's own case-free tenant shows).
+      if (label === 'Cases') await expect(page.getByLabel('Severity')).toBeVisible();
+      // P6-04 replaced the Connectors placeholder with the real wizard.
+      else if (label === 'Connectors') await expect(page.getByRole('link', { name: 'Connect Microsoft 365' })).toBeVisible();
+      // P6-07 replaced the Reports placeholder with the real weekly
+      // report view — a fresh owner's own report-free tenant shows
+      // its own empty state, not the old "coming in P6-07" stub.
+      else if (label === 'Reports') await expect(page.getByText('No reports yet')).toBeVisible();
+      else await expect(page.getByText('coming in a later ticket')).toBeVisible();
       // AC4: no horizontal scroll at the AC's own minimum width.
       const hasHorizontalScroll = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

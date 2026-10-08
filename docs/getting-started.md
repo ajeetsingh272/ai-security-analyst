@@ -62,7 +62,7 @@ at minimum:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The connector credentials (`MS_GRAPH_*`, `GOOGLE_*`) are only needed when you
+The connector credentials (`M365_*`, `GOOGLE_*`) are only needed when you
 work on ingest against a real tenant — see §7.
 
 `.env` is gitignored. If you ever find yourself about to commit a credential,
