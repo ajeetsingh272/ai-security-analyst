@@ -5,6 +5,7 @@ export {
   type RetryOptions,
   type DeliveryRecorder,
   type ChannelOrderResolver,
+  type OptoutChecker,
   DEFAULT_CHANNEL_ORDER,
   DEFAULT_RETRY,
 } from './types.js';
@@ -17,6 +18,14 @@ export {
   type WhatsAppTemplateName,
   type WhatsAppMessageContent,
   type WhatsAppConfig,
-  type OptoutChecker,
 } from './channels/whatsapp-channel.js';
 export { buildSlackChannel, type SlackMessageContent, type SlackConfig, type SlackBlock } from './channels/slack-channel.js';
+export {
+  buildEmailChannel,
+  checkDomainVerification,
+  EmailRecipientOptedOutError,
+  type EmailMessageContent,
+  type EmailConfig,
+  type DomainVerificationResult,
+  type DomainVerificationStatus,
+} from './channels/email-channel.js';
