@@ -237,6 +237,17 @@ export const cases = pgTable("cases", {
 }, (table) => [
 	index("cases_entities_idx").using("gin", table.entityIds.asc().nullsLast().op("array_ops")),
 	index("cases_tenant_created_idx").using("btree", table.tenantId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
+	// drizzle-kit's introspection mangles a multi-line CASE expression
+	// containing string literals into broken, truncated `sql` template
+	// fragments (confirmed against psql's own \d cases output, which
+	// shows the real, complete expression) — hand-corrected the same way
+	// 0023's own index definition reads, not a schema change of its own.
+	index("cases_tenant_severity_rank_score_idx").using(
+		"btree",
+		table.tenantId.asc().nullsLast().op("uuid_ops"),
+		sql`(CASE severity WHEN 'critical'::text THEN 4 WHEN 'high'::text THEN 3 WHEN 'medium'::text THEN 2 WHEN 'low'::text THEN 1 ELSE 0 END)`,
+		sql`score`,
+	),
 	foreignKey({
 			columns: [table.tenantId],
 			foreignColumns: [tenants.id],

@@ -377,6 +377,14 @@ part of the control and not merely a description of it.
 
 - `cases_entities_idx` — `CREATE INDEX cases_entities_idx ON public.cases USING gin (entity_ids)`
 - `cases_tenant_created_idx` — `CREATE INDEX cases_tenant_created_idx ON public.cases USING btree (tenant_id, created_at DESC)`
+- `cases_tenant_severity_rank_score_idx` — `CREATE INDEX cases_tenant_severity_rank_score_idx ON public.cases USING btree (tenant_id, (
+CASE severity
+    WHEN 'critical'::text THEN 4
+    WHEN 'high'::text THEN 3
+    WHEN 'medium'::text THEN 2
+    WHEN 'low'::text THEN 1
+    ELSE 0
+END) DESC, score DESC)`
 
 **Row-level security**
 

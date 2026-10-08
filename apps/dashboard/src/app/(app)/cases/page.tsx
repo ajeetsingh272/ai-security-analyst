@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
-import { EmptyState } from '@sentinel/ui';
 import { getCurrentUser } from '../../../lib/session.js';
+import { CaseList } from '../../../components/CaseList.client.js';
 
 // Not redundant with the (app) layout's own redirect: Next streams route
 // segments independently, so without this, curl (or anything that doesn't
@@ -13,10 +13,5 @@ export default async function CasesPage() {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
 
-  return (
-    <EmptyState
-      title="Case list is coming in P6-02"
-      description="This is the shell this screen will render into — filtering, sorting and live updates land next."
-    />
-  );
+  return <CaseList />;
 }

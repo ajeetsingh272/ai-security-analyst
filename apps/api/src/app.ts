@@ -23,6 +23,7 @@ import { m365ConnectorRoutes, m365OAuthConfigFromEnv } from './routes/m365-conne
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
+import { casesRoutes } from './routes/cases.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import { approvalsRoutes, approvalsConfigFromEnv, acceptedTokenSecrets, type ApprovalsConfig } from './routes/approvals.js';
 import { preApprovalsRoutes } from './routes/pre-approvals.js';
@@ -108,6 +109,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(dismissalsRoutes, { pool });
+  await app.register(casesRoutes, { pool });
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
   await app.register(preApprovalsRoutes, { pool });
