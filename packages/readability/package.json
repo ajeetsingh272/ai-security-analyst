@@ -1,0 +1,21 @@
+{
+  "name": "@sentinel/readability",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Flesch-Kincaid readability gate — shared between apps/analyst (case reports, P4-07) and apps/api (weekly owner reports, P6-07)",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

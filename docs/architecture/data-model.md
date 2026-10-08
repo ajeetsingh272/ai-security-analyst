@@ -49,6 +49,8 @@ none of them has to be taken on trust:
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_pre_approvals` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_report_schedule` | NOT NULL | yes | yes | `tenant_isolation` |
+| `weekly_reports` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -1101,6 +1103,37 @@ END) DESC, score DESC)`
 
 - `sentinel_app`: INSERT, SELECT, UPDATE
 
+### `tenant_report_schedule`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `tenant_id` | `uuid` | no | — |
+| `day_of_week` | `smallint` | no | `1` |
+| `enabled` | `boolean` | no | `true` |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `tenant_report_schedule_pkey` — `PRIMARY KEY (tenant_id)`
+
+**Foreign keys**
+
+- `tenant_report_schedule_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tenant_report_schedule_day_of_week_check` — `CHECK (((day_of_week >= 0) AND (day_of_week <= 6)))`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
 ### `tenants`
 
 | Column | Type | Null | Default |
@@ -1147,3 +1180,40 @@ END) DESC, score DESC)`
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `weekly_reports`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `window_start` | `timestamptz` | no | — |
+| `window_end` | `timestamptz` | no | — |
+| `headline` | `text` | no | — |
+| `one_improvement` | `text` | yes | — |
+| `is_quiet` | `boolean` | no | `false` |
+| `data` | `jsonb` | no | — |
+| `generated_at` | `timestamptz` | no | `now()` |
+| `emailed_at` | `timestamptz` | yes | — |
+
+**Primary key**
+
+- `weekly_reports_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `weekly_reports_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Indexes**
+
+- `weekly_reports_tenant_generated_idx` — `CREATE INDEX weekly_reports_tenant_generated_idx ON public.weekly_reports USING btree (tenant_id, generated_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE

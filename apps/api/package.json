@@ -21,10 +21,12 @@
     "@sentinel/db": "workspace:*",
     "@sentinel/notifications": "workspace:*",
     "@sentinel/playbooks": "workspace:*",
+    "@sentinel/readability": "workspace:*",
     "@sentinel/schema": "workspace:*",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.0",
     "pg": "^8.13.1",
+    "playwright-core": "1.63.0",
     "redis": "^6.3.0"
   },
   "devDependencies": {

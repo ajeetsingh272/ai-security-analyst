@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fleschKincaidGradeLevel, isReadable, TARGET_GRADE_LEVEL } from '../readability.js';
+import { fleschKincaidGradeLevel, isReadable, TARGET_GRADE_LEVEL } from '../index.js';
 
 describe('fleschKincaidGradeLevel', () => {
   it('scores simple, short sentences at a low grade level', () => {
@@ -17,7 +17,7 @@ describe('fleschKincaidGradeLevel', () => {
 });
 
 describe('isReadable', () => {
-  it('T1: a plain-English report passes the readability threshold', () => {
+  it('T1 (P4-07) / T4 (P6-07): a plain-English report passes the readability threshold', () => {
     expect(isReadable('Someone in Russia signed in to her account. They set up a rule to copy her emails. Turn off the rule today.')).toBe(true);
   });
 
