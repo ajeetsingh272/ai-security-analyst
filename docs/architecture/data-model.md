@@ -44,6 +44,7 @@ none of them has to be taken on trust:
 | `memberships` | NOT NULL | yes | yes | `tenant_isolation` |
 | `notification_deliveries` | NOT NULL | yes | yes | `tenant_isolation` |
 | `notification_recipient_optouts` | NOT NULL | yes | yes | `tenant_isolation` |
+| `scan_jobs` | NOT NULL | yes | yes | `tenant_isolation` |
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -900,6 +901,47 @@ END) DESC, score DESC)`
 **Grants**
 
 - `sentinel_app`: DELETE, INSERT, SELECT
+
+### `scan_jobs`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `status` | `text` | no | `'completed'::text` |
+| `window_start` | `timestamptz` | no | — |
+| `window_end` | `timestamptz` | no | — |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `completed_at` | `timestamptz` | yes | — |
+| `error` | `text` | yes | — |
+
+**Primary key**
+
+- `scan_jobs_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `scan_jobs_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `scan_jobs_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `scan_jobs_status_check` — `CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text])))`
+
+**Indexes**
+
+- `scan_jobs_tenant_created_idx` — `CREATE INDEX scan_jobs_tenant_created_idx ON public.scan_jobs USING btree (tenant_id, created_at DESC)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
 
 ### `schema_migrations`
 

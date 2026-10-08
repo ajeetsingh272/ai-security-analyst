@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, Badge, Button, Skeleton, ErrorState } from '@sentinel/ui';
 import { M365_PERMISSIONS, M365_NOT_REQUESTED, type ConnectorHealth, type ConnectorsHealthResponse } from '../lib/connectors.js';
+import type { ScanSummary } from '../lib/scan.js';
 
 type LoadState = 'loading' | 'loaded' | 'error';
 
@@ -100,8 +101,22 @@ function NotConnected() {
 }
 
 function Connected({ connector, onChanged }: { connector: ConnectorHealth; onChanged: () => void }) {
+  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  async function startScan() {
+    setScanning(true);
+    try {
+      const res = await fetch('/api/scan', { method: 'POST' });
+      if (!res.ok) return;
+      const { scanId } = (await res.json()) as ScanSummary;
+      router.push(`/connectors/scan/${scanId}`);
+    } finally {
+      setScanning(false);
+    }
+  }
 
   async function disconnect() {
     setDisconnecting(true);
@@ -127,9 +142,14 @@ function Connected({ connector, onChanged }: { connector: ConnectorHealth; onCha
       </Card>
 
       {!confirming && (
-        <Button variant="secondary" size="sm" onClick={() => setConfirming(true)}>
-          Disconnect
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="primary" size="sm" isLoading={scanning} onClick={() => void startScan()}>
+            Run a free scan
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setConfirming(true)}>
+            Disconnect
+          </Button>
+        </div>
       )}
 
       {confirming && (
