@@ -25,7 +25,7 @@
  * step-up exactly like one from WhatsApp does, correctly.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { AuditLogWriter, withTenantContext } from '@sentinel/db';
 import { verifyApprovalTokenShape, type NonceStore } from '@sentinel/approval-tokens';

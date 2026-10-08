@@ -15,7 +15,6 @@
  *
  * Requires: pnpm dev:stack && pnpm db:migrate.
  */
-import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type RedisClientType } from 'redis';
 import pg, { type PoolClient } from 'pg';

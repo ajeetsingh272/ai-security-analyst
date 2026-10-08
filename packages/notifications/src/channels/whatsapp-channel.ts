@@ -33,7 +33,7 @@
  * which fields are required when.
  */
 import type { Logger } from '@sentinel/observability';
-import type { NotificationChannel, NotificationChannelId, OptoutChecker } from '../types.js';
+import type { NotificationChannel, OptoutChecker } from '../types.js';
 
 export type WhatsAppTemplateName = 'sentinel_critical_alert' | 'sentinel_high_alert' | 'sentinel_daily_digest';
 
