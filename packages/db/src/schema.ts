@@ -240,7 +240,7 @@ export const cases = pgTable("cases", {
 	// drizzle-kit's introspection mangles this multi-line CASE expression
 	// into a broken, truncated sql fragment on every db:pull — re-apply
 	// this exact hand-correction after any future pull (recurring bug,
-	// documented at every prior occurrence: P6-02, P6-03, P6-05, P6-07, P6-09, P6-10).
+	// documented at every prior occurrence through P6-12).
 	index("cases_tenant_severity_rank_score_idx").using(
 		"btree",
 		table.tenantId.asc().nullsLast().op("uuid_ops"),
@@ -667,6 +667,31 @@ export const apiKeys = pgTable("api_keys", {
 	check("api_keys_scopes_check", sql`(scopes <@ ARRAY['read'::text, 'write'::text]) AND (array_length(scopes, 1) > 0)`),
 ]);
 
+export const tuningBacklogItems = pgTable("tuning_backlog_items", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	caseId: uuid("case_id"),
+	ruleId: text("rule_id"),
+	source: text().default('customer_feedback').notNull(),
+	reason: text(),
+	status: text().default('open').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_tuning_backlog_tenant_status").using("btree", table.tenantId.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tuning_backlog_items_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.caseId],
+			foreignColumns: [cases.id],
+			name: "tuning_backlog_items_case_id_fkey"
+		}).onDelete("set null"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("tuning_backlog_items_status_check", sql`status = ANY (ARRAY['open'::text, 'reviewed'::text, 'applied'::text, 'dismissed'::text])`),
+]);
+
 export const tenantPlanStatus = pgTable("tenant_plan_status", {
 	tenantId: uuid("tenant_id").primaryKey().notNull(),
 	seatsStatus: text("seats_status").default('ok').notNull(),
@@ -684,6 +709,31 @@ export const tenantPlanStatus = pgTable("tenant_plan_status", {
 	check("tenant_plan_status_seats_status_check", sql`seats_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
 	check("tenant_plan_status_event_volume_status_check", sql`event_volume_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
 	check("tenant_plan_status_cost_status_check", sql`cost_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
+]);
+
+export const feedback = pgTable("feedback", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	subjectType: text("subject_type").notNull(),
+	subjectId: uuid("subject_id").notNull(),
+	userId: uuid("user_id").notNull(),
+	isFalsePositive: boolean("is_false_positive").default(false).notNull(),
+	comment: text(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_feedback_tenant_subject").using("btree", table.tenantId.asc().nullsLast().op("text_ops"), table.subjectType.asc().nullsLast().op("uuid_ops"), table.subjectId.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "feedback_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [users.id],
+			name: "feedback_user_id_fkey"
+		}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("feedback_subject_type_check", sql`subject_type = ANY (ARRAY['case'::text, 'weekly_report'::text])`),
 ]);
 
 export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {

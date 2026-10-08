@@ -76,6 +76,21 @@ async function m365ConnectorRoutesImpl(fastify: FastifyInstance, options: M365Co
 
     const session = request.session!; // requireRole already guarantees a session exists
     const { state, codeVerifier } = await stateStore.create({ tenantId: session.tenantId, userId: session.userId });
+
+    // P6-12: the onboarding funnel's own "started but maybe never
+    // finished" signal — only written once the config check above has
+    // passed (a 503 here means nothing actually started). Paired with
+    // 'connector.consent_granted' in the callback below; a tenant with
+    // the former but never the latter is this funnel's own concrete
+    // drop-off point.
+    await new AuditLogWriter(pool).insert({
+      actorType: 'human',
+      actorId: session.userId,
+      action: 'onboarding.connector_connect_started',
+      subjectType: 'connector',
+      subjectId: 'm365',
+    });
+
     const url = buildAuthorizeUrl(config, state, codeVerifier);
     return reply.redirect(url);
   });

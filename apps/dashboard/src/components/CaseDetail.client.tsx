@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card, SeverityPill, Badge, Skeleton, EmptyState, ErrorState, Button } from '@sentinel/ui';
 import type { CaseDetailResponse, CaseTransition, Claim, ActionRow, EvidenceResponse, EvidenceResult } from '../lib/case-detail.js';
 import type { ChallengeDismissalResponse } from '../lib/dismissals.js';
+import { FeedbackWidget } from './FeedbackWidget.client.js';
 
 type LoadState = 'loading' | 'loaded' | 'error';
 
@@ -64,6 +65,8 @@ export function CaseDetail({ caseId }: CaseDetailProps) {
       {data.transitions[0]?.toState === 'dismissed' && (
         <ChallengeDismissalSection caseId={caseId} transition={data.transitions[0]} onChallenged={() => void load()} />
       )}
+
+      <FeedbackWidget subjectType="case" subjectId={caseId} />
 
       {data.verdict ? (
         <VerdictSection verdict={data.verdict} caseId={caseId} />
