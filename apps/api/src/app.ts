@@ -17,7 +17,12 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { RedisClientType } from 'redis';
 import { authPlugin } from './auth/auth-plugin.js';
+import { apiKeyPlugin } from './auth/api-key-plugin.js';
 import { tenantContextPlugin } from './plugins/tenant-context.js';
+import { apiKeysRoutes } from './routes/api-keys.js';
+import { v1CasesRoutes } from './routes/v1/cases.js';
+import { v1ReportsRoutes } from './routes/v1/reports.js';
+import { registerOpenApi } from './openapi.js';
 import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
@@ -117,10 +122,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/health', async (_request, reply) => reply.code(200).send({ ok: true }));
   app.get('/ready', async (_request, reply) => reply.code(200).send({ ok: true }));
 
+  // Must register before any route whose `schema` it should capture
+  // (see openapi.ts's own doc comment) — @fastify/swagger hooks into
+  // `onRoute`, which only fires for routes registered AFTER this.
+  await registerOpenApi(app);
+
   await app.register(authPlugin, { pool, redis, cookieSecure });
+  // P6-09: after authPlugin (so a cookie session always takes
+  // precedence), before tenantContextPlugin (so an api-key-derived
+  // session is just as real to it as a cookie one) — see
+  // api-key-plugin.ts's own doc comment for the full ordering rationale.
+  await app.register(apiKeyPlugin, { pool, redis });
   await app.register(tenantContextPlugin, {
     publicPaths: ['/health', '/ready', '/auth/sign-in', '/auth/sign-out', '/webhooks/whatsapp', '/approvals/:token', '/webhooks/slack/interactions', '/webhooks/resend'],
   });
+  await app.register(apiKeysRoutes, { pool });
+  await app.register(v1CasesRoutes, { pool });
+  await app.register(v1ReportsRoutes, { pool });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
   await app.register(suppressionsRoutes, { pool });

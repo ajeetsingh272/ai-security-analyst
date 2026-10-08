@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -41,6 +41,7 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	notificationDeliveries: many(notificationDeliveries),
 	tenantPreApprovals: many(tenantPreApprovals),
 	tenantReportSchedules: many(tenantReportSchedule),
+	apiKeys: many(apiKeys),
 	notificationRecipientOptouts: many(notificationRecipientOptouts),
 	entityCriticalities: many(entityCriticality),
 }));
@@ -65,6 +66,12 @@ export const usersRelations = relations(users, ({many}) => ({
 	}),
 	tenantPreApprovals_revokedBy: many(tenantPreApprovals, {
 		relationName: "tenantPreApprovals_revokedBy_users_id"
+	}),
+	apiKeys_createdBy: many(apiKeys, {
+		relationName: "apiKeys_createdBy_users_id"
+	}),
+	apiKeys_revokedBy: many(apiKeys, {
+		relationName: "apiKeys_revokedBy_users_id"
 	}),
 }));
 
@@ -319,6 +326,23 @@ export const tenantReportScheduleRelations = relations(tenantReportSchedule, ({o
 	tenant: one(tenants, {
 		fields: [tenantReportSchedule.tenantId],
 		references: [tenants.id]
+	}),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [apiKeys.tenantId],
+		references: [tenants.id]
+	}),
+	user_createdBy: one(users, {
+		fields: [apiKeys.createdBy],
+		references: [users.id],
+		relationName: "apiKeys_createdBy_users_id"
+	}),
+	user_revokedBy: one(users, {
+		fields: [apiKeys.revokedBy],
+		references: [users.id],
+		relationName: "apiKeys_revokedBy_users_id"
 	}),
 }));
 
