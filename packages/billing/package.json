@@ -1,0 +1,21 @@
+{
+  "name": "@sentinel/billing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Plan tiers, usage limits, and margin calculation — shared between apps/api (usage metering, the operations margin view) and any future consumer that needs the same pricing model, same reasoning as @sentinel/readability's own promotion",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

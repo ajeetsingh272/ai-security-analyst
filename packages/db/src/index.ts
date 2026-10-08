@@ -113,6 +113,15 @@ export {
   type ApiKeyScope,
   type CreateApiKeyInput,
 } from './repositories/api-keys-repository.js';
+export {
+  TenantUsageRepository,
+  listTenantUsageSummaries,
+  listActiveTenantIds,
+  type PlanLimitStatus,
+  type TenantPlanStatusRow,
+  type UpsertPlanStatusInput,
+  type TenantUsageSummary,
+} from './repositories/tenant-usage-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {

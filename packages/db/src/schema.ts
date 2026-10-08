@@ -240,7 +240,7 @@ export const cases = pgTable("cases", {
 	// drizzle-kit's introspection mangles this multi-line CASE expression
 	// into a broken, truncated sql fragment on every db:pull — re-apply
 	// this exact hand-correction after any future pull (recurring bug,
-	// documented at every prior occurrence: P6-02, P6-03, P6-05, P6-07).
+	// documented at every prior occurrence: P6-02, P6-03, P6-05, P6-07, P6-09, P6-10).
 	index("cases_tenant_severity_rank_score_idx").using(
 		"btree",
 		table.tenantId.asc().nullsLast().op("uuid_ops"),
@@ -665,6 +665,25 @@ export const apiKeys = pgTable("api_keys", {
 	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
 	check("api_keys_name_check", sql`length(TRIM(BOTH FROM name)) > 0`),
 	check("api_keys_scopes_check", sql`(scopes <@ ARRAY['read'::text, 'write'::text]) AND (array_length(scopes, 1) > 0)`),
+]);
+
+export const tenantPlanStatus = pgTable("tenant_plan_status", {
+	tenantId: uuid("tenant_id").primaryKey().notNull(),
+	seatsStatus: text("seats_status").default('ok').notNull(),
+	eventVolumeStatus: text("event_volume_status").default('ok').notNull(),
+	costStatus: text("cost_status").default('ok').notNull(),
+	evaluatedAt: timestamp("evaluated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	softNotifiedAt: timestamp("soft_notified_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tenant_plan_status_tenant_id_fkey"
+		}).onDelete("cascade"),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("tenant_plan_status_seats_status_check", sql`seats_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
+	check("tenant_plan_status_event_volume_status_check", sql`event_volume_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
+	check("tenant_plan_status_cost_status_check", sql`cost_status = ANY (ARRAY['ok'::text, 'soft_exceeded'::text, 'hard_exceeded'::text])`),
 ]);
 
 export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {

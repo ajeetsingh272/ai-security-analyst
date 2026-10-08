@@ -19,6 +19,7 @@
     "@fastify/cookie": "^11.1.2",
     "@fastify/swagger": "^9.9.1",
     "@sentinel/approval-tokens": "workspace:*",
+    "@sentinel/billing": "workspace:*",
     "@sentinel/db": "workspace:*",
     "@sentinel/notifications": "workspace:*",
     "@sentinel/playbooks": "workspace:*",
