@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Verdict } from '@sentinel/schema';
 import { generateReport } from '../report.js';
-import { renderForWhatsApp, renderForSlack, renderForEmail, renderForDashboard, WHATSAPP_MAX_CHARS, SLACK_SECTION_TEXT_MAX_CHARS } from '../report-channels.js';
+import { renderForWhatsApp, renderForSlack, renderForEmail, renderPlainTextForEmail, renderForDashboard, WHATSAPP_MAX_CHARS, SLACK_SECTION_TEXT_MAX_CHARS } from '../report-channels.js';
 
 const VERDICT: Verdict = {
   severity: 'critical',
@@ -66,6 +66,29 @@ describe('T4: report renders without layout breakage in all four channels', () =
     const html = renderForEmail(generateReport(verdictWithHtml));
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('Email (P5-08 AC2): uses table-based layout with every rule inline, not a <style> block, for Outlook compatibility', () => {
+    const html = renderForEmail(generateReport(VERDICT));
+    expect(html).toContain('<table role="presentation"');
+    expect(html).not.toContain('<style');
+    // Every content cell (one per report section) carries its own
+    // font/color rule inline — the specific property Outlook's Word
+    // engine needs present on the element itself, not inherited from
+    // a stripped stylesheet. The outer centering cell has no text of
+    // its own and is exempt.
+    const contentCells = html.match(/<td style="padding: 12px 24px;[^>]*>/g) ?? [];
+    expect(contentCells.length).toBeGreaterThan(0);
+    for (const cell of contentCells) expect(cell).toMatch(/style="[^"]*font-family/);
+  });
+
+  it('Email (P5-08 AC5): a plain-text alternative renders the same content with no HTML at all', () => {
+    const report = generateReport(VERDICT);
+    const text = renderPlainTextForEmail(report);
+    expect(text).not.toMatch(/<[a-z]/i);
+    expect(text).toContain(report.title);
+    expect(text).toContain('What happened');
+    expect(text).toContain('Do now');
   });
 
   it('Dashboard: returns the structured report as-is, for the UI to render its own layout', () => {

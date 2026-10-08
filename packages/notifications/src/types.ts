@@ -22,6 +22,15 @@ export interface NotificationChannel<TContent = unknown> {
   send(tenantId: string, content: TContent): Promise<void>;
 }
 
+/** Shared by every per-RECIPIENT channel (WhatsApp, email — Slack
+ * posts to a CHANNEL, not an individual, so it has no use for this).
+ * P5-08's own email bounce webhook records a hard bounce through the
+ * exact same store WhatsApp's opt-out button does — "stop sending to
+ * this address" is the same fact regardless of which signal caused it. */
+export interface OptoutChecker {
+  isOptedOut(channel: NotificationChannelId, recipient: string): Promise<boolean>;
+}
+
 /**
  * One alert to deliver. `content` carries whatever each channel needs —
  * the caller is the one that knows how to render a report for WhatsApp

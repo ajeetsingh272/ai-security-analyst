@@ -8,7 +8,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger } from '@sentinel/observability';
-import { buildWhatsAppChannel, RecipientOptedOutError, type OptoutChecker } from '../channels/whatsapp-channel.js';
+import { buildWhatsAppChannel, RecipientOptedOutError } from '../channels/whatsapp-channel.js';
+import type { OptoutChecker } from '../types.js';
 
 const logger = createLogger({ service: 'whatsapp-test' });
 const TENANT = '22222222-2222-2222-2222-222222222222';

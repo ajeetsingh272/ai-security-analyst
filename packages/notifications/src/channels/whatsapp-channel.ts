@@ -33,7 +33,7 @@
  * which fields are required when.
  */
 import type { Logger } from '@sentinel/observability';
-import type { NotificationChannel, NotificationChannelId } from '../types.js';
+import type { NotificationChannel, NotificationChannelId, OptoutChecker } from '../types.js';
 
 export type WhatsAppTemplateName = 'sentinel_critical_alert' | 'sentinel_high_alert' | 'sentinel_daily_digest';
 
@@ -65,10 +65,6 @@ export class RecipientOptedOutError extends Error {
     super(`recipient ${recipient} has opted out of WhatsApp alerts for this tenant`);
     this.name = 'RecipientOptedOutError';
   }
-}
-
-export interface OptoutChecker {
-  isOptedOut(channel: NotificationChannelId, recipient: string): Promise<boolean>;
 }
 
 export interface WhatsAppConfig {
