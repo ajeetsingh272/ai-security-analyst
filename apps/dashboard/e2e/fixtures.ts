@@ -83,6 +83,24 @@ export async function seedAction(tenantId: string, caseId: string, playbook: str
   }, tenantId);
 }
 
+/** P6-04: a connector row in a given status, without driving the real
+ * OAuth flow (which needs a real Entra app registration this sandbox
+ * doesn't have — the flow's own backend half is proven separately
+ * against a mock Microsoft token endpoint, apps/api/src/__tests__/
+ * mock-m365-token-endpoint.ts). This is for exercising the wizard's
+ * OWN rendering of each connector state. */
+export async function seedConnector(tenantId: string, status: 'healthy' | 'revoked' | 'error'): Promise<void> {
+  await asAdmin(
+    (c) =>
+      c.query(
+        `INSERT INTO connectors (tenant_id, kind, status, last_sync_at, last_error)
+         VALUES ($1, 'm365', $2, now(), $3)`,
+        [tenantId, status, status === 'error' ? 'simulated failure for e2e' : null],
+      ),
+    tenantId,
+  );
+}
+
 /** Tenants cascade-delete memberships, but `users` is a global table with
  * no tenant_id — left behind otherwise. Deliberately does not close the
  * shared `pool` — several spec files load this same module within one
