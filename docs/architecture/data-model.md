@@ -47,6 +47,7 @@ none of them has to be taken on trust:
 | `suppressions` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_deks` | NOT NULL | yes | yes | `tenant_isolation` |
 | `tenant_notification_preferences` | NOT NULL | yes | yes | `tenant_isolation` |
+| `tenant_pre_approvals` | NOT NULL | yes | yes | `tenant_isolation` |
 
 ### Tables that are not tenant-scoped
 
@@ -998,6 +999,47 @@ part of the control and not merely a description of it.
 **Foreign keys**
 
 - `tenant_notification_preferences_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: INSERT, SELECT, UPDATE
+
+### `tenant_pre_approvals`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `playbook` | `text` | no | — |
+| `granted_by` | `uuid` | no | — |
+| `granted_at` | `timestamptz` | no | `now()` |
+| `revoked_at` | `timestamptz` | yes | — |
+| `revoked_by` | `uuid` | yes | — |
+
+**Primary key**
+
+- `tenant_pre_approvals_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `tenant_pre_approvals_granted_by_fkey` — `FOREIGN KEY (granted_by) REFERENCES users(id)`
+- `tenant_pre_approvals_revoked_by_fkey` — `FOREIGN KEY (revoked_by) REFERENCES users(id)`
+- `tenant_pre_approvals_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `tenant_pre_approvals_no_destructive_playbooks` — `CHECK ((playbook <> ALL (ARRAY['disable_user'::text, 'isolate_device'::text, 'force_password_reset'::text])))`
+- `tenant_pre_approvals_playbook_check` — `CHECK ((playbook = ANY (ARRAY['disable_user'::text, 'revoke_sessions'::text, 'delete_inbox_rule'::text, 'block_ip'::text, 'force_password_reset'::text, 'isolate_device'::text])))`
+
+**Indexes**
+
+- `idx_tenant_pre_approvals_one_active` — `CREATE UNIQUE INDEX idx_tenant_pre_approvals_one_active ON public.tenant_pre_approvals USING btree (tenant_id, playbook) WHERE (revoked_at IS NULL)`
 
 **Row-level security**
 

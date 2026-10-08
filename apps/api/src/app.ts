@@ -25,6 +25,7 @@ import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js'
 import { dismissalsRoutes } from './routes/dismissals.js';
 import { whatsappWebhookRoutes, whatsappConfigFromEnv, type WhatsAppConfig } from './routes/whatsapp-webhook.js';
 import { approvalsRoutes, approvalsConfigFromEnv, type ApprovalsConfig } from './routes/approvals.js';
+import { preApprovalsRoutes } from './routes/pre-approvals.js';
 import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 
@@ -88,6 +89,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(dismissalsRoutes, { pool });
   await app.register(whatsappWebhookRoutes, { pool, config: whatsappConfig });
   await app.register(approvalsRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), config: approvalsConfig });
+  await app.register(preApprovalsRoutes, { pool });
 
   return app;
 }

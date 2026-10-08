@@ -526,6 +526,36 @@ export const notificationDeliveries = pgTable("notification_deliveries", {
 	check("notification_deliveries_status_check", sql`status = ANY (ARRAY['sent'::text, 'failed'::text])`),
 ]);
 
+export const tenantPreApprovals = pgTable("tenant_pre_approvals", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	tenantId: uuid("tenant_id").notNull(),
+	playbook: text().notNull(),
+	grantedBy: uuid("granted_by").notNull(),
+	grantedAt: timestamp("granted_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+	revokedBy: uuid("revoked_by"),
+}, (table) => [
+	uniqueIndex("idx_tenant_pre_approvals_one_active").using("btree", table.tenantId.asc().nullsLast().op("text_ops"), table.playbook.asc().nullsLast().op("text_ops")).where(sql`(revoked_at IS NULL)`),
+	foreignKey({
+			columns: [table.tenantId],
+			foreignColumns: [tenants.id],
+			name: "tenant_pre_approvals_tenant_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.grantedBy],
+			foreignColumns: [users.id],
+			name: "tenant_pre_approvals_granted_by_fkey"
+		}),
+	foreignKey({
+			columns: [table.revokedBy],
+			foreignColumns: [users.id],
+			name: "tenant_pre_approvals_revoked_by_fkey"
+		}),
+	pgPolicy("tenant_isolation", { as: "permissive", for: "all", to: ["public"], using: sql`(tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)` }),
+	check("tenant_pre_approvals_playbook_check", sql`playbook = ANY (ARRAY['disable_user'::text, 'revoke_sessions'::text, 'delete_inbox_rule'::text, 'block_ip'::text, 'force_password_reset'::text, 'isolate_device'::text])`),
+	check("tenant_pre_approvals_no_destructive_playbooks", sql`playbook <> ALL (ARRAY['disable_user'::text, 'isolate_device'::text, 'force_password_reset'::text])`),
+]);
+
 export const notificationRecipientOptouts = pgTable("notification_recipient_optouts", {
 	tenantId: uuid("tenant_id").notNull(),
 	channel: text().notNull(),

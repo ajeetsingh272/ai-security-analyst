@@ -39,26 +39,10 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { AuditLogWriter, ActionsRepository, CasesRepository, withTenantContext } from '@sentinel/db';
+import { AuditLogWriter, ActionsRepository, withTenantContext } from '@sentinel/db';
 import { verifyApprovalTokenShape, verifyAndConsume, type ApprovalTokenVerifyError, type ApprovalTokenVerifyResult, type NonceStore } from '@sentinel/approval-tokens';
-import { executePlaybook, FetchGraphClient, type GraphClient, type GraphResponse, type PlaybookTarget } from '@sentinel/playbooks';
 import { requiresStepUp, verifyStepUpPassword } from '../approvals/step-up.js';
-import { getM365AccessToken } from '../approvals/graph-access.js';
-
-/** AC3/P5-05: used whenever no M365 connection exists for this tenant
- * — every call fails the same way a real outage would, so playbooks
- * that DO call Graph (disable_user, revoke_sessions, ...) get the
- * honest "can't reach it" failure through their own normal error
- * path, while the two not-yet-integrated playbooks (block_ip,
- * isolate_device), which never call `graph` at all, are entirely
- * unaffected by whether a connection exists. */
-const UNAVAILABLE_GRAPH_RESPONSE: GraphResponse = { status: 503, body: null };
-const unavailableGraphClient: GraphClient = {
-  get: async () => UNAVAILABLE_GRAPH_RESPONSE,
-  patch: async () => UNAVAILABLE_GRAPH_RESPONSE,
-  post: async () => UNAVAILABLE_GRAPH_RESPONSE,
-  delete: async () => UNAVAILABLE_GRAPH_RESPONSE,
-};
+import { executeApprovedAction } from '../approvals/execute-action.js';
 
 export interface ApprovalsConfig {
   tokenSecret: string;
@@ -161,29 +145,10 @@ export async function approvalsRoutes(fastify: FastifyInstance, options: Approva
       const approved = await actions.approve(payload.actionId, payload.caseId, payload.approverId, requiresStepUp(action.playbook) ? true : undefined);
       if (!approved) return { kind: 'decided' as const, approved: false };
 
-      // P5-05: execute now that the action is genuinely approved.
-      // markExecuting's own guard (approved -> executing) means this
-      // never double-executes even if somehow reached twice.
-      if (!(await actions.markExecuting(payload.actionId))) return { kind: 'decided' as const, approved: true };
-
-      const accessToken = await getM365AccessToken(pool, payload.tenantId);
-      const graph = accessToken ? new FetchGraphClient(accessToken) : unavailableGraphClient;
-      const execResult = await executePlaybook(action.playbook, graph, action.target as PlaybookTarget);
-
-      if (execResult.kind === 'executed' && execResult.outcome.ok) {
-        await actions.markSucceeded(payload.actionId);
-        return { kind: 'decided' as const, approved: true };
-      }
-
-      const { error, manualSteps } =
-        execResult.kind === 'executed' && !execResult.outcome.ok
-          ? { error: execResult.outcome.error, manualSteps: execResult.outcome.manualSteps }
-          : execResult.kind === 'premise_mismatch'
-            ? { error: execResult.reason, manualSteps: `The premise for this action no longer holds (${execResult.reason}) — review the case and act manually if still needed.` }
-            : { error: `unknown playbook: ${action.playbook}`, manualSteps: 'This action references a playbook this version does not recognise — resolve it manually.' };
-
-      await actions.markFailed(payload.actionId, error, manualSteps);
-      await new CasesRepository(pool).returnToAwaitingApproval(payload.caseId, `action ${payload.actionId} (${action.playbook}) failed: ${error}`);
+      // P5-05: execute now that the action is genuinely approved —
+      // see execute-action.ts's own doc comment for why this is a
+      // shared function rather than inlined here.
+      await executeApprovedAction(pool, payload.tenantId, action);
       return { kind: 'decided' as const, approved: true };
     });
 
