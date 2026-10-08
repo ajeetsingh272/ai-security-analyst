@@ -168,14 +168,31 @@ export class ActionsRepository extends TenantScopedRepository {
     });
   }
 
-  /** P5-05: approved -> executing, guarded the same way approve() is —
+  /**
+   * P5-05: approved -> executing, guarded the same way approve() is —
    * only an action genuinely in `approved` can start executing, so a
    * duplicate trigger (e.g. a retried request) cannot start two
-   * concurrent executions of the same action. */
+   * concurrent executions of the same action.
+   *
+   * P5-09 AC1: "action started" is its OWN audited event, distinct
+   * from "approval granted" — the two can be arbitrarily far apart in
+   * time (an approved-but-not-yet-executed action sitting in a queue
+   * is a real, auditable state a compliance reviewer needs to see as
+   * its own line, not inferred from the gap between two other entries).
+   */
   async markExecuting(actionId: string): Promise<boolean> {
     return this.withTransaction(async (client) => {
       const result = await client.query(`UPDATE actions SET status = 'executing' WHERE id = $1 AND status = 'approved'`, [actionId]);
-      return result.rowCount === 1;
+      if (result.rowCount !== 1) return false;
+
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'system',
+        actorId: 'sentinel-response',
+        action: 'action_started',
+        subjectType: 'action',
+        subjectId: actionId,
+      });
+      return true;
     });
   }
 

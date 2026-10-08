@@ -14,6 +14,7 @@
  * P5-03's own single-use check.
  */
 import { TenantScopedRepository } from '../tenant-context.js';
+import { writeAuditEntryTx } from '../audit/audit-log-writer.js';
 
 export type NotificationChannelId = 'whatsapp' | 'slack' | 'email' | 'dashboard_banner';
 export type DeliveryStatus = 'sent' | 'failed';
@@ -38,14 +39,32 @@ export interface DeliveryAttemptRow {
 }
 
 export class NotificationDeliveryRepository extends TenantScopedRepository {
+  /** P5-09 AC1: "alert sent" is audited — in the SAME transaction as
+   * the delivery row itself (AC3: "audit writes share a transaction
+   * with the state change they describe"), and only for a genuine
+   * success. A per-channel failed attempt is still recorded in
+   * `notification_deliveries` (P5-01's own "every attempt" guarantee)
+   * but is not its own audit_log line — P5-09's own AC list names
+   * "alert sent," not "alert attempt failed," as the audited event. */
   async recordAttempt(input: RecordDeliveryAttemptInput): Promise<void> {
-    await this.withTransaction((client) =>
-      client.query(
+    await this.withTransaction(async (client) => {
+      await client.query(
         `INSERT INTO notification_deliveries (tenant_id, dedupe_key, channel, attempt, status, content, error)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [this.tenantId, input.dedupeKey, input.channel, input.attempt, input.status, input.content === undefined ? null : JSON.stringify(input.content), input.error ?? null],
-      ),
-    );
+      );
+
+      if (input.status === 'sent') {
+        await writeAuditEntryTx(client, this.tenantId, {
+          actorType: 'system',
+          actorId: 'sentinel-notifications',
+          action: 'alert_sent',
+          subjectType: 'notification',
+          subjectId: input.dedupeKey,
+          payload: { channel: input.channel },
+        });
+      }
+    });
   }
 
   /** T4: has this (alert, channel) pair already been delivered successfully? */

@@ -91,6 +91,7 @@ describe('proposeAction', () => {
     );
     expect(audit.rows).toEqual([
       { action: 'approval_granted', actor_type: 'system', actor_id: 'sentinel-pre-approval' },
+      { action: 'action_started', actor_type: 'system', actor_id: 'sentinel-response' },
       { action: 'action_failed', actor_type: 'system', actor_id: 'sentinel-response' },
     ]);
   });

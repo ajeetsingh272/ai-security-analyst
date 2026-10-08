@@ -107,8 +107,8 @@ describe('playbook execution after approval', () => {
       tenantId,
     );
     const actions = audit.rows.map((r) => r.action);
-    expect(actions).toEqual(['approval_granted', 'action_failed']);
-    expect(audit.rows[1]!.payload).toMatchObject({ manual_steps: expect.any(String) });
+    expect(actions).toEqual(['approval_granted', 'action_started', 'action_failed']);
+    expect(audit.rows[2]!.payload).toMatchObject({ manual_steps: expect.any(String) });
 
     const transition = await asAdmin(
       (c) => c.query(`SELECT to_state, reason FROM case_transitions WHERE case_id = $1 ORDER BY id DESC LIMIT 1`, [caseId]),

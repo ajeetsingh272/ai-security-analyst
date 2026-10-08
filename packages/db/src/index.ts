@@ -73,6 +73,7 @@ export {
   type AuditEntryInput,
   type WrittenAuditEntry,
 } from './audit/audit-log-writer.js';
+export { AuditExportRepository, type AuditExportEntry } from './audit/audit-export-repository.js';
 export {
   NotificationDeliveryRepository,
   type NotificationChannelId,

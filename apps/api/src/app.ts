@@ -29,6 +29,7 @@ import { preApprovalsRoutes } from './routes/pre-approvals.js';
 import { slackConnectorRoutes, slackOAuthConfigFromEnv } from './routes/slack-connector.js';
 import { slackWebhookRoutes, slackWebhookConfigFromEnv, type SlackWebhookConfig } from './routes/slack-webhook.js';
 import { resendWebhookRoutes, resendWebhookConfigFromEnv, type ResendWebhookConfig } from './routes/resend-webhook.js';
+import { auditExportRoutes } from './routes/audit-export.js';
 import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
 import type { SlackOAuthConfig } from './connectors/slack-oauth.js';
@@ -113,6 +114,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(slackConnectorRoutes, { pool, redis, oauthConfig: slackOAuthConfig });
   await app.register(slackWebhookRoutes, { pool, nonceStore: new RedisPostgresNonceStore(redis, pool), tokenSecret: approvalsConfig?.tokenSecret, config: slackWebhookConfig });
   await app.register(resendWebhookRoutes, { pool, config: resendWebhookConfig });
+  await app.register(auditExportRoutes, { pool });
 
   return app;
 }

@@ -138,7 +138,7 @@ describe('POST /webhooks/slack/interactions', () => {
     // action_failed (execute-action.ts's honest "no M365 connection"
     // path) — the SAME two-step sequence approvals.integration.test.ts
     // already proves for a plain HTTP POST to /approvals/:token.
-    expect(audit.rows.map((r) => r.action)).toEqual(['approval_granted', 'action_failed']);
+    expect(audit.rows.map((r) => r.action)).toEqual(['approval_granted', 'action_started', 'action_failed']);
   });
 
   it('a "call_me_first" interaction is audited without burning the token — a later real approve on the SAME token still succeeds', async () => {
@@ -159,7 +159,7 @@ describe('POST /webhooks/slack/interactions', () => {
     expect(approveRes.statusCode).toBe(200);
 
     const audit = await asAdmin((c) => c.query(`SELECT action FROM audit_log WHERE tenant_id = $1 AND subject_id = $2 ORDER BY id ASC`, [tenantId, actionId]), tenantId);
-    expect(audit.rows.map((r) => r.action)).toEqual(['call_me_first_requested', 'approval_granted', 'action_failed']);
+    expect(audit.rows.map((r) => r.action)).toEqual(['call_me_first_requested', 'approval_granted', 'action_started', 'action_failed']);
   });
 
   it('returns 503 rather than crashing when SLACK_SIGNING_SECRET is not configured', async () => {
