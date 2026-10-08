@@ -24,6 +24,50 @@ export interface ActionRow {
 }
 
 export class ActionsRepository extends TenantScopedRepository {
+  /**
+   * P5-06: the "propose an action" entry point this table has never
+   * had until now — every other method here only reads or transitions
+   * an already-existing row (P5-02/03/05's own fixtures all INSERT
+   * directly in their tests because nothing else created one yet).
+   * Whatever eventually turns a Verdict's own recommendedActions into
+   * real rows (the AI analyst plane, P4) should call this rather than
+   * duplicate the INSERT.
+   */
+  async proposeAction(caseId: string, playbook: string, target: unknown, blastRadius: string): Promise<ActionRow> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<{
+        id: string;
+        tenant_id: string;
+        case_id: string;
+        playbook: string;
+        target: unknown;
+        blast_radius: string;
+        status: string;
+        error: string | null;
+        created_at: string;
+        executed_at: string | null;
+      }>(
+        `INSERT INTO actions (tenant_id, case_id, playbook, target, blast_radius)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, tenant_id, case_id, playbook, target, blast_radius, status, error, created_at, executed_at`,
+        [this.tenantId, caseId, playbook, JSON.stringify(target), blastRadius],
+      );
+      const r = rows[0]!;
+      return {
+        id: r.id,
+        tenantId: r.tenant_id,
+        caseId: r.case_id,
+        playbook: r.playbook,
+        target: r.target,
+        blastRadius: r.blast_radius,
+        status: r.status,
+        error: r.error,
+        createdAt: r.created_at,
+        executedAt: r.executed_at,
+      };
+    });
+  }
+
   /** Returns null both when the id does not exist AND when it belongs
    * to a different tenant (RLS filters it out identically either way) —
    * a caller cannot distinguish "wrong id" from "someone else's action"
@@ -91,6 +135,34 @@ export class ActionsRepository extends TenantScopedRepository {
         subjectType: 'action',
         subjectId: actionId,
         payload: stepUpVerified === undefined ? { case_id: caseId } : { case_id: caseId, step_up_verified: stepUpVerified },
+      });
+      return true;
+    });
+  }
+
+  /**
+   * P5-06: the pre-approval path's own "approve" — same transition
+   * and guard as approve(), but `actorType: 'system'` rather than
+   * 'human' (ADR-0007's own "clean separation of AI-initiated from
+   * human-approved decisions in the record") and a fixed actor id,
+   * since nothing a human did authorizes this specific action; the
+   * tenant's own prior PreApprovalRepository.grant() call is what
+   * authorized it, and that grant has its own audit entry already.
+   * Never called for a destructive playbook — PreApprovalRepository
+   * itself refuses to let one be pre-approved in the first place.
+   */
+  async autoApprove(actionId: string, caseId: string): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(`UPDATE actions SET status = 'approved' WHERE id = $1 AND case_id = $2 AND status = 'proposed'`, [actionId, caseId]);
+      if (result.rowCount !== 1) return false;
+
+      await writeAuditEntryTx(client, this.tenantId, {
+        actorType: 'system',
+        actorId: 'sentinel-pre-approval',
+        action: 'approval_granted',
+        subjectType: 'action',
+        subjectId: actionId,
+        payload: { case_id: caseId, pre_approved: true },
       });
       return true;
     });
