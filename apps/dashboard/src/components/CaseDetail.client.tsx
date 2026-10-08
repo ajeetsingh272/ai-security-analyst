@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Card, SeverityPill, Badge, Skeleton, EmptyState, ErrorState, Button } from '@sentinel/ui';
-import type { CaseDetailResponse, Claim, ActionRow, EvidenceResponse, EvidenceResult } from '../lib/case-detail.js';
+import type { CaseDetailResponse, CaseTransition, Claim, ActionRow, EvidenceResponse, EvidenceResult } from '../lib/case-detail.js';
+import type { ChallengeDismissalResponse } from '../lib/dismissals.js';
 
 type LoadState = 'loading' | 'loaded' | 'error';
 
@@ -41,6 +42,10 @@ export function CaseDetail({ caseId }: CaseDetailProps) {
         <h1 className="font-display text-display-m text-text-primary">{data.case.title ?? 'Untitled case'}</h1>
       </header>
 
+      {data.transitions[0]?.toState === 'dismissed' && (
+        <ChallengeDismissalSection caseId={caseId} transition={data.transitions[0]} onChallenged={() => void load()} />
+      )}
+
       {data.verdict ? (
         <VerdictSection verdict={data.verdict} caseId={caseId} />
       ) : (
@@ -66,6 +71,65 @@ export function CaseDetail({ caseId }: CaseDetailProps) {
 
       <TimelineSection transitions={data.transitions} />
     </div>
+  );
+}
+
+/** P6-08 (TG3: "Nothing is hidden — dismissals are surfaced") — AC3/T2:
+ * challenging reopens the case via the real POST /cases/:id/challenge
+ * (P3-07), which this file reuses rather than re-implementing. Visible
+ * only while the case's own latest transition is still 'dismissed'. */
+function ChallengeDismissalSection({ caseId, transition, onChallenged }: { caseId: string; transition: CaseTransition; onChallenged: () => void }) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function challenge() {
+    if (reason.trim().length === 0) {
+      setError('A reason is required to challenge a dismissal.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/cases/${caseId}/challenge`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) {
+        setError('Could not challenge this dismissal.');
+        return;
+      }
+      (await res.json()) as ChallengeDismissalResponse;
+      onChallenged();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="border-severity-high/30">
+      <div className="flex flex-col gap-2">
+        <p className="font-ui text-body-m font-medium text-text-primary">
+          Dismissed by {transition.actorType === 'system' ? 'a rule' : transition.actorType === 'ai' ? "Sentinel's own AI" : transition.actorType}
+        </p>
+        <p className="text-body-s text-text-secondary">{transition.reason ?? 'no reason recorded'}</p>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            type="text"
+            aria-label="Reason for challenging this dismissal"
+            placeholder="Why should this be reopened?"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className="min-w-64 flex-1 rounded-md border border-border-hairline bg-surface-raised px-2 py-1.5 text-body-s text-text-primary"
+          />
+          <Button variant="primary" size="sm" isLoading={submitting} onClick={() => void challenge()}>
+            Challenge dismissal
+          </Button>
+        </div>
+        {error && <span className="text-body-s text-severity-critical">{error}</span>}
+      </div>
+    </Card>
   );
 }
 

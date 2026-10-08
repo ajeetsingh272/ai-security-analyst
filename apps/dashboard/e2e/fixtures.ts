@@ -124,6 +124,42 @@ export async function auditActionsFor(tenantId: string, subjectId: string): Prom
   );
 }
 
+/** P6-08: a case already dismissed by a rule ('system') or by Sentinel's
+ * own AI triage ('ai'), with a given reason — exactly the shape
+ * `dailyDismissalDigest` groups by (actor_type, reason). */
+export async function seedDismissedCase(tenantId: string, actorType: 'system' | 'ai', reason: string, title: string): Promise<string> {
+  return asAdmin(async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO cases (tenant_id, severity, title, window_start, signal_count) VALUES ($1, 'low', $2, now(), 1) RETURNING id`,
+      [tenantId, title],
+    );
+    const caseId = rows[0]!.id;
+    await client.query(
+      `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+       VALUES ($1, $2, NULL, 'open', 'system', 'correlate', 'e2e fixture')`,
+      [tenantId, caseId],
+    );
+    await client.query(
+      `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+       VALUES ($1, $2, 'open', 'dismissed', $3, $4, $5)`,
+      [tenantId, caseId, actorType, actorType === 'ai' ? 'sentinel-analyst' : 'correlate', reason],
+    );
+    return caseId;
+  }, tenantId);
+}
+
+/** P6-08: a real, revocable suppression row. */
+export async function seedSuppression(tenantId: string, createdByUserId: string, ruleId: string, reason: string): Promise<string> {
+  return asAdmin(async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO suppressions (tenant_id, rule_id, reason, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '30 days') RETURNING id`,
+      [tenantId, ruleId, reason, createdByUserId],
+    );
+    return rows[0]!.id;
+  }, tenantId);
+}
+
 /** P6-07: a weekly report row, seeded directly so a read_only viewer's
  * page (which cannot itself call POST /reports/weekly) has something
  * real to render. */

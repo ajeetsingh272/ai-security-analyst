@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Card, SeverityPill, Badge, Skeleton, EmptyState, ErrorState, Pagination } from '@sentinel/ui';
 import {
   SEVERITIES,
@@ -30,8 +31,22 @@ type LoadState = 'loading' | 'loaded' | 'error';
  * wording ("new cases appear without a manual refresh") honestly rather
  * than faking a push feed that isn't real.
  */
+/** P6-08: the dismissal digest links here with `?state=dismissed&
+ * createdAfter=...&createdBefore=...` so "browsable" dismissals
+ * actually land on a pre-filtered list rather than a plain, unfiltered
+ * /cases page the user would have to re-filter by hand. */
+function initialFiltersFromSearchParams(params: URLSearchParams): CaseFilters {
+  const filters: CaseFilters = {};
+  for (const key of ['severity', 'state', 'entityId', 'ruleId', 'createdAfter', 'createdBefore'] as const) {
+    const value = params.get(key);
+    if (value) filters[key] = value;
+  }
+  return filters;
+}
+
 export function CaseList() {
-  const [filters, setFilters] = useState<CaseFilters>({});
+  const searchParams = useSearchParams();
+  const [filters, setFilters] = useState<CaseFilters>(() => initialFiltersFromSearchParams(searchParams));
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CaseListResponse | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
