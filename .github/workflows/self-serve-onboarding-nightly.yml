@@ -1,0 +1,92 @@
+name: Self-serve onboarding (nightly)
+
+# P6-13 AC: "runs nightly and gates the release." The P6 exit criterion
+# as an automated test — signup to connector to scan to first case to
+# weekly report, unassisted (apps/dashboard/e2e/self-serve-onboarding.
+# spec.ts).
+#
+# ⚠ Read that spec file's own top-of-file doc comment before trusting
+# this workflow as proof of the ticket's own literal AC: it runs
+# against the SAME mock Microsoft token endpoint every other M365 test
+# in this repo already uses, never a real Microsoft test tenant — there
+# is no real Entra app registration anywhere in this sandbox. This
+# workflow genuinely gates every REAL signal this test can provide (a
+# regression in sign-in, the connectors page, the scan trigger, or
+# weekly-report generation), but it does NOT gate on a real
+# Microsoft-side regression, since no real Microsoft integration is
+# exercised at all. Running the real thing against an actual Entra
+# registration, on a real schedule, is a separate, not-yet-done
+# follow-up this workflow does not substitute for.
+#
+# Mirrors noise-ratio-nightly.yml's own scheduled-workflow shape: a
+# non-zero exit here fails this job, which is what turns into GitHub's
+# own failed-scheduled-workflow notification.
+#
+# Separate from ci-e2e.yml (which already runs the FULL Playwright
+# suite, including this spec, on every push/PR) for the same reason
+# noise-ratio-nightly.yml is its own file: this one exists so the
+# schedule trigger and its own "ran overnight, here's what broke"
+# framing are independent of the PR-gated suite, even though the two
+# happen to run the identical spec today.
+
+on:
+  schedule:
+    # Nightly.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: self-serve-onboarding-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  onboarding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait postgres redis
+
+      # This test needs none of ClickHouse (the scan/report steps it
+      # drives are both already scoped to summarise existing Postgres
+      # data, never real ingested events — see P6-05's own established
+      # scope boundary) — skipped the same way noise-ratio-nightly.yml
+      # already skips it for its own Postgres-only need.
+      - name: Migrate
+        run: bash scripts/migrate.sh
+        env:
+          MIGRATE_SKIP_CLICKHOUSE: '1'
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Self-serve onboarding path (signup -> connector -> scan -> first case -> weekly report)
+        run: pnpm exec playwright test apps/dashboard/e2e/self-serve-onboarding.spec.ts
+
+      - name: Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-serve-onboarding-playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v
