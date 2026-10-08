@@ -122,6 +122,15 @@ export {
   type UpsertPlanStatusInput,
   type TenantUsageSummary,
 } from './repositories/tenant-usage-repository.js';
+export {
+  FeedbackRepository,
+  TuningBacklogRepository,
+  type FeedbackSubjectType,
+  type FeedbackRow,
+  type CreateFeedbackInput,
+  type TuningBacklogItemRow,
+} from './repositories/feedback-repository.js';
+export { listOnboardingFunnelSummaries, type OnboardingFunnelSummary } from './repositories/onboarding-repository.js';
 export { generateDEK, encryptWithDEK, decryptWithDEK } from './crypto/envelope.js';
 export { LocalKMS, type KeyManagementService, type WrappedDEK } from './crypto/kms.js';
 export {

@@ -28,6 +28,8 @@ import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } 
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { opsRoutes } from './routes/ops.js';
+import { pilotRoutes } from './routes/pilot.js';
+import { feedbackRoutes } from './routes/feedback.js';
 import { dismissalsRoutes } from './routes/dismissals.js';
 import { casesRoutes } from './routes/cases.js';
 import { caseDetailRoutes } from './routes/case-detail.js';
@@ -145,6 +147,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(opsRoutes, { pool, opsTenantId });
+  await app.register(pilotRoutes, { pool, opsTenantId });
+  await app.register(feedbackRoutes, { pool });
   await app.register(dismissalsRoutes, { pool });
   await app.register(casesRoutes, { pool });
   await app.register(caseDetailRoutes, { pool, clickhouse });

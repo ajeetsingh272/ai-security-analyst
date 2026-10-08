@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Skeleton, EmptyState, ErrorState, Button } from '@sentinel/ui';
 import { DAY_NAMES, type WeeklyReportListResponse, type ReportSchedule, type WeeklyReportRow } from '../lib/weekly-report.js';
+import { FeedbackWidget } from './FeedbackWidget.client.js';
 
 type LoadState = 'loading' | 'loaded' | 'error';
 
@@ -35,6 +36,7 @@ function ReportCard({ report }: { report: WeeklyReportRow }) {
             Download PDF
           </a>
         </div>
+        <FeedbackWidget subjectType="weekly_report" subjectId={report.id} />
       </div>
     </Card>
   );

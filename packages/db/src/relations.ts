@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, tenantPlanStatus, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
+import { tenants, memberships, users, caseTransitions, cases, actions, approvalNonces, mspLinks, suppressions, tenantDeks, connectors, hotfixRules, entities, entityAliases, caseSignals, scanJobs, baselineCursors, entityMerges, weeklyReports, llmUsage, analystDegradedQueue, tenantNotificationPreferences, investigationTranscripts, notificationDeliveries, tenantPreApprovals, tenantReportSchedule, apiKeys, tuningBacklogItems, tenantPlanStatus, feedback, notificationRecipientOptouts, connectorCursors, entityCriticality } from "./schema";
 
 export const membershipsRelations = relations(memberships, ({one}) => ({
 	tenant: one(tenants, {
@@ -42,7 +42,9 @@ export const tenantsRelations = relations(tenants, ({many}) => ({
 	tenantPreApprovals: many(tenantPreApprovals),
 	tenantReportSchedules: many(tenantReportSchedule),
 	apiKeys: many(apiKeys),
+	tuningBacklogItems: many(tuningBacklogItems),
 	tenantPlanStatuses: many(tenantPlanStatus),
+	feedbacks: many(feedback),
 	notificationRecipientOptouts: many(notificationRecipientOptouts),
 	entityCriticalities: many(entityCriticality),
 }));
@@ -74,6 +76,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	apiKeys_revokedBy: many(apiKeys, {
 		relationName: "apiKeys_revokedBy_users_id"
 	}),
+	feedbacks: many(feedback),
 }));
 
 export const caseTransitionsRelations = relations(caseTransitions, ({one}) => ({
@@ -98,6 +101,7 @@ export const casesRelations = relations(cases, ({one, many}) => ({
 	llmUsages: many(llmUsage),
 	analystDegradedQueues: many(analystDegradedQueue),
 	investigationTranscripts: many(investigationTranscripts),
+	tuningBacklogItems: many(tuningBacklogItems),
 }));
 
 export const actionsRelations = relations(actions, ({one, many}) => ({
@@ -347,10 +351,32 @@ export const apiKeysRelations = relations(apiKeys, ({one}) => ({
 	}),
 }));
 
+export const tuningBacklogItemsRelations = relations(tuningBacklogItems, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [tuningBacklogItems.tenantId],
+		references: [tenants.id]
+	}),
+	case: one(cases, {
+		fields: [tuningBacklogItems.caseId],
+		references: [cases.id]
+	}),
+}));
+
 export const tenantPlanStatusRelations = relations(tenantPlanStatus, ({one}) => ({
 	tenant: one(tenants, {
 		fields: [tenantPlanStatus.tenantId],
 		references: [tenants.id]
+	}),
+}));
+
+export const feedbackRelations = relations(feedback, ({one}) => ({
+	tenant: one(tenants, {
+		fields: [feedback.tenantId],
+		references: [tenants.id]
+	}),
+	user: one(users, {
+		fields: [feedback.userId],
+		references: [users.id]
 	}),
 }));
 
