@@ -117,8 +117,26 @@ export function WeeklyReportView({ canManage }: WeeklyReportViewProps) {
     }
   }
 
-  if (loadState === 'loading') return <Skeleton lines={6} />;
-  if (loadState === 'error') return <ErrorState title="Could not load reports" onRetry={() => void load()} />;
+  // P6-11: the page-level heading renders in every state — see
+  // MspConsole.client.tsx's own doc comment for the gap this was
+  // found to be a real, not just theoretical, instance of.
+  const heading = <h1 className="font-display text-display-m text-text-primary">Weekly reports</h1>;
+  if (loadState === 'loading') {
+    return (
+      <div className="flex flex-col gap-6">
+        {heading}
+        <Skeleton lines={6} />
+      </div>
+    );
+  }
+  if (loadState === 'error') {
+    return (
+      <div className="flex flex-col gap-6">
+        {heading}
+        <ErrorState title="Could not load reports" onRetry={() => void load()} />
+      </div>
+    );
+  }
   if (!data) return null;
 
   const [latest, ...older] = data.reports;
@@ -126,7 +144,7 @@ export function WeeklyReportView({ canManage }: WeeklyReportViewProps) {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex items-center justify-between gap-4">
-        <h1 className="font-display text-display-m text-text-primary">Weekly reports</h1>
+        {heading}
         {canManage && (
           <Button variant="secondary" onClick={() => void generateNow()} disabled={generateState === 'generating'}>
             {generateState === 'generating' ? 'Generating…' : 'Generate now'}

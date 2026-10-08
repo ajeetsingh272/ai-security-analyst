@@ -31,8 +31,27 @@ export function CaseDetail({ caseId }: CaseDetailProps) {
     void load();
   }, [load]);
 
-  if (loadState === 'loading') return <Skeleton lines={8} />;
-  if (loadState === 'error') return <ErrorState title="Could not load this case" onRetry={() => void load()} />;
+  // P6-11: the page-level heading renders in every state — see
+  // MspConsole.client.tsx's own doc comment for the gap this was
+  // found to be a real, not just theoretical, instance of. The real
+  // title is only known once loaded, so loading/error states get a
+  // generic but still real heading rather than none at all.
+  if (loadState === 'loading') {
+    return (
+      <div className="flex flex-col gap-6">
+        <h1 className="font-display text-display-m text-text-primary">Case</h1>
+        <Skeleton lines={8} />
+      </div>
+    );
+  }
+  if (loadState === 'error') {
+    return (
+      <div className="flex flex-col gap-6">
+        <h1 className="font-display text-display-m text-text-primary">Case</h1>
+        <ErrorState title="Could not load this case" onRetry={() => void load()} />
+      </div>
+    );
+  }
   if (!data) return null;
 
   return (
@@ -127,7 +146,11 @@ function ChallengeDismissalSection({ caseId, transition, onChallenged }: { caseI
             Challenge dismissal
           </Button>
         </div>
-        {error && <span className="text-body-s text-severity-critical">{error}</span>}
+        {error && (
+          <span role="alert" className="text-body-s text-severity-critical">
+            {error}
+          </span>
+        )}
       </div>
     </Card>
   );
@@ -308,7 +331,11 @@ function ActionRowCard({ caseId, action, onApproved }: { caseId: string; action:
           <Button variant="primary" size="sm" isLoading={submitting} onClick={() => void approve(needsStepUp ? password : undefined)}>
             Approve
           </Button>
-          {error && <span className="text-body-s text-severity-critical">{error}</span>}
+          {error && (
+            <span role="alert" className="text-body-s text-severity-critical">
+              {error}
+            </span>
+          )}
         </div>
       )}
     </Card>
