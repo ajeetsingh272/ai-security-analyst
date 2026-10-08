@@ -1,0 +1,98 @@
+name: CI · E2E
+
+# P6-11 AC5: "automated accessibility checks run in CI and gate the
+# build" — this is that gate for the Playwright suite specifically
+# (apps/dashboard/e2e/*.spec.ts, including accessibility.spec.ts's own
+# axe-in-Playwright scan and keyboard-only approval walkthrough).
+# Unit-level axe (jsdom/RTL, apps/dashboard and packages/ui's own
+# __tests__) already gates the build today via ci-typescript.yml's
+# existing `pnpm test:unit` step — this workflow is the e2e half that
+# did not exist before.
+#
+# A separate workflow file from ci-integration.yml for the same reason
+# ci-typescript.yml and ci-go.yml are separate: Playwright's own
+# browser install and real dashboard dev-server boot make this the
+# slowest job in the pipeline, and folding it into another workflow
+# would make every unrelated check wait behind it.
+#
+# See ci-typescript.yml's own comment for why the trigger carries no
+# `paths:` filter.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: changes · e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            run:
+              - 'apps/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'playwright.config.ts'
+              - '.github/workflows/ci-e2e.yml'
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      # Playwright's own browser binary — not installed by `pnpm install`.
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E tests (including accessibility.spec.ts's axe scan and keyboard-only approval walkthrough)
+        run: pnpm test:e2e
+
+      - name: Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v

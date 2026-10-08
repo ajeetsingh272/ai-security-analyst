@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import axe from 'axe-core';
 import { CaseDetail } from '../CaseDetail.client.js';
+import { expectNoAxeViolations, forEachTheme } from '../../test-utils/axe.js';
 import type { CaseDetailResponse, EvidenceResponse } from '../../lib/case-detail.js';
 
 const BASE_DETAIL: CaseDetailResponse = {
@@ -113,4 +114,52 @@ describe('T4: accessibility (axe-core) on the expanded evidence view', () => {
       }
     });
   }
+});
+
+/** P6-11: these two surfaces (a proposed action awaiting approval, and
+ * a dismissed case's challenge control) were added after this file's
+ * own original axe suite above and were not yet covered by it. */
+describe('T1 (P6-11): accessibility (axe-core) on the proposed-action and challenge-dismissal states', () => {
+  it('a case with a proposed action (the approval control) reports zero violations in both themes', async () => {
+    const detailWithAction: CaseDetailResponse = {
+      ...BASE_DETAIL,
+      actions: [{ id: 'action-1', caseId: 'case-1', playbook: 'revoke_sessions', target: {}, blastRadius: 'single_user', status: 'proposed', error: null, createdAt: '2026-04-01T00:00:00.000Z', executedAt: null }],
+    };
+    const actionFetch = vi.fn(async (url: string) => {
+      if (url.includes('/evidence')) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      return new Response(JSON.stringify(detailWithAction), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await forEachTheme(async () => {
+      vi.stubGlobal('fetch', actionFetch);
+      const { container } = render(<CaseDetail caseId="case-1" />);
+      await screen.findByRole('button', { name: 'Approve' });
+      await expectNoAxeViolations(container);
+    });
+  });
+
+  it('a dismissed case (the challenge-dismissal control) reports zero violations in both themes', async () => {
+    const dismissedDetail: CaseDetailResponse = {
+      ...BASE_DETAIL,
+      // transitions[0] is the LATEST (TimelineSection reverses the
+      // array for chronological display) — the dismissal must be
+      // prepended, not appended, for CaseDetail to treat this case as
+      // currently dismissed.
+      transitions: [
+        { fromState: 'open', toState: 'dismissed', actorType: 'system', actorId: 'correlate', reason: 'below_escalation_threshold', occurredAt: '2026-04-02T00:00:00.000Z' },
+        ...BASE_DETAIL.transitions,
+      ],
+    };
+    const dismissedFetch = vi.fn(async (url: string) => {
+      if (url.includes('/evidence')) return new Response(JSON.stringify({ results: [] }), { status: 200 });
+      return new Response(JSON.stringify(dismissedDetail), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await forEachTheme(async () => {
+      vi.stubGlobal('fetch', dismissedFetch);
+      const { container } = render(<CaseDetail caseId="case-1" />);
+      await screen.findByText('Dismissed by a rule');
+      await expectNoAxeViolations(container);
+    });
+  });
 });

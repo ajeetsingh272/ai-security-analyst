@@ -65,16 +65,42 @@ export function MspConsole() {
     }
   }
 
-  if (loadState === 'loading') return <Skeleton lines={6} />;
-  if (loadState === 'error') return <ErrorState title="Could not load your clients" onRetry={() => void load()} />;
+  // P6-11: the page-level heading renders in EVERY state, not only
+  // once data has loaded — a real gap found by this ticket's own e2e
+  // axe scan: a tenant with no linked clients yet (the common case for
+  // most admin accounts) landed on a page with no level-one heading at
+  // all, since the old code returned the empty state before ever
+  // reaching the heading below it.
+  if (loadState === 'loading') {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="font-display text-display-m text-text-primary">Clients</h1>
+        <Skeleton lines={6} />
+      </div>
+    );
+  }
+  if (loadState === 'error') {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="font-display text-display-m text-text-primary">Clients</h1>
+        <ErrorState title="Could not load your clients" onRetry={() => void load()} />
+      </div>
+    );
+  }
   if (!data) return null;
 
   if (data.clients.length === 0) {
-    return <EmptyState title="No linked clients yet" description="Clients you're linked to as an MSP will appear here, ranked by what needs attention most." />;
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="font-display text-display-m text-text-primary">Clients</h1>
+        <EmptyState title="No linked clients yet" description="Clients you're linked to as an MSP will appear here, ranked by what needs attention most." />
+      </div>
+    );
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="font-display text-display-m text-text-primary">Clients</h1>
       <label className="flex flex-col gap-1">
         <span className="font-ui text-body-s font-medium text-text-secondary">Search clients</span>
         <input

@@ -36,8 +36,28 @@ export function ConnectorsWizard() {
     void load();
   }, [load]);
 
-  if (loadState === 'loading') return <Skeleton lines={6} />;
-  if (loadState === 'error') return <ErrorState title="Could not load connector status" onRetry={() => void load()} />;
+  // P6-11: the page-level heading renders in every state — a real gap
+  // found by this ticket's own e2e axe scan on a sibling component
+  // (MspConsole): returning the loading/error state before ever
+  // reaching the heading below left those states with no level-one
+  // heading at all.
+  const heading = <h1 className="font-display text-display-m text-text-primary">Connectors</h1>;
+  if (loadState === 'loading') {
+    return (
+      <div className="flex flex-col gap-6">
+        {heading}
+        <Skeleton lines={6} />
+      </div>
+    );
+  }
+  if (loadState === 'error') {
+    return (
+      <div className="flex flex-col gap-6">
+        {heading}
+        <ErrorState title="Could not load connector status" onRetry={() => void load()} />
+      </div>
+    );
+  }
   if (!data) return null;
 
   const m365 = data.connectors.find((c) => c.kind === 'm365');
@@ -46,6 +66,7 @@ export function ConnectorsWizard() {
 
   return (
     <div className="flex flex-col gap-6">
+      {heading}
       {callbackOutcome === 'connected' && (
         <Card role="status" className="border-verified/30 bg-verified/10">
           <p className="text-body-s text-text-primary">Microsoft 365 is connected. Sentinel will start reporting on new activity shortly.</p>

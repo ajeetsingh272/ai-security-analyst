@@ -16,17 +16,23 @@ export default async function SettingsPage() {
   if (!user) redirect('/sign-in');
   if (!roleAtLeast(user.role, 'admin')) {
     return (
-      <ErrorState
-        title="You don't have access to this page"
-        description="Settings requires the admin or owner role. Ask a tenant owner to grant it if you need access."
-      />
+      <div className="flex flex-col gap-6">
+        <h1 className="font-display text-display-m text-text-primary">Settings</h1>
+        <ErrorState
+          title="You don't have access to this page"
+          description="Settings requires the admin or owner role. Ask a tenant owner to grant it if you need access."
+        />
+      </div>
     );
   }
 
   return (
-    <EmptyState
-      title="Tenant settings are coming in a later ticket"
-      description="This screen is reachable only by admin and owner roles, enforced on the server — that enforcement is what P6-01 actually delivers here."
-    />
+    <div className="flex flex-col gap-6">
+      <h1 className="font-display text-display-m text-text-primary">Settings</h1>
+      <EmptyState
+        title="Tenant settings are coming in a later ticket"
+        description="This screen is reachable only by admin and owner roles, enforced on the server — that enforcement is what P6-01 actually delivers here."
+      />
+    </div>
   );
 }

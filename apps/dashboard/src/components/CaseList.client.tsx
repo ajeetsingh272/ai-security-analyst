@@ -103,6 +103,7 @@ export function CaseList() {
 
   return (
     <div className="flex flex-col gap-4">
+      <h1 className="font-display text-display-m text-text-primary">Cases</h1>
       <fieldset className="flex flex-wrap gap-3 border-0 p-0" aria-label="Filter cases">
         <label className="flex flex-col gap-1 text-body-s text-text-secondary">
           Severity
@@ -239,6 +240,18 @@ export function CaseList() {
                         href={`/cases/${item.id}`}
                         className="mt-2 inline-block font-ui text-body-s text-signal underline underline-offset-2"
                         onClick={(e) => e.stopPropagation()}
+                        // P6-11: a keyboard Enter/Space on this link
+                        // bubbles up to the parent Card's own onKeyDown
+                        // (keydown bubbles, unlike the click handler
+                        // above, which already stops it) — without
+                        // this, the Card's own Enter handling ALSO
+                        // fires, preventDefault()s the link's
+                        // navigation and re-collapses the row. A mouse
+                        // click never hit this because only the click
+                        // event needed stopping; a keyboard user
+                        // following the identical path silently failed
+                        // to navigate at all until this was added.
+                        onKeyDown={(e) => e.stopPropagation()}
                       >
                         View full case →
                       </a>

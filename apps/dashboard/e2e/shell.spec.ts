@@ -41,7 +41,10 @@ test.describe('T1: authenticated navigation across every top-level route', () =>
       if (label === 'Cases') await expect(page.getByLabel('Severity')).toBeVisible();
       // P6-04 replaced the Connectors placeholder with the real wizard.
       else if (label === 'Connectors') await expect(page.getByRole('link', { name: 'Connect Microsoft 365' })).toBeVisible();
-      else if (label === 'Reports') await expect(page.getByText('coming in P6-07')).toBeVisible();
+      // P6-07 replaced the Reports placeholder with the real weekly
+      // report view — a fresh owner's own report-free tenant shows
+      // its own empty state, not the old "coming in P6-07" stub.
+      else if (label === 'Reports') await expect(page.getByText('No reports yet')).toBeVisible();
       else await expect(page.getByText('coming in a later ticket')).toBeVisible();
       // AC4: no horizontal scroll at the AC's own minimum width.
       const hasHorizontalScroll = await page.evaluate(
