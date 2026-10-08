@@ -37,6 +37,11 @@ export {
   type CaseHistory,
   type CaseSignalRow,
   type CaseTransitionRow,
+  type CaseListItem,
+  type CaseListFilters,
+  type CaseListPage,
+  type CaseFilterOptions,
+  type FilterOption,
 } from './repositories/cases-repository.js';
 export { LlmUsageRepository, type UsageRecord } from './repositories/llm-usage-repository.js';
 export { DegradedQueueRepository, listTenantsWithPendingDegradedCases, type DegradedQueueRow } from './repositories/degraded-queue-repository.js';

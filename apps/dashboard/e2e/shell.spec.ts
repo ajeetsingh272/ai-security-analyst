@@ -33,7 +33,10 @@ test.describe('T1: authenticated navigation across every top-level route', () =>
     await expect(page.getByText('Sentinel', { exact: true })).toBeVisible();
 
     for (const [label, headingText] of [
-      ['Cases', 'coming in P6-02'],
+      // P6-02 replaced the Cases placeholder with the real case list —
+      // "Severity" (the filter bar's own label) is this route's stable
+      // marker now, the same role a placeholder string played before.
+      ['Cases', 'Severity'],
       ['Connectors', 'coming in P6-04'],
       ['Reports', 'coming in P6-07'],
       ['Settings', 'coming in a later ticket'],

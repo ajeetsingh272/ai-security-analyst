@@ -50,6 +50,25 @@ export async function seedTenantAndUser(role: 'owner' | 'admin' | 'analyst' | 'r
   return { tenantId, userId, email };
 }
 
+/** P6-02: a minimal real case, with the initial 'open' transition every
+ * real case gets at creation (services/correlate's own lifecycle.Writer)
+ * — without it, `state` would come back null and a `state` filter would
+ * never match. */
+export async function seedCase(tenantId: string, severity: string, title: string): Promise<string> {
+  return asAdmin(async (client) => {
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO cases (tenant_id, severity, title, window_start, signal_count) VALUES ($1, $2, $3, now(), 1) RETURNING id`,
+      [tenantId, severity, title],
+    );
+    await client.query(
+      `INSERT INTO case_transitions (tenant_id, case_id, from_state, to_state, actor_type, actor_id, reason)
+       VALUES ($1, $2, NULL, 'open', 'system', 'correlate', 'e2e fixture')`,
+      [tenantId, rows[0]!.id],
+    );
+    return rows[0]!.id;
+  }, tenantId);
+}
+
 /** Tenants cascade-delete memberships, but `users` is a global table with
  * no tenant_id — left behind otherwise. Deliberately does not close the
  * shared `pool` — several spec files load this same module within one
