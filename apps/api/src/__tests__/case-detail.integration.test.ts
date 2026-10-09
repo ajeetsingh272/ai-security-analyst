@@ -3,13 +3,18 @@
  * /cases/:caseId/actions/:actionId/approve, against the real Postgres
  * and Redis the dev stack provides.
  *
- * The evidence route's ClickHouse round trip is NOT exercised here —
- * this sandbox's Docker setup cannot start ClickHouse (it depends on
- * the `s3` cold-tier service, which hits the same pre-existing Windows
- * port-exclusion conflict already documented for the observability/
- * analyst integration suites). What IS tested for real: the route's
- * honest 503 when CLICKHOUSE_URL is unset, which is the exact
- * degraded-not-crashed contract app.ts's own doc comment promises.
+ * The evidence route's ClickHouse round trip itself is covered by a
+ * SEPARATE describe block below ("GET /cases/:id/evidence (real
+ * ClickHouse)"), against the real dev-stack ClickHouse — P1-06/P7-05's
+ * own `infra/docker/clickhouse-storage.xml` wires a real SeaweedFS-
+ * backed `cold` disk into this stack, so ClickHouse itself starts fine
+ * here; an earlier version of this comment claimed otherwise from a
+ * since-resolved, session-specific Windows dynamic-port-exclusion
+ * collision, not a standing limitation. The main describe block below
+ * still deliberately exercises the route's honest 503 when
+ * CLICKHOUSE_URL is unset — the exact degraded-not-crashed contract
+ * app.ts's own doc comment promises — using its own `app` instance
+ * built without a clickhouseUrl.
  *
  * Requires: pnpm dev:stack && pnpm db:migrate.
  */
@@ -17,9 +22,12 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createClient, type RedisClientType } from 'redis';
+import { createClient as createClickHouseClient, type ClickHouseClient } from '@clickhouse/client';
 import pg, { type PoolClient } from 'pg';
 import { hashPassword } from '../auth/password.js';
 import { buildApp } from '../app.js';
+
+const CLICKHOUSE_URL = process.env.CLICKHOUSE_URL ?? 'http://localhost:8123';
 
 const pool = new pg.Pool({ connectionString: process.env.POSTGRES_URL ?? 'postgres://sentinel:sentinel@localhost:5434/sentinel' });
 let redis: RedisClientType;
@@ -164,6 +172,107 @@ describe('GET /cases/:id/evidence', () => {
     const res = await app.inject({ method: 'GET', url: `/cases/${caseId}/evidence?ids=abc123`, cookies: { sentinel_session: cookie } });
     expect(res.statusCode).toBe(503);
     expect(res.json().error).toBe('clickhouse_unconfigured');
+  });
+});
+
+describe('GET /cases/:id/evidence (real ClickHouse)', () => {
+  /** Seeding needs INSERT, which `sentinel_query_user` is never granted
+   * (0002's own GRANT SELECT-only) — same reason apps/analyst's own
+   * tools.integration.test.ts connects as the default user to seed. */
+  const chAdmin: ClickHouseClient = createClickHouseClient({ url: CLICKHOUSE_URL, database: 'sentinel' });
+  let chApp: FastifyInstance;
+  let chTenantId: string;
+  let chReadOnlyEmail: string;
+
+  async function seedEvent(tenantId: string, eventId: string, time: Date, message: string): Promise<void> {
+    await chAdmin.insert({
+      table: 'events',
+      values: [{
+        tenant_id: tenantId,
+        event_id: eventId,
+        time: time.toISOString().replace('T', ' ').replace('Z', ''),
+        class_uid: 3002,
+        category_uid: 3,
+        activity_id: 1,
+        severity_id: 1,
+        actor_user_uid: 'priya@example.com',
+        target_uid: '',
+        src_ip: '203.0.113.9',
+        status_id: 1,
+        message,
+      }],
+      format: 'JSONEachRow',
+    });
+  }
+
+  beforeAll(async () => {
+    chTenantId = randomUUID();
+    const readOnlyId = randomUUID();
+    chReadOnlyEmail = `p7-05-readonly-${readOnlyId}@example.invalid`;
+    const passwordHash = await hashPassword(KNOWN_PASSWORD);
+    await asAdmin((c) => c.query('INSERT INTO tenants (id, name, plan) VALUES ($1, $2, $3)', [chTenantId, 'P7-05 evidence tier probe tenant', 'trial']));
+    await asAdmin((c) => c.query('INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)', [readOnlyId, chReadOnlyEmail, passwordHash]));
+    await asAdmin((c) => c.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'read_only')`, [chTenantId, readOnlyId]), chTenantId);
+
+    chApp = await buildApp({ pool, redis, cookieSecure: false, clickhouseUrl: CLICKHOUSE_URL });
+  });
+
+  afterAll(async () => {
+    await chAdmin.command({ query: 'ALTER TABLE sentinel.events DELETE WHERE tenant_id = {tenantId:UUID}', query_params: { tenantId: chTenantId }, clickhouse_settings: { mutations_sync: '1' } });
+    await asAdmin((c) => c.query('DELETE FROM tenants WHERE id = $1', [chTenantId]));
+    await chApp.close();
+  });
+
+  it("AC4: an event younger than 90 days is reported as tier 'hot', and tookMs is a real measured duration", async () => {
+    const caseId = await asAdmin(async (client) => {
+      await client.query('SELECT set_config($1, $2, true)', ['app.tenant_id', chTenantId]);
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO cases (tenant_id, severity, title, window_start, signal_count) VALUES ($1, 'critical', 'P7-05 hot-tier probe case', now(), 1) RETURNING id`,
+        [chTenantId],
+      );
+      return rows[0]!.id;
+    }, chTenantId);
+
+    const eventId = `evt-hot-${randomUUID()}`;
+    await seedEvent(chTenantId, eventId, new Date(), 'Sign-in from an unfamiliar location');
+
+    // signIn (the outer helper) closes over `app`, which has no
+    // CLICKHOUSE_URL configured — this route needs chApp's own
+    // ClickHouse-configured instance, so sign in directly against it.
+    const chCookieRes = await chApp.inject({ method: 'POST', url: '/auth/sign-in', payload: { email: chReadOnlyEmail, password: KNOWN_PASSWORD } });
+    const chCookie = chCookieRes.cookies.find((c) => c.name === 'sentinel_session')?.value;
+    if (!chCookie) throw new Error(`sign-in failed against chApp: ${chCookieRes.statusCode} ${chCookieRes.body}`);
+
+    const res = await chApp.inject({ method: 'GET', url: `/cases/${caseId}/evidence?ids=${eventId}`, cookies: { sentinel_session: chCookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { results: Array<{ id: string; status: string; tier?: string }>; tookMs: number };
+    expect(body.results).toEqual([expect.objectContaining({ id: eventId, status: 'found', tier: 'hot' })]);
+    expect(body.tookMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(body.tookMs)).toBe(true);
+  });
+
+  it("AC4: an event older than 90 days is reported as tier 'cold'", async () => {
+    const caseId = await asAdmin(async (client) => {
+      await client.query('SELECT set_config($1, $2, true)', ['app.tenant_id', chTenantId]);
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO cases (tenant_id, severity, title, window_start, signal_count) VALUES ($1, 'critical', 'P7-05 cold-tier probe case', now(), 1) RETURNING id`,
+        [chTenantId],
+      );
+      return rows[0]!.id;
+    }, chTenantId);
+
+    const eventId = `evt-cold-${randomUUID()}`;
+    const agedTime = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000); // 120 days old — past the 90-day hot boundary
+    await seedEvent(chTenantId, eventId, agedTime, 'Historical sign-in, past the hot-tier boundary');
+
+    const chCookieRes = await chApp.inject({ method: 'POST', url: '/auth/sign-in', payload: { email: chReadOnlyEmail, password: KNOWN_PASSWORD } });
+    const chCookie = chCookieRes.cookies.find((c) => c.name === 'sentinel_session')?.value;
+    if (!chCookie) throw new Error(`sign-in failed against chApp: ${chCookieRes.statusCode} ${chCookieRes.body}`);
+
+    const res = await chApp.inject({ method: 'GET', url: `/cases/${caseId}/evidence?ids=${eventId}`, cookies: { sentinel_session: chCookie } });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { results: Array<{ id: string; status: string; tier?: string }> };
+    expect(body.results).toEqual([expect.objectContaining({ id: eventId, status: 'found', tier: 'cold' })]);
   });
 });
 

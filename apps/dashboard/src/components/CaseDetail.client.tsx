@@ -243,6 +243,12 @@ function EvidenceRow({ result }: { result: EvidenceResult }) {
     return (
       <div className="rounded-md bg-surface-sunken p-2 font-mono text-mono-s text-text-secondary" role="status">
         <span className="text-verified">verified</span> — {result.event.message ?? result.event.event_id} ({result.event.time})
+        {result.tier === 'cold' && (
+          // P7-05 AC4: this row came from cold storage — disclosed
+          // rather than silently returned identically to a hot-tier
+          // row, since a cold lookup is genuinely a slower path.
+          <span className="ml-2 text-text-tertiary">· retrieved from cold storage, may be slower</span>
+        )}
       </div>
     );
   }

@@ -11,6 +11,8 @@ import { createClient } from 'redis';
 import { buildApp } from './app.js';
 import { startWeeklyReportScheduler } from './weekly-report-scheduler.js';
 import { startPlanUsageSweep } from './plan-usage-sweep.js';
+import { startRetentionSweep } from './retention-sweep.js';
+import { createAdminClickHouseClient } from './clickhouse.js';
 import { resendConfigFromEnv } from './weekly-report-email.js';
 
 async function main(): Promise<void> {
@@ -42,10 +44,21 @@ async function main(): Promise<void> {
   // weekly-report scheduler above, which only reads whatever status
   // this last recorded.
   const stopPlanUsageSweep = startPlanUsageSweep(pool, resendConfigFromEnv(), app.log);
+  // P7-05 AC3: enforces each tenant's own plan.retentionDays against
+  // ClickHouse directly — see retention-sweep.ts's own doc comment for
+  // why this needs the admin client, not the tenant-scoped one `app`
+  // itself builds for the evidence route. Only starts when
+  // CLICKHOUSE_URL is configured, the same "optional dependency" shape
+  // app.ts already uses for the tenant-scoped client.
+  const clickhouseUrl = process.env.CLICKHOUSE_URL;
+  const stopRetentionSweep = clickhouseUrl
+    ? startRetentionSweep(pool, createAdminClickHouseClient(clickhouseUrl), app.log)
+    : undefined;
 
   async function shutdown(): Promise<void> {
     stopWeeklyReportScheduler();
     stopPlanUsageSweep();
+    stopRetentionSweep?.();
     await app.close();
     await redis.quit();
     await pool.end();

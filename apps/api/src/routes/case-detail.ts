@@ -90,6 +90,19 @@ interface EventRow {
 // more recently than this window is "still indexing," not "missing."
 const PENDING_WINDOW_MS = 5 * 60 * 1000;
 
+// P7-05 AC4: the identical 90-day boundary
+// db/clickhouse/0002_hot_cold_tier_and_row_policy.sql's own TTL clause
+// uses for `TO VOLUME 'cold'`. Because sentinel.events is partitioned
+// BY toYYYYMMDD(time) and the TTL moves whole partitions, an event's
+// own `time` deterministically tells you which tier it is structurally
+// guaranteed to sit in — this is exact, not a heuristic, unlike
+// PENDING_WINDOW_MS above.
+const COLD_TIER_THRESHOLD_MS = 90 * 24 * 60 * 60 * 1000;
+
+function tierFor(eventTime: string): 'hot' | 'cold' {
+  return Date.now() - new Date(eventTime).getTime() >= COLD_TIER_THRESHOLD_MS ? 'cold' : 'hot';
+}
+
 async function caseDetailRoutesImpl(fastify: FastifyInstance, options: CaseDetailRoutesOptions): Promise<void> {
   const { pool, clickhouse } = options;
 
@@ -131,6 +144,10 @@ async function caseDetailRoutesImpl(fastify: FastifyInstance, options: CaseDetai
     const caseRow = await withTenantContext(tenantId, () => new CasesRepository(pool).findById(caseId));
     if (!caseRow) return reply.code(404).send({ error: 'not_found' });
 
+    // AC4: "cold-tier evidence lookups are surfaced in the UI as a
+    // slower path" — wall-clock around the actual query is what proves
+    // that disclosure true, rather than asserting it from the schema.
+    const startedAt = Date.now();
     const rows = await queryAsTenant<EventRow>(clickhouse, {
       tenantId,
       query: `
@@ -140,16 +157,17 @@ async function caseDetailRoutesImpl(fastify: FastifyInstance, options: CaseDetai
         WHERE tenant_id = {tenantId:UUID} AND event_id IN {ids:Array(String)}`,
       query_params: { tenantId, ids: requestedIds },
     });
+    const tookMs = Date.now() - startedAt;
     const byId = new Map(rows.map((r) => [r.event_id, r]));
 
     const isRecent = Date.now() - new Date(caseRow.createdAt).getTime() < PENDING_WINDOW_MS;
     const results = requestedIds.map((requestedId) => {
       const event = byId.get(requestedId);
-      if (event) return { id: requestedId, status: 'found' as const, event };
+      if (event) return { id: requestedId, status: 'found' as const, event, tier: tierFor(event.time) };
       return { id: requestedId, status: (isRecent ? 'pending' : 'not_found') as 'pending' | 'not_found' };
     });
 
-    return reply.code(200).send({ results });
+    return reply.code(200).send({ results, tookMs });
   });
 
   // AC4's own approval control. Session-authenticated — the signed-token

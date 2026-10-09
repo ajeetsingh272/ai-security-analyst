@@ -24,6 +24,26 @@ export function createTenantScopedClickHouseClient(url: string): ClickHouseClien
   });
 }
 
+/**
+ * P7-05: the one deliberate exception to "every ClickHouse query is
+ * tenant-scoped" — a retention sweep that must delete past a
+ * PER-TENANT cutoff across every tenant, and a storage-cost estimate
+ * that reads `system.parts` (which has no tenant_id column at all,
+ * since one physical part can hold many tenants' rows), both need a
+ * connection with no row policy applied. Connects as ClickHouse's own
+ * `default` user — this dev stack's CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+ * env var is what makes that user exist with full rights out of the
+ * box; nothing else in this codebase creates a second admin identity.
+ * Mirrors the exact "privileged role for a background job that
+ * legitimately spans tenants" exception ADR-0008's own risk table
+ * names for Postgres's platform-wide reads (registerXXXConnectors,
+ * findTenantByApiKeyHash) — the identical justification, the Go side's
+ * own precedent, applied here to ClickHouse.
+ */
+export function createAdminClickHouseClient(url: string): ClickHouseClient {
+  return createClient({ url, username: 'default', database: 'sentinel' });
+}
+
 export interface TenantQueryOptions {
   readonly tenantId: string;
   readonly query: string;
