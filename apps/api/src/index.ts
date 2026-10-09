@@ -31,3 +31,5 @@ export {
 } from './connectors/google-oauth.js';
 export { awsConnectorRoutes, awsExternalIdSecretFromEnv, externalIdForTenant } from './routes/aws-connector.js';
 export type { AwsConnectorRoutesOptions } from './routes/aws-connector.js';
+export { azureConnectorRoutes } from './routes/azure-connector.js';
+export type { AzureConnectorRoutesOptions } from './routes/azure-connector.js';

@@ -25,6 +25,7 @@ var Rules = []CompiledRule{
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000025", Title: "Data loss prevention policy disabled", Level: "high", MitreIDs: []string{"attack.t1685"}, Engine: "in-stream", OwnerDescription: "A rule that normally blocks sensitive company information, like customer data, from leaving the company was turned off. Someone may do this right before trying to send data outside the company.\n", Matches: ruleMatch_dlp_policy_disabled},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000034", Title: "Domain federation settings changed", Level: "critical", MitreIDs: []string{"attack.t1484.002"}, Engine: "in-stream", OwnerDescription: "The company changed how one of its email domains proves who its users are when they sign in. This is a sensitive, rarely-changed setting — someone who changes it without permission could make Microsoft trust sign-ins they control.\n", Matches: ruleMatch_domain_federation_settings_changed},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000021", Title: "eDiscovery content search created", Level: "medium", MitreIDs: []string{"attack.t1213"}, Engine: "in-stream", OwnerDescription: "A company-wide search was created that can look through many people's mailboxes and files at once. This tool is normally used by legal or compliance teams, but someone with admin access could misuse it to find sensitive information.\n", Matches: ruleMatch_ediscovery_search_created},
+	{ID: "8f1a2b3c-0002-4a00-9000-00000000000a", Title: "Entra ID Identity Protection risk detection", Level: "high", MitreIDs: []string{"attack.t1078"}, Engine: "in-stream", OwnerDescription: "Microsoft's own Entra ID security system flagged one of your sign-ins or users as risky (an unfamiliar location, a leaked credential, or similar signals it already checked). Sentinel is surfacing that flag as a case so it gets reviewed, rather than only being visible inside the Entra admin console.\n", Matches: ruleMatch_entra_risk_detection},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000017", Title: "Guest account added to a privileged directory role", Level: "high", MitreIDs: []string{"attack.t1136.003"}, Engine: "in-stream", OwnerDescription: "An outside guest account, not one of the company's own employees, was given admin-level access. This is unusual and worth checking, since guest accounts are not normally given this level of control.\n", Matches: ruleMatch_guest_user_granted_directory_role},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000033", Title: "High-privilege permission granted to a user-assigned application", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", OwnerDescription: "A person was given a powerful level of access through a connected app, rather than directly. This is a less obvious way to grant broad access, so it is worth checking if it was intended.\n", Matches: ruleMatch_high_privilege_app_permission_granted},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000008", Title: "Impossible travel between sign-ins", Level: "high", MitreIDs: []string{"attack.t1078.004"}, Engine: "windowed", OwnerDescription: "The same person signed in from two different places in a short amount of time — faster than someone could realistically travel between them. This usually means someone besides the real owner has their password.\n", Matches: ruleMatch_impossible_travel},
@@ -117,6 +118,12 @@ func ruleMatch_domain_federation_settings_changed(ev map[string]string) bool {
 
 func ruleMatch_ediscovery_search_created(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "New-ComplianceSearch")
+	return sel_selection
+
+}
+
+func ruleMatch_entra_risk_detection(ev map[string]string) bool {
+	sel_selection := (ev["class_uid"] == "2004")
 	return sel_selection
 
 }

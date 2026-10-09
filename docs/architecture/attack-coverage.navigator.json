@@ -626,7 +626,8 @@
     },
     {
       "techniqueID": "T1078",
-      "color": "#e0e0e0"
+      "color": "#4caf50",
+      "comment": "Covered by: Entra ID Identity Protection risk detection"
     },
     {
       "techniqueID": "T1078.001",

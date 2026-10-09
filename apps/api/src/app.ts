@@ -27,6 +27,7 @@ import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
 import { googleConnectorRoutes, googleOAuthConfigFromEnv } from './routes/google-connector.js';
 import { awsConnectorRoutes, awsExternalIdSecretFromEnv } from './routes/aws-connector.js';
+import { azureConnectorRoutes } from './routes/azure-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { opsRoutes } from './routes/ops.js';
@@ -160,6 +161,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
   await app.register(googleConnectorRoutes, { pool, redis, oauthConfig: googleOAuthConfig, dashboardBaseUrl });
   await app.register(awsConnectorRoutes, { pool, externalIdSecret: awsExternalIdSecret });
+  await app.register(azureConnectorRoutes, { pool });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(opsRoutes, { pool, opsTenantId });
