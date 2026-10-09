@@ -80,7 +80,12 @@ export interface CaseDetailResponse {
 }
 
 export type EvidenceResult =
-  | { id: string; status: 'found'; event: EventSummary }
+  // P7-05 AC4: `tier` tells the UI whether this row came from the
+  // 90-day-boundary hot or cold ClickHouse volume (exact, computed
+  // server-side from the row's own `time` — see apps/api's
+  // case-detail.ts tierFor) so a cold-tier row can be flagged as the
+  // slower path, not reported identically to a hot one.
+  | { id: string; status: 'found'; event: EventSummary; tier: 'hot' | 'cold' }
   | { id: string; status: 'pending' }
   | { id: string; status: 'not_found' };
 
@@ -99,4 +104,8 @@ export interface EventSummary {
 
 export interface EvidenceResponse {
   results: EvidenceResult[];
+  /** P7-05 AC4: wall-clock time the ClickHouse query itself took —
+   * what lets the UI show a cold-tier lookup actually was slower,
+   * rather than merely asserting it. */
+  tookMs: number;
 }

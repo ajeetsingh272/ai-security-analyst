@@ -37,10 +37,10 @@ const BASE_DETAIL: CaseDetailResponse = {
   mitre: [],
 };
 
-function mockFetch(evidenceResponse: EvidenceResponse) {
+function mockFetch(evidenceResponse: Omit<EvidenceResponse, 'tookMs'>) {
   return vi.fn(async (url: string) => {
     if (url.includes('/evidence')) {
-      return new Response(JSON.stringify(evidenceResponse), { status: 200 });
+      return new Response(JSON.stringify({ ...evidenceResponse, tookMs: 4 }), { status: 200 });
     }
     return new Response(JSON.stringify(BASE_DETAIL), { status: 200 });
   }) as unknown as typeof fetch;
@@ -53,7 +53,7 @@ afterEach(() => {
 describe('CaseDetail evidence states', () => {
   it('T1: expanding a claim displays the referenced event once resolved', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      results: [{ id: 'evt-1', status: 'found', event: { event_id: 'evt-1', time: '2026-04-01T00:05:00.000Z', class_uid: 1, category_uid: 1, activity_id: 1, severity_id: 4, actor_user_uid: null, target_uid: null, src_ip: '203.0.113.9', message: 'Sign-in from an unfamiliar location' } }],
+      results: [{ id: 'evt-1', status: 'found', tier: 'hot', event: { event_id: 'evt-1', time: '2026-04-01T00:05:00.000Z', class_uid: 1, category_uid: 1, activity_id: 1, severity_id: 4, actor_user_uid: null, target_uid: null, src_ip: '203.0.113.9', message: 'Sign-in from an unfamiliar location' } }],
     }));
 
     render(<CaseDetail caseId="case-1" />);
@@ -62,6 +62,18 @@ describe('CaseDetail evidence states', () => {
 
     await screen.findByText(/Sign-in from an unfamiliar location/);
     expect(screen.getByText('verified')).toBeVisible();
+  });
+
+  it('P7-05 AC4: evidence retrieved from the cold tier is flagged as a slower path', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      results: [{ id: 'evt-1', status: 'found', tier: 'cold', event: { event_id: 'evt-1', time: '2025-01-01T00:05:00.000Z', class_uid: 1, category_uid: 1, activity_id: 1, severity_id: 4, actor_user_uid: null, target_uid: null, src_ip: '203.0.113.9', message: 'Sign-in from an unfamiliar location' } }],
+    }));
+
+    render(<CaseDetail caseId="case-1" />);
+    await screen.findByText(/Two sign-ins from IPs/);
+    fireEvent.click(screen.getByText(/Two sign-ins from IPs/));
+
+    await screen.findByText(/retrieved from cold storage/);
   });
 
   it('T2: a claim whose evidence is still indexing shows a pending state, not an error', async () => {
@@ -94,7 +106,7 @@ describe('T4: accessibility (axe-core) on the expanded evidence view', () => {
       if (theme === 'light') root.setAttribute('data-theme', 'light');
       else root.removeAttribute('data-theme');
 
-      vi.stubGlobal('fetch', mockFetch({ results: [{ id: 'evt-1', status: 'found', event: { event_id: 'evt-1', time: '2026-04-01T00:05:00.000Z', class_uid: 1, category_uid: 1, activity_id: 1, severity_id: 4, actor_user_uid: null, target_uid: null, src_ip: '203.0.113.9', message: 'Sign-in from an unfamiliar location' } }] }));
+      vi.stubGlobal('fetch', mockFetch({ results: [{ id: 'evt-1', status: 'found', tier: 'hot', event: { event_id: 'evt-1', time: '2026-04-01T00:05:00.000Z', class_uid: 1, category_uid: 1, activity_id: 1, severity_id: 4, actor_user_uid: null, target_uid: null, src_ip: '203.0.113.9', message: 'Sign-in from an unfamiliar location' } }] }));
 
       try {
         const { container } = render(<CaseDetail caseId="case-1" />);

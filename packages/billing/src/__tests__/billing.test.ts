@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_LIMITS, PLAN_PRICING, evaluateLimit, worstStatus, computeMargin, limitsFor, pricingFor } from '../index.js';
+import { PLAN_LIMITS, PLAN_PRICING, evaluateLimit, worstStatus, computeMargin, limitsFor, pricingFor, computeStorageCostUsd, STORAGE_PRICING_USD_PER_GB_MONTH } from '../index.js';
 
 describe('evaluateLimit', () => {
   const band = { allowance: 10, hardCap: 20 };
@@ -47,6 +47,13 @@ describe('limitsFor / pricingFor', () => {
       expect(limits.costUsdPerDay.hardCap).toBeGreaterThan(limits.costUsdPerDay.allowance);
     }
   });
+
+  it('P7-05: every real plan tier\'s retentionDays never exceeds the shared 365-day table-level TTL ceiling', () => {
+    for (const tier of Object.keys(PLAN_LIMITS) as Array<keyof typeof PLAN_LIMITS>) {
+      expect(PLAN_LIMITS[tier].retentionDays).toBeLessThanOrEqual(365);
+      expect(PLAN_LIMITS[tier].retentionDays).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('computeMargin', () => {
@@ -71,5 +78,25 @@ describe('computeMargin', () => {
 
   it('an unrecognised plan is treated as trial pricing (most conservative, not invented revenue)', () => {
     expect(computeMargin('enterprise_deluxe', 10)).toEqual(computeMargin('trial', 10));
+  });
+});
+
+describe('computeStorageCostUsd', () => {
+  it('P7-05 AC5: converts bytes to GB and prices each tier independently', () => {
+    const oneGb = 1024 ** 3;
+    const cost = computeStorageCostUsd(oneGb, 2 * oneGb);
+    expect(cost.hotGb).toBe(1);
+    expect(cost.coldGb).toBe(2);
+    expect(cost.hotCostUsd).toBeCloseTo(STORAGE_PRICING_USD_PER_GB_MONTH.hot, 10);
+    expect(cost.coldCostUsd).toBeCloseTo(2 * STORAGE_PRICING_USD_PER_GB_MONTH.cold, 10);
+    expect(cost.totalCostUsd).toBeCloseTo(cost.hotCostUsd + cost.coldCostUsd, 10);
+  });
+
+  it('is zero for zero bytes in both tiers, not a division artifact', () => {
+    expect(computeStorageCostUsd(0, 0)).toEqual({ hotGb: 0, coldGb: 0, hotCostUsd: 0, coldCostUsd: 0, totalCostUsd: 0 });
+  });
+
+  it('hot storage is priced higher per GB than cold — the whole point of tiering', () => {
+    expect(STORAGE_PRICING_USD_PER_GB_MONTH.hot).toBeGreaterThan(STORAGE_PRICING_USD_PER_GB_MONTH.cold);
   });
 });

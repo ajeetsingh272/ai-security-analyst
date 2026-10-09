@@ -43,6 +43,15 @@ export interface PlanLimits {
    * per-case. If these two ever drift, that is a real bug — keep both
    * in sync by hand. */
   costUsdPerDay: LimitBand;
+  /** P7-05: how many days of ClickHouse event data this plan keeps
+   * queryable, enforced by apps/api/src/retention-sweep.ts. Deliberately
+   * never looser than 365 — db/clickhouse/0002_hot_cold_tier_and_row_policy.sql's
+   * own table-level `TTL ... DELETE` already hard-deletes everything
+   * past 365 days for EVERY tenant regardless of plan, so a tier
+   * claiming more than that could never actually honour it; this value
+   * is a per-plan RESTRICTION on top of that shared ceiling, never an
+   * extension past it. */
+  retentionDays: number;
 }
 
 /** Used for any plan tier not named below — the same fail-conservative
@@ -52,6 +61,7 @@ const DEFAULT_LIMITS: PlanLimits = {
   seats: { allowance: 3, hardCap: 5 },
   eventVolumePerDay: { allowance: 500, hardCap: 1_500 },
   costUsdPerDay: { allowance: 2, hardCap: 6 },
+  retentionDays: 30,
 };
 
 export const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
@@ -59,21 +69,25 @@ export const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
     seats: { allowance: 50, hardCap: 100 },
     eventVolumePerDay: { allowance: 50_000, hardCap: 150_000 },
     costUsdPerDay: { allowance: 40, hardCap: 120 },
+    retentionDays: 365, // the full ceiling db/clickhouse's own table-level TTL allows
   },
   small_business: {
     seats: { allowance: 15, hardCap: 30 },
     eventVolumePerDay: { allowance: 10_000, hardCap: 30_000 },
     costUsdPerDay: { allowance: 15, hardCap: 45 },
+    retentionDays: 180,
   },
   startup: {
     seats: { allowance: 8, hardCap: 20 },
     eventVolumePerDay: { allowance: 5_000, hardCap: 15_000 },
     costUsdPerDay: { allowance: 10, hardCap: 30 },
+    retentionDays: 90, // matches the hot-tier TTL exactly — a startup tenant's data is deleted roughly when it would otherwise have moved to cold
   },
   trial: {
     seats: { allowance: 3, hardCap: 5 },
     eventVolumePerDay: { allowance: 500, hardCap: 1_500 },
     costUsdPerDay: { allowance: 2, hardCap: 6 },
+    retentionDays: 30,
   },
 };
 
@@ -145,4 +159,50 @@ export function computeMargin(plan: string | null, cogsUsd: number): Margin {
   const marginUsd = revenueUsd - cogsUsd;
   const marginPct = revenueUsd === 0 ? null : (marginUsd / revenueUsd) * 100;
   return { revenueUsd, cogsUsd, marginUsd, marginPct };
+}
+
+/**
+ * P7-05 AC5: the second cost-of-goods dimension this package's own
+ * computeMargin accepts as one combined `cogsUsd` figure — storage,
+ * alongside the already-measured LLM spend this file's own doc comment
+ * on PlanLimits.costUsdPerDay discloses as "the dominant, and currently
+ * the ONLY measured, variable cost component" (now one of two).
+ *
+ * Figures are published AWS us-east-1 list prices as of this writing
+ * (S3 Standard, EBS gp3) — a reasonable, disclosed reference point for
+ * "what hot vs. cold byte-storage actually costs," not this
+ * deployment's own negotiated or current rate. Re-verify against a real
+ * invoice before using this for actual billing, the same "illustrative,
+ * not authoritative" caveat every other dollar figure in this package
+ * already carries implicitly by being a flat constant rather than a
+ * live-priced lookup.
+ */
+export const STORAGE_PRICING_USD_PER_GB_MONTH = {
+  /** ClickHouse's own local/default disk — EBS gp3 is the closest
+   * real-world analogue for "hot, locally-attached block storage". */
+  hot: 0.08,
+  /** S3 Standard — what infra/docker/clickhouse-storage.xml's own
+   * `cold` disk actually is in production (SeaweedFS stands in for it
+   * in dev). */
+  cold: 0.023,
+} as const;
+
+export interface StorageCost {
+  hotGb: number;
+  coldGb: number;
+  hotCostUsd: number;
+  coldCostUsd: number;
+  totalCostUsd: number;
+}
+
+/** bytes, not GB, because that's the natural unit ClickHouse's own
+ * system.parts reports in (apps/api/src/storage-cost.ts's own query) —
+ * converting here keeps that call site from needing to know this
+ * package's own GB convention. */
+export function computeStorageCostUsd(hotBytes: number, coldBytes: number): StorageCost {
+  const hotGb = hotBytes / 1024 ** 3;
+  const coldGb = coldBytes / 1024 ** 3;
+  const hotCostUsd = hotGb * STORAGE_PRICING_USD_PER_GB_MONTH.hot;
+  const coldCostUsd = coldGb * STORAGE_PRICING_USD_PER_GB_MONTH.cold;
+  return { hotGb, coldGb, hotCostUsd, coldCostUsd, totalCostUsd: hotCostUsd + coldCostUsd };
 }
