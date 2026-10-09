@@ -26,6 +26,7 @@ import { registerOpenApi } from './openapi.js';
 import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
 import { googleConnectorRoutes, googleOAuthConfigFromEnv } from './routes/google-connector.js';
+import { awsConnectorRoutes, awsExternalIdSecretFromEnv } from './routes/aws-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { opsRoutes } from './routes/ops.js';
@@ -67,6 +68,10 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can point it
    * at a local mock token endpoint instead. */
   googleOAuthConfig?: GoogleOAuthConfig | undefined;
+  /** Defaults to reading AWS_EXTERNAL_ID_SECRET from the environment
+   * (undefined if unset, which routes/aws-connector.js handles with a
+   * 503, not a crash). Overridable so tests can use a fixed secret. */
+  awsExternalIdSecret?: string | undefined;
   /** P6-04: overridable so tests can assert the OAuth callback's
    * redirect lands on a known URL instead of the real dashboard. */
   dashboardBaseUrl?: string;
@@ -111,6 +116,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
     googleOAuthConfig = googleOAuthConfigFromEnv(),
+    awsExternalIdSecret = awsExternalIdSecretFromEnv(),
     dashboardBaseUrl = dashboardBaseUrlFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
@@ -153,6 +159,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
   await app.register(googleConnectorRoutes, { pool, redis, oauthConfig: googleOAuthConfig, dashboardBaseUrl });
+  await app.register(awsConnectorRoutes, { pool, externalIdSecret: awsExternalIdSecret });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(opsRoutes, { pool, opsTenantId });

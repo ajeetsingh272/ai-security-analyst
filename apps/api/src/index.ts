@@ -29,3 +29,5 @@ export {
   type GoogleOAuthConfig,
   type TokenResult as GoogleTokenResult,
 } from './connectors/google-oauth.js';
+export { awsConnectorRoutes, awsExternalIdSecretFromEnv, externalIdForTenant } from './routes/aws-connector.js';
+export type { AwsConnectorRoutesOptions } from './routes/aws-connector.js';

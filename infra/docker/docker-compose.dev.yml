@@ -192,6 +192,29 @@ services:
       aws --endpoint-url http://s3:8333 s3 ls
       "
 
+  # P7-02: a real local implementation of SQS's own wire protocol (ElasticMQ)
+  # for the AWS CloudTrail connector — see elasticmq.conf's own doc comment
+  # for why this is a real server rather than a hand-rolled mock, same
+  # reasoning as the `s3` service above for SeaweedFS.
+  sqs:
+    image: softwaremill/elasticmq-native:1.6.2
+    ports:
+      - '9324:9324' # SQS API
+      - '9325:9325' # Statistics API / UI
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf:ro
+    # The SQS API port (9324) only speaks AWS's signed REST protocol — an
+    # unsigned bare GET (what a simple spider-style healthcheck would send)
+    # correctly gets a 400 from it, confirmed against the live container,
+    # not assumed. /statistics/queues on the separate statistics port
+    # (9325) answers a plain GET with real JSON, so that's the one that
+    # actually proves the server is up.
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1:9325/statistics/queues']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   # ── Observability (P0-10) ──────────────────────────────────────────────────
   #
   # Every service exports OTLP to otel-collector (4317/4318), never to Jaeger
