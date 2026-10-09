@@ -1,0 +1,39 @@
+title: Impossible travel between sign-ins (Google Workspace)
+id: 8f1a2b3c-0002-4a00-9000-000000000009
+status: experimental
+description: >
+  Google Workspace's own equivalent of impossible-travel.yml (P2-06),
+  added rather than edited into that rule: dispatch
+  (services/detect/internal/dispatch) selects candidate rules by an exact
+  match on metadata.product, so a rule pinned to product: m365 can never
+  be a candidate for a google_workspace event — this is the
+  "existing rules fire correctly on Google events without modification
+  where the technique applies" acceptance criterion read literally: the
+  DETECTION ENGINE needed no change at all (see fieldmap.go's own P7-01
+  comment — two new field entries, the same additive mechanism every
+  prior rule's own new field needed), but impossible-travel.yml's own
+  SELECTION is M365-vendor-literal (Operation: 'UserLoggedIn',
+  ResultStatus: 'Success' — a raw M365 field/value pair with no Google
+  equivalent), so the honest way to cover Google is a second rule using
+  Google's own field/value vocabulary, not a rewrite of the first one.
+  This is disclosed explicitly in P7-01's PR description.
+owner_description: >
+  The same person signed in from two different places in a Google
+  Workspace account within a short amount of time — faster than someone
+  could realistically travel between them. This usually means someone
+  besides the real owner has their password.
+author: Sentinel detection engineering
+date: 2026/10/09
+tags:
+  - attack.t1078.004
+logsource:
+  category: application
+  product: google_workspace
+  service: login
+detection:
+  selection:
+    Operation: 'login_success'
+  condition: selection | count() by ActorEmail, IPAddress > 1 within 10m
+falsepositives:
+  - A user switching between corporate VPN exit nodes
+level: high

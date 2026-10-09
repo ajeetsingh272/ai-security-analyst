@@ -643,7 +643,7 @@
     {
       "techniqueID": "T1078.004",
       "color": "#4caf50",
-      "comment": "Covered by: Impossible travel between sign-ins, Remote PowerShell access enabled for a mailbox user, Sign-in using a legacy authentication protocol"
+      "comment": "Covered by: Impossible travel between sign-ins, Impossible travel between sign-ins (Google Workspace), Remote PowerShell access enabled for a mailbox user, Sign-in using a legacy authentication protocol"
     },
     {
       "techniqueID": "T1080",

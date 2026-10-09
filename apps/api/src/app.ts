@@ -25,6 +25,7 @@ import { v1ReportsRoutes } from './routes/v1/reports.js';
 import { registerOpenApi } from './openapi.js';
 import { connectorsRoutes } from './routes/connectors.js';
 import { m365ConnectorRoutes, m365OAuthConfigFromEnv, dashboardBaseUrlFromEnv } from './routes/m365-connector.js';
+import { googleConnectorRoutes, googleOAuthConfigFromEnv } from './routes/google-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
 import { opsRoutes } from './routes/ops.js';
@@ -47,6 +48,7 @@ import { resendWebhookRoutes, resendWebhookConfigFromEnv, type ResendWebhookConf
 import { auditExportRoutes } from './routes/audit-export.js';
 import { RedisPostgresNonceStore } from './approvals/nonce-store.js';
 import type { M365OAuthConfig } from './connectors/m365-oauth.js';
+import type { GoogleOAuthConfig } from './connectors/google-oauth.js';
 import type { SlackOAuthConfig } from './connectors/slack-oauth.js';
 
 export interface BuildAppOptions {
@@ -60,6 +62,11 @@ export interface BuildAppOptions {
    * handles with a 503, not a crash). Overridable so tests can point it
    * at a local mock token endpoint instead. */
   m365OAuthConfig?: M365OAuthConfig | undefined;
+  /** Defaults to reading GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI from the
+   * environment (undefined if unset, which routes/google-connector.ts
+   * handles with a 503, not a crash). Overridable so tests can point it
+   * at a local mock token endpoint instead. */
+  googleOAuthConfig?: GoogleOAuthConfig | undefined;
   /** P6-04: overridable so tests can assert the OAuth callback's
    * redirect lands on a known URL instead of the real dashboard. */
   dashboardBaseUrl?: string;
@@ -103,6 +110,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     redis,
     cookieSecure = true,
     m365OAuthConfig = m365OAuthConfigFromEnv(),
+    googleOAuthConfig = googleOAuthConfigFromEnv(),
     dashboardBaseUrl = dashboardBaseUrlFromEnv(),
     opsTenantId = opsTenantIdFromEnv(),
     whatsappConfig = whatsappConfigFromEnv(),
@@ -144,6 +152,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(v1ReportsRoutes, { pool });
   await app.register(connectorsRoutes, { pool });
   await app.register(m365ConnectorRoutes, { pool, redis, oauthConfig: m365OAuthConfig, dashboardBaseUrl });
+  await app.register(googleConnectorRoutes, { pool, redis, oauthConfig: googleOAuthConfig, dashboardBaseUrl });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
   await app.register(opsRoutes, { pool, opsTenantId });

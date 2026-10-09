@@ -17,3 +17,15 @@ export {
   type TokenResult,
 } from './connectors/m365-oauth.js';
 export { OAuthStateStore, type OAuthState } from './connectors/oauth-state-store.js';
+export { googleConnectorRoutes, googleOAuthConfigFromEnv } from './routes/google-connector.js';
+export type { GoogleConnectorRoutesOptions } from './routes/google-connector.js';
+export {
+  buildAuthorizeUrl as buildGoogleAuthorizeUrl,
+  exchangeCodeForTokens as exchangeGoogleCodeForTokens,
+  refreshAccessToken as refreshGoogleAccessToken,
+  isConsentRevokedError as isGoogleConsentRevokedError,
+  OAuthError as GoogleOAuthError,
+  GOOGLE_SCOPES,
+  type GoogleOAuthConfig,
+  type TokenResult as GoogleTokenResult,
+} from './connectors/google-oauth.js';
