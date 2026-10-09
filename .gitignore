@@ -1,5 +1,10 @@
 node_modules/
 .pnpm-store/
+
+# P7-09: real local backup artifacts (scripts/backup.sh's own output,
+# postgres's docker-compose mount) — never committed, same reasoning
+# every other generated/runtime-only directory below already follows.
+.backups/
 dist/
 build/
 .next/

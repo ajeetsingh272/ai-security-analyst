@@ -26,6 +26,12 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../../db/postgres/init:/docker-entrypoint-initdb.d:ro
+      # P7-09: a host-mounted directory (not a named volume) so
+      # scripts/backup.sh's own output is directly inspectable from
+      # the repo checkout, the same reasoning
+      # clickhouse-backups.xml's own doc comment gives for never
+      # nesting a backup inside the volume it backs up.
+      - ../../.backups/postgres:/backups
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U sentinel -d sentinel']
       interval: 5s
@@ -54,6 +60,11 @@ services:
       # `s3` service below rather than deferred to production Terraform —
       # see clickhouse-storage.xml's own header for why.
       - ./clickhouse-storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+      # P7-09: a real local-disk BACKUP/RESTORE destination, its own
+      # dedicated volume — see clickhouse-backups.xml's own header for
+      # why this must never be the chdata volume itself.
+      - ./clickhouse-backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
+      - chbackups:/backups
     # The hot/cold storage policy references the s3 disk at startup even
     # before any query touches the cold tier, so s3 needs to exist first —
     # not healthy-gated as tightly as s3-init's own consumers, since
@@ -365,6 +376,7 @@ services:
 volumes:
   pgdata:
   chdata:
+  chbackups:
   rpdata:
   redisdata:
   s3data:

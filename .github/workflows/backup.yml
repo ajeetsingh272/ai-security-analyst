@@ -1,0 +1,68 @@
+name: Backup and restore verification
+
+# P7-09 AC1's own "monitored success": runs a REAL backup, a REAL restore
+# (into disposable *_restore_drill targets, scripts/restore.sh's own
+# default — never a live database), a row-count reconciliation across
+# both stores, and the real audit-chain verifier against the restored
+# database. A non-zero exit fails this run, which is what GitHub's own
+# scheduled-workflow-failed notification surfaces — the identical
+# "a failed scheduled job is the alert" mechanism
+# verify-audit-chain.yml already established, not a new one invented for
+# this ticket. See docs/runbooks/backup-and-restore.md's own "Monitored
+# success" section for why this is the honest, current mechanism rather
+# than a Prometheus-paged alert (no textfile-collector/pushgateway
+# infrastructure exists in this stack to export a metric to).
+#
+# Runs against the ephemeral dev stack, same disclosed scope as
+# verify-audit-chain.yml — when a production Postgres/ClickHouse exist,
+# point this at them via repository secrets; nothing else about this
+# workflow needs to change.
+
+on:
+  schedule:
+    # Daily — matches scripts/backup.sh's own stated RPO
+    # (docs/runbooks/backup-and-restore.md): backups taken more often
+    # than the RPO commitment buys nothing extra to verify.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backup-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start dev stack
+        run: docker compose -f infra/docker/docker-compose.dev.yml up -d --wait postgres clickhouse
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      # The alert. A failed backup, a failed restore, a row-count
+      # mismatch, or a broken audit chain after restore all exit non-zero
+      # here, which fails this job.
+      - name: Backup, restore, and verify
+        run: pnpm backup:verify
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/docker/docker-compose.dev.yml logs postgres clickhouse --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/docker/docker-compose.dev.yml down -v

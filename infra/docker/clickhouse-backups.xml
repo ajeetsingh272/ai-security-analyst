@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!--
+  P7-09: a real local-disk destination for ClickHouse's own native
+  BACKUP/RESTORE TABLE ... Disk('backups', ...) SQL — confirmed
+  present and stable in this stack's 24.8 image. A `local`-type disk,
+  not S3, so backup/restore needs no SeaweedFS/network dependency at
+  all, only the bind-mounted `chbackups` volume (docker-compose.dev.yml)
+  — the simplest destination ClickHouse's own docs demonstrate a full
+  worked config for.
+
+  Both the disk AND the top-level <backups> allow-list are required —
+  ClickHouse refuses BACKUP/RESTORE against a disk that exists in
+  <storage_configuration> but isn't also named under <backups>, even
+  though DECLARING the policy below is what clickhouse-storage.xml's
+  own hot_cold policy already does for the 'cold' disk; backups are a
+  SEPARATE allow-list, deliberately, so a backup destination can never
+  be silently reachable by an ordinary tiering policy and vice versa.
+
+  Loaded automatically: official ClickHouse images read every *.xml
+  under /etc/clickhouse-server/config.d/ as a config override.
+-->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <backups>
+        <type>local</type>
+        <!-- Deliberately NOT under /var/lib/clickhouse/ (the chdata
+             volume) — a backup living inside the same volume as the
+             live data it backs up is lost in exactly the failure mode
+             (that volume destroyed/corrupted) a backup exists to
+             survive. Its own dedicated `chbackups` volume
+             (docker-compose.dev.yml), mirroring why pgdata/chdata are
+             themselves already separate volumes from each other. -->
+        <path>/backups/</path>
+      </backups>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups</allowed_disk>
+    <allowed_path>/backups/</allowed_path>
+  </backups>
+</clickhouse>
