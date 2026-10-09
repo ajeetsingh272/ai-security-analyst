@@ -76,6 +76,15 @@ func TestRule_ediscovery_search_created(t *testing.T) {
 	}
 }
 
+func TestRule_entra_risk_detection(t *testing.T) {
+	if !ruleMatch_entra_risk_detection(map[string]string{"category_uid": "2", "class_uid": "2004", "metadata.operation": "unfamiliarFeatures", "metadata.product": "azure"}) {
+		t.Fatalf("positive fixture for rule entra-risk-detection (Entra ID Identity Protection risk detection) did not match")
+	}
+	if ruleMatch_entra_risk_detection(map[string]string{"category_uid": "3", "class_uid": "3002", "metadata.operation": "UserLoggedIn", "metadata.product": "m365"}) {
+		t.Fatalf("negative fixture for rule entra-risk-detection (Entra ID Identity Protection risk detection) matched, but should not have")
+	}
+}
+
 func TestRule_guest_user_granted_directory_role(t *testing.T) {
 	if !ruleMatch_guest_user_granted_directory_role(map[string]string{"metadata.operation": "Add member to role.", "metadata.product": "m365", "unmapped.UserType": "Guest"}) {
 		t.Fatalf("positive fixture for rule guest-user-granted-directory-role (Guest account added to a privileged directory role) did not match")

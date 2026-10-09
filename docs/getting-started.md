@@ -93,6 +93,12 @@ Brings up, with health checks gating startup order:
 | SeaweedFS filer | 8888 | <http://localhost:8888> | Browsing stored objects |
 | ElasticMQ SQS | 9324 | `localhost:9324` | P7-02: a real local SQS-protocol server for the AWS CloudTrail connector |
 | ElasticMQ statistics | 9325 | <http://localhost:9325> | Statistics API / UI — also what the healthcheck polls, since the SQS port itself only answers signed requests |
+| Event Hubs emulator AMQP | 5672 | `localhost:5672` | P7-03: a real local Event Hubs server for the Azure/Entra ID connector |
+| Event Hubs emulator management | 5300 | `localhost:5300` | Emulator's own management port |
+| Event Hubs emulator Kafka API | 9093 | `localhost:9093` | Unused by this connector (it speaks AMQP); offset from 9092 the same way Redpanda's own 19092 is |
+| Azurite blob | 10000 | `localhost:10000` | The emulator's own required metadata/blob backend |
+| Azurite queue | 10001 | `localhost:10001` | Same |
+| Azurite table | 10002 | `localhost:10002` | Same |
 | Jaeger UI | 16686 | <http://localhost:16686> | Distributed traces |
 | OTLP gRPC | 4317 | `localhost:4317` | otel-collector's trace/metric ingest — every service points here, never at Jaeger or Prometheus directly |
 | OTLP HTTP | 4318 | `localhost:4318` | Same, over HTTP |

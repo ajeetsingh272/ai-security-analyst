@@ -1,0 +1,34 @@
+title: Entra ID Identity Protection risk detection
+id: 8f1a2b3c-0002-4a00-9000-00000000000a
+status: experimental
+description: >
+  Surfaces every Identity Protection risk detection
+  (go/sentinelconnector/azure's own riskDetections mapping, OCSF Detection
+  Finding, class_uid 2004) as a Sentinel signal — P7-03's own T3
+  ("Risk detections surface as signals"). Deliberately unconditional:
+  Identity Protection's own correlation/ML risk engine has already done
+  the detection work before this record ever reaches Sentinel, so this
+  rule's own job is pass-through surfacing, not re-deriving risk from raw
+  signals the way impossible-travel.yml does. class_uid alone (not
+  product=azure) is the selector because Detection Finding is itself
+  specific enough that no other connector in this corpus emits it.
+owner_description: >
+  Microsoft's own Entra ID security system flagged one of your sign-ins
+  or users as risky (an unfamiliar location, a leaked credential, or
+  similar signals it already checked). Sentinel is surfacing that flag
+  as a case so it gets reviewed, rather than only being visible inside
+  the Entra admin console.
+author: Sentinel detection engineering
+date: 2026/10/09
+tags:
+  - attack.t1078
+logsource:
+  category: application
+  product: azure
+detection:
+  selection:
+    class_uid: 2004
+  condition: selection
+falsepositives:
+  - None expected — Identity Protection's own risk engine has already filtered for genuine anomalies before this record is generated
+level: high

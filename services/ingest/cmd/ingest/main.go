@@ -23,6 +23,7 @@ import (
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
 	awsconnector "github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/aws"
+	azureconnector "github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/azure"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/google"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
@@ -255,6 +256,12 @@ func main() {
 	// go/sentinelconnector/aws's own package doc comment for why).
 	if err := registerAWSConnectors(ctx, pool, scheduler, log); err != nil {
 		log.Error("registering aws connectors", "err", err)
+	}
+
+	// P7-03: the fourth connector (Azure/Entra ID, via Event Hub) — same
+	// poll-shaped registration path as every connector above.
+	if err := registerAzureConnectors(ctx, pool, scheduler, log); err != nil {
+		log.Error("registering azure connectors", "err", err)
 	}
 
 	// P1-13: the dry run's own registration — proving a second connector
@@ -588,6 +595,65 @@ func registerAWSConnectors(ctx context.Context, pool *pgxpool.Pool, scheduler *s
 		registered++
 	}
 	log.Info("registered aws connectors", "registrations", registered)
+	return nil
+}
+
+// registerAzureConnectors discovers every tenant with an active azure
+// connectors row and registers one TenantConnector each. Unlike AWS,
+// there is no "Sentinel's own platform account" credential to gate
+// registration on at all — each tenant's own Event Hub connection
+// string is fully self-contained (go/sentinelconnector/azure's own
+// Credentials), so the only thing that can make this skip registration
+// entirely is KMS_LOCAL_MASTER_KEY being unset, the same graceful-
+// absence framing NewCredentialStore already gives every other
+// connector.
+func registerAzureConnectors(ctx context.Context, pool *pgxpool.Pool, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	store, err := azureconnector.NewCredentialStore(pool)
+	if err != nil {
+		log.Info("azure credential store unavailable, skipping registration", "err", err)
+		return nil
+	}
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'azure' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing azure connectors: %w", err)
+	}
+	defer rows.Close()
+
+	type pending struct{ connectorRowID, tenantID string }
+	var toRegister []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.connectorRowID, &p.tenantID); err != nil {
+			return fmt.Errorf("scanning azure connector row: %w", err)
+		}
+		toRegister = append(toRegister, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating azure connector rows: %w", err)
+	}
+
+	registered := 0
+	for _, p := range toRegister {
+		_, creds, err := store.Load(ctx, p.tenantID)
+		if err != nil {
+			log.Error("loading azure credentials, skipping this tenant", "tenant_id", p.tenantID, "err", err)
+			continue
+		}
+		conn, err := azureconnector.NewConnectorForTenant(p.tenantID, creds)
+		if err != nil {
+			log.Error("building azure connector, skipping this tenant", "tenant_id", p.tenantID, "err", err)
+			continue
+		}
+		scheduler.Register(sentinelconnector.TenantConnector{
+			TenantID:       p.tenantID,
+			ConnectorRowID: p.connectorRowID,
+			Stream:         azureconnector.Stream,
+			Connector:      conn,
+		})
+		registered++
+	}
+	log.Info("registered azure connectors", "registrations", registered)
 	return nil
 }
 
