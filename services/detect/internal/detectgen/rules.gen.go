@@ -28,6 +28,7 @@ var Rules = []CompiledRule{
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000017", Title: "Guest account added to a privileged directory role", Level: "high", MitreIDs: []string{"attack.t1136.003"}, Engine: "in-stream", OwnerDescription: "An outside guest account, not one of the company's own employees, was given admin-level access. This is unusual and worth checking, since guest accounts are not normally given this level of control.\n", Matches: ruleMatch_guest_user_granted_directory_role},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000033", Title: "High-privilege permission granted to a user-assigned application", Level: "medium", MitreIDs: []string{"attack.t1098.003"}, Engine: "in-stream", OwnerDescription: "A person was given a powerful level of access through a connected app, rather than directly. This is a less obvious way to grant broad access, so it is worth checking if it was intended.\n", Matches: ruleMatch_high_privilege_app_permission_granted},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000008", Title: "Impossible travel between sign-ins", Level: "high", MitreIDs: []string{"attack.t1078.004"}, Engine: "windowed", OwnerDescription: "The same person signed in from two different places in a short amount of time — faster than someone could realistically travel between them. This usually means someone besides the real owner has their password.\n", Matches: ruleMatch_impossible_travel},
+	{ID: "8f1a2b3c-0002-4a00-9000-000000000009", Title: "Impossible travel between sign-ins (Google Workspace)", Level: "high", MitreIDs: []string{"attack.t1078.004"}, Engine: "windowed", OwnerDescription: "The same person signed in from two different places in a Google Workspace account within a short amount of time — faster than someone could realistically travel between them. This usually means someone besides the real owner has their password.\n", Matches: ruleMatch_impossible_travel_google},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000012", Title: "Inbox rule created to hide incoming messages", Level: "medium", MitreIDs: []string{"attack.t1564.008"}, Engine: "in-stream", OwnerDescription: "A rule was created on this mailbox that automatically marks certain incoming emails as already read. Attackers use this to hide warning emails, like security alerts, from the real owner of the account.\n", Matches: ruleMatch_inbox_rule_hides_messages},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000010", Title: "Sign-in using a legacy authentication protocol", Level: "medium", MitreIDs: []string{"attack.t1078.004"}, Engine: "in-stream", OwnerDescription: "Someone signed in using an older connection method that cannot be protected by extra security steps like a second approval code. Attackers often use this method on purpose because it can slip past modern account protections.\n", Matches: ruleMatch_legacy_auth_signin},
 	{ID: "8f1a2b3c-0001-4a00-9000-000000000035", Title: "Inbound or outbound mail connector added", Level: "medium", MitreIDs: []string{"attack.t1114"}, Engine: "in-stream", OwnerDescription: "A new route was set up for how email flows into the company. A connector added without IT's knowledge could be used to secretly redirect or copy company email.\n", Matches: ruleMatch_mail_flow_connector_added},
@@ -136,6 +137,12 @@ func ruleMatch_high_privilege_app_permission_granted(ev map[string]string) bool 
 func ruleMatch_impossible_travel(ev map[string]string) bool {
 	sel_selection := (ev["metadata.operation"] == "UserLoggedIn") &&
 		(ev["unmapped.ResultStatus"] == "Success")
+	return sel_selection
+
+}
+
+func ruleMatch_impossible_travel_google(ev map[string]string) bool {
+	sel_selection := (ev["metadata.operation"] == "login_success")
 	return sel_selection
 
 }

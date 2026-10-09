@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
+	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/google"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/syslog"
@@ -239,6 +240,13 @@ func main() {
 		log.Error("registering m365 connectors", "err", err)
 	}
 
+	// P7-01: the second identity-platform connector, proving
+	// registerM365Connectors' own shape generalises to a different vendor
+	// without any change to this file's surrounding structure.
+	if err := registerGoogleConnectors(ctx, pool, kafkaClient, scheduler, log); err != nil {
+		log.Error("registering google_workspace connectors", "err", err)
+	}
+
 	// P1-13: the dry run's own registration — proving a second connector
 	// (go/sentinelconnector/syslog) needs nothing from THIS file beyond
 	// exactly this shape: a listener to start, and one scheduler.Register
@@ -415,6 +423,68 @@ func registerM365Connectors(ctx context.Context, pool *pgxpool.Pool, kafkaClient
 		return fmt.Errorf("iterating m365 connector rows: %w", err)
 	}
 	log.Info("registered m365 connectors", "registrations", registered)
+	return nil
+}
+
+// registerGoogleConnectors is registerM365Connectors' own shape, ported to
+// the second identity-platform vendor (P7-01) — discovers every tenant with
+// an active google_workspace connectors row and registers one
+// TenantConnector per (tenant, applicationName), mirroring
+// google.ApplicationNames (login/admin/drive/token/gmail — AC2). Returns
+// nil, not an error that stops this service booting, when
+// GOOGLE_CLIENT_ID/CLIENT_SECRET aren't set — there being no real Google
+// Cloud OAuth client configured yet is the expected, normal state for
+// every environment that hasn't completed the (TS-side, disclosed-as-
+// unavailable-in-this-sandbox) consent flow, the same graceful-absence
+// framing registerM365Connectors already establishes.
+func registerGoogleConnectors(ctx context.Context, pool *pgxpool.Pool, kafkaClient *kgo.Client, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		log.Info("google_workspace connector not configured (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset) — skipping registration")
+		return nil
+	}
+
+	store, err := google.NewCredentialStore(pool)
+	if err != nil {
+		log.Info("google_workspace credential store unavailable, skipping registration", "err", err)
+		return nil
+	}
+
+	oauthCfg := google.OAuthConfig{
+		ClientID:             clientID,
+		ClientSecret:         clientSecret,
+		TokenEndpointBaseURL: os.Getenv("GOOGLE_TOKEN_ENDPOINT_BASE_URL"),
+	}
+	reportsAPIBaseURL := os.Getenv("GOOGLE_REPORTS_API_BASE_URL")
+	dlq := sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsRawDLQ)
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'google_workspace' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing google_workspace connectors: %w", err)
+	}
+	defer rows.Close()
+
+	registered := 0
+	for rows.Next() {
+		var connectorRowID, tenantID string
+		if err := rows.Scan(&connectorRowID, &tenantID); err != nil {
+			return fmt.Errorf("scanning google_workspace connector row: %w", err)
+		}
+		for _, applicationName := range google.ApplicationNames {
+			scheduler.Register(sentinelconnector.TenantConnector{
+				TenantID:       tenantID,
+				ConnectorRowID: connectorRowID,
+				Stream:         applicationName,
+				Connector:      google.NewConnector(tenantID, applicationName, store, oauthCfg, reportsAPIBaseURL, http.DefaultClient, dlq),
+			})
+			registered++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating google_workspace connector rows: %w", err)
+	}
+	log.Info("registered google_workspace connectors", "registrations", registered)
 	return nil
 }
 

@@ -103,6 +103,15 @@ func TestRule_impossible_travel(t *testing.T) {
 	}
 }
 
+func TestRule_impossible_travel_google(t *testing.T) {
+	if !ruleMatch_impossible_travel_google(map[string]string{"metadata.operation": "login_success", "metadata.product": "google_workspace", "unmapped.actorEmail": "alice@example.com", "unmapped.ipAddress": "203.0.113.5"}) {
+		t.Fatalf("positive fixture for rule impossible-travel-google (Impossible travel between sign-ins (Google Workspace)) did not match")
+	}
+	if ruleMatch_impossible_travel_google(map[string]string{"metadata.operation": "login_failure", "metadata.product": "google_workspace", "unmapped.actorEmail": "alice@example.com", "unmapped.ipAddress": "203.0.113.5"}) {
+		t.Fatalf("negative fixture for rule impossible-travel-google (Impossible travel between sign-ins (Google Workspace)) matched, but should not have")
+	}
+}
+
 func TestRule_inbox_rule_hides_messages(t *testing.T) {
 	if !ruleMatch_inbox_rule_hides_messages(map[string]string{"metadata.operation": "New-InboxRule", "metadata.product": "m365", "unmapped.MarkAsRead": "True"}) {
 		t.Fatalf("positive fixture for rule inbox-rule-hides-messages (Inbox rule created to hide incoming messages) did not match")

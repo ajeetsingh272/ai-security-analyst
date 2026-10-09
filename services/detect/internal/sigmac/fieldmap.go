@@ -55,6 +55,16 @@ var fieldMap = map[string]string{
 	// example (adding tenant-audit-log-disabled.yml).
 	"UnifiedAuditLogIngestionEnabled": "unmapped.UnifiedAuditLogIngestionEnabled",
 
+	// P7-01 additions — one new field per new rule, same convention as
+	// every addition above, for the first non-M365 connector
+	// (go/sentinelconnector/google). Lowercase-first because that's the
+	// exact key google.MapEvent's own unmappedFields stamps — Unmapped map
+	// keys mirror each vendor's own field-name casing verbatim, never
+	// normalised, so these two names are deliberately NOT capitalised like
+	// the M365 entries above them.
+	"ActorEmail": "unmapped.actorEmail",
+	"IPAddress":  "unmapped.ipAddress",
+
 	// P2-09 additions — not a raw M365 field at all, but the local
 	// threat-intel enrichment (go/sentinelenrich) attaches at dispatch
 	// time, keyed by the event's own ClientIP. Landing in the

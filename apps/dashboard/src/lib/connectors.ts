@@ -52,3 +52,22 @@ export const M365_NOT_REQUESTED = [
   'Reading files in OneDrive or SharePoint',
   'Changing any setting in your Microsoft 365 tenant',
 ] as const;
+
+/** The real, literal scope apps/api/src/connectors/google-oauth.ts
+ * requests (GOOGLE_SCOPES) — same hand-synced-by-design reasoning as
+ * M365_PERMISSIONS above. */
+export const GOOGLE_PERMISSIONS = [
+  {
+    scope: 'admin.reports.audit.readonly',
+    plain: 'Read your Google Workspace activity logs — sign-ins, admin changes, Drive activity, Gmail settings activity, and OAuth app grants.',
+    why: "This is the data Sentinel actually watches for the signals it reports on. It's read-only — nothing is ever changed through this permission.",
+  },
+] as const;
+
+/** What Sentinel explicitly does NOT ask for — mirrors M365_NOT_REQUESTED's
+ * own reasoning. */
+export const GOOGLE_NOT_REQUESTED = [
+  'Reading or sending Gmail message content',
+  'Reading files in Google Drive',
+  'Changing any setting in your Google Workspace account',
+] as const;
