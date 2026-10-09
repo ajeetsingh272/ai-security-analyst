@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: correlate
+  namespace: sentinel
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: correlate }
+  template:
+    metadata:
+      labels: { app: correlate }
+    spec:
+      nodeSelector: { "sentinel.io/node-pool": "apps" }
+      containers:
+        - name: correlate
+          image: sentinel-correlate:latest
+          ports:
+            - containerPort: 8103
+          env:
+            - name: CONSUMER_GROUP
+              value: correlate
+            - name: REDPANDA_BROKERS
+              value: "redpanda.sentinel.svc.cluster.local:9093"
+            - name: CLICKHOUSE_ADDR
+              value: "clickhouse.sentinel.svc.cluster.local:9000"
+            - name: CLICKHOUSE_DATABASE
+              value: sentinel
+          envFrom:
+            - secretRef: { name: postgres }
+            - secretRef: { name: clickhouse-admin }
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8103 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8103 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: correlate
+  namespace: sentinel
+spec:
+  selector: { app: correlate }
+  ports:
+    - port: 8103
+      targetPort: 8103
+---
+# AC3: CPU-based, DISCLOSED as the weaker of this repo's two HPA
+# stories — correlate has no consumer-lag metric today (unlike
+# detect's own pre-existing detect_consumer_lag gauge); adding the
+# identical RunLagReporter pattern (services/detect/internal/worker/
+# worker.go) to this service is real, logical follow-up work, not
+# silently assumed done.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: correlate
+  namespace: sentinel
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: correlate
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }

@@ -32,6 +32,7 @@ no downsides has not been thought through.
 | [0010](./0010-checkpoint-after-kafka-ack.md) | Cursors commit only after durable Kafka acknowledgement | Accepted | P1 |
 | [0011](./0011-entity-resolution-alias-graph.md) | Entity resolution via co-occurring aliases, with a dedicated merge audit trail | Accepted | P3 |
 | [0012](./0012-customer-rule-sandbox.md) | A separate, sandboxed evaluation path for customer-authored rules | Accepted | P7 |
+| [0013](./0013-production-deployment-target.md) | Production deployment target: AWS ap-south-1, EKS, managed Postgres, self-hosted ClickHouse/Redpanda | Accepted | P7 |
 
 ## Writing a new ADR
 

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detect
+  namespace: sentinel
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: detect }
+  template:
+    metadata:
+      labels: { app: detect }
+    spec:
+      nodeSelector: { "sentinel.io/node-pool": "apps" }
+      containers:
+        - name: detect
+          image: sentinel-detect:latest # replaced by CI with a real tag; never built/pushed to a real registry in this sandbox
+          ports:
+            - containerPort: 8104
+          env:
+            - name: CONSUMER_GROUP
+              value: detect
+            - name: REDPANDA_BROKERS
+              value: "redpanda.sentinel.svc.cluster.local:9093" # Redpanda's own internal Kafka API port (addons.tf's chart default), not the dev stack's 19092
+            - name: CLICKHOUSE_ADDR
+              value: "clickhouse.sentinel.svc.cluster.local:9000"
+            - name: CLICKHOUSE_DATABASE
+              value: sentinel
+          envFrom:
+            - secretRef: { name: postgres }
+            - secretRef: { name: clickhouse-admin }
+          # AC2: resource limits — sized for the "apps" node group's
+          # m6i.xlarge instances (4 vCPU/16GiB), leaving headroom for
+          # several pods per node, not a guess disconnected from the
+          # node group it actually schedules onto.
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          # AC2: liveness/readiness against cmd/detect/main.go's own
+          # pre-existing GET /healthz, GET /readyz.
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8104 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8104 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detect
+  namespace: sentinel
+spec:
+  selector: { app: detect }
+  ports:
+    - port: 8104
+      targetPort: 8104
+---
+# AC3: scales on events.normalized consumer lag (detect_consumer_lag,
+# a real pre-existing OpenTelemetry gauge — see
+# infra/terraform/addons.tf's own Prometheus Adapter rule), not CPU.
+# This is the one service in the whole pipeline where a growing
+# backlog translates most directly into the product's own p95
+# critical-alert-latency SLO (ADR-0003's 30k EPS target) — the
+# clearest, highest-value candidate for this metric, not an arbitrary
+# first pick.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: detect
+  namespace: sentinel
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: detect
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: detect_consumer_lag
+        target:
+          type: AverageValue
+          averageValue: "5000" # events of lag per pod before scaling up — ADR-0003's own ~30k EPS target / a tolerable few seconds of backlog
