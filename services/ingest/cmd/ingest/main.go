@@ -213,8 +213,16 @@ func main() {
 	// is what will"). Without this fix, T5 (event_id survives ingest to
 	// ClickHouse) would be unprovable for real, because nothing the
 	// scheduler ever produces would reach the ClickHouse writer at all.
+	// P7-04: activates the hot-tenant shard split P1-05/P3-10 built but
+	// never turned on — see go/sentinelstream/shard.go's own doc
+	// comment for the full design. Only events.normalized (the
+	// scheduler's own real output) needs this; events.raw/DLQ stay on
+	// today's unconditional shard-0 behaviour deliberately.
+	shardController := sentinelstream.NewShardController(pool)
+	defer shardController.Close()
+
 	scheduler := sentinelconnector.NewScheduler(
-		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsNormalized),
+		sentinelstream.NewRedpandaPublisher(kafkaClient, sentinelstream.EventsNormalized).WithShardController(shardController),
 		sentinelconnector.NewPostgresCursorStore(pool),
 		sentinelconnector.SchedulerOptions{
 			Interval:        time.Minute,
