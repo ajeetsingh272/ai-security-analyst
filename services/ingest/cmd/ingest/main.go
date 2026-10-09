@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector"
+	awsconnector "github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/aws"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/google"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/m365"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelconnector/ocsf"
@@ -32,6 +33,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -245,6 +247,14 @@ func main() {
 	// without any change to this file's surrounding structure.
 	if err := registerGoogleConnectors(ctx, pool, kafkaClient, scheduler, log); err != nil {
 		log.Error("registering google_workspace connectors", "err", err)
+	}
+
+	// P7-02: the first push-sourced connector (CloudTrail via EventBridge
+	// to SQS) — still registered exactly like every poll-based connector
+	// above, since its own Fetch is itself an SQS poll loop (see
+	// go/sentinelconnector/aws's own package doc comment for why).
+	if err := registerAWSConnectors(ctx, pool, scheduler, log); err != nil {
+		log.Error("registering aws connectors", "err", err)
 	}
 
 	// P1-13: the dry run's own registration — proving a second connector
@@ -485,6 +495,99 @@ func registerGoogleConnectors(ctx context.Context, pool *pgxpool.Pool, kafkaClie
 		return fmt.Errorf("iterating google_workspace connector rows: %w", err)
 	}
 	log.Info("registered google_workspace connectors", "registrations", registered)
+	return nil
+}
+
+// registerAWSConnectors discovers every tenant with an active aws
+// connectors row and registers one TenantConnector each — the first
+// push-sourced connector (go/sentinelconnector/aws's own package doc
+// comment explains why it's still registered through this same
+// poll-shaped path: its own Fetch is an SQS long-poll loop).
+//
+// Unlike registerM365Connectors/registerGoogleConnectors, this function
+// loads each tenant's stored credentials (role ARN, external id, region,
+// queue URL) EAGERLY, at registration time, rather than lazily on first
+// Fetch — a deliberate, disclosed simplification: this connector needs
+// the tenant's own queue URL and region to even construct its *sqs.Client
+// at all (M365/Google's own OAuthConfig is tenant-independent; only the
+// token itself is tenant-specific and lazily loaded by their own
+// tokenProvider). The trade-off is real and narrow: a tenant that
+// reconnects (new role/queue) while this service is already running is
+// picked up only on the next restart, not immediately — acceptable for a
+// registration path that runs once at boot, not a hot path.
+//
+// Returns nil, not an error that stops this service booting, when
+// AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (Sentinel's OWN account's
+// credentials, used only to call sts:AssumeRole into a CUSTOMER's role —
+// never the customer's own long-lived keys, which this connector never
+// asks for at all per AC1) aren't set — there being no real Sentinel AWS
+// account configured yet is the expected, normal state for every
+// environment that hasn't completed that setup, the same graceful-
+// absence framing every other optional integration in this file uses.
+func registerAWSConnectors(ctx context.Context, pool *pgxpool.Pool, scheduler *sentinelconnector.Scheduler, log *slog.Logger) error {
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if accessKey == "" || secretKey == "" {
+		log.Info("aws connector not configured (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY unset) — skipping registration")
+		return nil
+	}
+
+	store, err := awsconnector.NewCredentialStore(pool)
+	if err != nil {
+		log.Info("aws credential store unavailable, skipping registration", "err", err)
+		return nil
+	}
+
+	stsClient := sts.New(sts.Options{
+		Region:      envOr("AWS_STS_REGION", "us-east-1"),
+		Credentials: credentials.NewStaticCredentialsProvider(accessKey, secretKey, os.Getenv("AWS_SESSION_TOKEN")),
+		BaseEndpoint: func() *string {
+			if v := os.Getenv("AWS_STS_BASE_ENDPOINT"); v != "" {
+				return aws.String(v)
+			}
+			return nil
+		}(),
+	})
+	// Overridable so this same code path can be exercised against the
+	// dev stack's own local SQS-protocol server (infra/docker/elasticmq.conf)
+	// rather than requiring real AWS to even boot this service in dev.
+	sqsBaseEndpoint := os.Getenv("AWS_SQS_BASE_ENDPOINT")
+
+	rows, err := pool.Query(ctx, `SELECT id, tenant_id FROM connectors WHERE kind = 'aws' AND status != 'revoked'`)
+	if err != nil {
+		return fmt.Errorf("listing aws connectors: %w", err)
+	}
+	defer rows.Close()
+
+	type pending struct{ connectorRowID, tenantID string }
+	var toRegister []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.connectorRowID, &p.tenantID); err != nil {
+			return fmt.Errorf("scanning aws connector row: %w", err)
+		}
+		toRegister = append(toRegister, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating aws connector rows: %w", err)
+	}
+
+	registered := 0
+	for _, p := range toRegister {
+		_, creds, err := store.Load(ctx, p.tenantID)
+		if err != nil {
+			log.Error("loading aws credentials, skipping this tenant", "tenant_id", p.tenantID, "err", err)
+			continue
+		}
+		scheduler.Register(sentinelconnector.TenantConnector{
+			TenantID:       p.tenantID,
+			ConnectorRowID: p.connectorRowID,
+			Stream:         awsconnector.Stream,
+			Connector:      awsconnector.NewConnectorForTenant(p.tenantID, stsClient, creds, sqsBaseEndpoint),
+		})
+		registered++
+	}
+	log.Info("registered aws connectors", "registrations", registered)
 	return nil
 }
 

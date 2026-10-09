@@ -91,6 +91,8 @@ Brings up, with health checks gating startup order:
 | SeaweedFS S3 | 8333 | `localhost:8333` | Raw archive and cold tier (`sentineldev` / `sentineldev`) |
 | SeaweedFS master | 9333 | <http://localhost:9333> | Cluster status UI |
 | SeaweedFS filer | 8888 | <http://localhost:8888> | Browsing stored objects |
+| ElasticMQ SQS | 9324 | `localhost:9324` | P7-02: a real local SQS-protocol server for the AWS CloudTrail connector |
+| ElasticMQ statistics | 9325 | <http://localhost:9325> | Statistics API / UI — also what the healthcheck polls, since the SQS port itself only answers signed requests |
 | Jaeger UI | 16686 | <http://localhost:16686> | Distributed traces |
 | OTLP gRPC | 4317 | `localhost:4317` | otel-collector's trace/metric ingest — every service points here, never at Jaeger or Prometheus directly |
 | OTLP HTTP | 4318 | `localhost:4318` | Same, over HTTP |
