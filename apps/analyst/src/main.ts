@@ -20,6 +20,7 @@ import { purgeExpiredTranscripts } from '@sentinel/db';
 import { generateDailyDigests } from './digest.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import http from 'node:http';
 import { PermanentError } from './retry.js';
 
 function envOr(key: string, fallback: string): string {
@@ -120,6 +121,23 @@ async function main(): Promise<void> {
   await worker.start();
   logger.info({}, 'analyst worker started');
 
+  // P7-06: this worker has no HTTP surface of its own (it's a pure
+  // Kafka consumer) — mirrors services/detect/cmd/detect/main.go's own
+  // identical reasoning for adding a tiny embedded health server
+  // purely for Kubernetes liveness/readiness probes, since "the
+  // process is running" is otherwise invisible to anything outside it.
+  const healthServer = http.createServer((req, res) => {
+    if (req.url === '/health' || req.url === '/ready') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const healthPort = Number(envOr('ANALYST_HEALTH_PORT', '8105'));
+  healthServer.listen(healthPort, () => logger.info({ port: healthPort }, 'analyst health server listening'));
+
   // P4-11 AC3: "subject to retention policy" — a fixed daily sweep,
   // the same `setInterval`-based shape this file's own dev-facing
   // periodic tasks use (mirrors cmd/correlate/main.go's own
@@ -152,6 +170,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'draining in-flight investigations before exit');
     clearInterval(purgeTimer);
     clearInterval(digestTimer);
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     await worker.stop();
     await disconnect();
     await ch.close();
