@@ -26,6 +26,7 @@ import (
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelenrich"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelobs"
 	"github.com/ajeetsingh272/ai-security-analyst/go/sentinelstream"
+	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/customerrules"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/detectgen"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/dispatch"
 	"github.com/ajeetsingh272/ai-security-analyst/services/detect/internal/hotfix"
@@ -191,6 +192,55 @@ func main() {
 	hotfixLoader := hotfix.NewLoader(hotfix.NewPostgresSource(pgPool), log)
 	go hotfixLoader.Run(ctx, 30*time.Second)
 
+	// P7-10/ADR-0012: the tenant-self-service customer-rule path —
+	// entirely separate from the compiled corpus and from hotfixLoader
+	// above, by design (ADR-0012 §5). customerRulesActivator validates
+	// and fixture-gates newly submitted rules; customerRulesLoader
+	// refreshes the active, already-gated set customerRulesWorker
+	// actually evaluates, under its OWN Kafka consumer group so a slow
+	// or misbehaving customer rule can never add latency to this
+	// process's own compiled-corpus worker above.
+	customerRulesStore := customerrules.NewPostgresActivatorStore(pgPool)
+	customerRulesActivator := customerrules.NewActivator(customerRulesStore, log)
+	go customerRulesActivator.Run(ctx, 30*time.Second)
+
+	customerRulesLoader := customerrules.NewLoader(customerrules.NewPostgresSource(pgPool), log)
+	go customerRulesLoader.Run(ctx, 30*time.Second)
+
+	customerRulesTracker := customerrules.NewSuspensionTracker(customerRulesStore, log)
+
+	customerRulesGroup := envOr("CUSTOMER_RULES_CONSUMER_GROUP", "detect-customer-rules")
+	customerRulesConsumer, err := kgo.NewClient(
+		kgo.SeedBrokers(envOr("REDPANDA_BROKERS", "localhost:19092")),
+		kgo.ConsumeTopics(sentinelstream.EventsNormalized),
+		kgo.ConsumerGroup(customerRulesGroup),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		log.Error("creating customer-rules kafka consumer client", "err", err)
+		os.Exit(1)
+	}
+	defer customerRulesConsumer.Close()
+
+	// producerClient (defined above, for the compiled-corpus worker) is
+	// reused here deliberately — producing is safe for concurrent use
+	// across goroutines, and a second TCP connection set to the same
+	// brokers for the same purpose would be pure overhead, not
+	// additional safety.
+	customerRulesWorker := customerrules.New(customerRulesLoader, customerRulesTracker, customerRulesConsumer, producerClient, customerrules.Options{
+		Group: customerRulesGroup,
+		Log:   log,
+	})
+	customerRulesWorkerDone := make(chan struct{})
+	go func() {
+		defer close(customerRulesWorkerDone)
+		if err := customerRulesWorker.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Error("customer-rules worker stopped unexpectedly", "err", err)
+			stop()
+		}
+	}()
+
 	w := worker.New(tree, consumerClient, producerClient, worker.Options{
 		Group:              group,
 		Log:                log,
@@ -307,6 +357,11 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil {
 		log.Error("http shutdown", "err", err)
+	}
+	select {
+	case <-customerRulesWorkerDone:
+	case <-shutdown.Done():
+		log.Error("customer-rules worker did not stop within the shutdown deadline")
 	}
 	select {
 	case <-workerDone:

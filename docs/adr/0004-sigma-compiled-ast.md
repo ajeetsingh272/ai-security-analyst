@@ -1,8 +1,12 @@
 # ADR-0004: Compile Sigma rules to a Go AST at build time
 
-- **Status:** Accepted
+- **Status:** Accepted (partially superseded — see below)
 - **Date:** 2026-10-02
 - **Phase:** P2
+- **Superseded by:** ADR-0012, for customer-authored rules only. This ADR's decision —
+  platform-authored rules are compiled to Go at build time — is unchanged and still governs
+  the reviewed ~150-rule corpus. ADR-0012 answers the "Revisit when" trigger below for a
+  separate class of rule this ADR never covered.
 
 ## Context
 

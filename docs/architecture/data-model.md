@@ -36,6 +36,7 @@ none of them has to be taken on trust:
 | `cases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connector_cursors` | NOT NULL | yes | yes | `tenant_isolation` |
 | `connectors` | NOT NULL | yes | yes | `tenant_isolation` |
+| `customer_rules` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entities` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_aliases` | NOT NULL | yes | yes | `tenant_isolation` |
 | `entity_criticality` | NOT NULL | yes | yes | `tenant_isolation` |
@@ -528,6 +529,53 @@ END) DESC, score DESC)`
 
 - `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 - `sentinel_jobs`: SELECT
+
+### `customer_rules`
+
+| Column | Type | Null | Default |
+|---|---|---|---|
+| `id` | `uuid` | no | `gen_random_uuid()` |
+| `tenant_id` | `uuid` | no | — |
+| `rule_id` | `text` | no | — |
+| `rule_title` | `text` | no | — |
+| `rule_yaml` | `text` | no | — |
+| `positive_fixture` | `jsonb` | no | — |
+| `negative_fixture` | `jsonb` | no | — |
+| `status` | `text` | no | `'pending_validation'::text` |
+| `rejection_reason` | `text` | yes | — |
+| `consecutive_timeout_count` | `integer` | no | `0` |
+| `created_by` | `uuid` | no | — |
+| `created_at` | `timestamptz` | no | `now()` |
+| `validated_at` | `timestamptz` | yes | — |
+| `updated_at` | `timestamptz` | no | `now()` |
+
+**Primary key**
+
+- `customer_rules_pkey` — `PRIMARY KEY (id)`
+
+**Foreign keys**
+
+- `customer_rules_created_by_fkey` — `FOREIGN KEY (created_by) REFERENCES users(id)`
+- `customer_rules_tenant_id_fkey` — `FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE`
+
+**Checks**
+
+- `customer_rules_status_check` — `CHECK ((status = ANY (ARRAY['pending_validation'::text, 'active'::text, 'rejected'::text, 'suspended_resource_limit'::text, 'disabled'::text])))`
+
+**Indexes**
+
+- `idx_customer_rules_pending` — `CREATE INDEX idx_customer_rules_pending ON public.customer_rules USING btree (status) WHERE (status = 'pending_validation'::text)`
+- `idx_customer_rules_tenant_status` — `CREATE INDEX idx_customer_rules_tenant_status ON public.customer_rules USING btree (tenant_id, status)`
+
+**Row-level security**
+
+- enabled: yes · forced: yes
+- policy `tenant_isolation` (permissive, ALL, to public)
+  - `USING (tenant_id = (current_setting('app.tenant_id'::text, true))::uuid)`
+
+**Grants**
+
+- `sentinel_app`: DELETE, INSERT, SELECT, UPDATE
 
 ### `entities`
 
