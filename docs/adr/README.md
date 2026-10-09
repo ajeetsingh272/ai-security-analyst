@@ -23,7 +23,7 @@ no downsides has not been thought through.
 | [0001](./0001-monorepo-polyglot.md) | Polyglot monorepo: TypeScript product plane, Go data plane | Accepted | P0 |
 | [0002](./0002-ocsf-event-schema.md) | OCSF as the canonical normalised event schema | Accepted | P1 |
 | [0003](./0003-redpanda-over-kafka.md) | Redpanda as the stream transport | Accepted | P1 |
-| [0004](./0004-sigma-compiled-ast.md) | Compile Sigma rules to a Go AST at build time | Accepted | P2 |
+| [0004](./0004-sigma-compiled-ast.md) | Compile Sigma rules to a Go AST at build time | Accepted (partially superseded by 0012) | P2 |
 | [0005](./0005-clickhouse-event-store.md) | ClickHouse as the event store, Postgres as the control plane | Accepted | P1 |
 | [0006](./0006-llm-tiering-and-grounding.md) | Tiered LLM routing with a deterministic grounding validator | Accepted | P4 |
 | [0007](./0007-approval-tokens-and-audit.md) | Signed single-use approval tokens and a hash-chained audit log | Accepted | P5 |
@@ -31,6 +31,7 @@ no downsides has not been thought through.
 | [0009](./0009-sql-owns-schema-drizzle-generated.md) | Hand-written SQL owns the schema; the typed layer is generated from it | Accepted | P0 |
 | [0010](./0010-checkpoint-after-kafka-ack.md) | Cursors commit only after durable Kafka acknowledgement | Accepted | P1 |
 | [0011](./0011-entity-resolution-alias-graph.md) | Entity resolution via co-occurring aliases, with a dedicated merge audit trail | Accepted | P3 |
+| [0012](./0012-customer-rule-sandbox.md) | A separate, sandboxed evaluation path for customer-authored rules | Accepted | P7 |
 
 ## Writing a new ADR
 

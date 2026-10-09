@@ -72,6 +72,13 @@ export {
   type CreateHotfixRuleInput,
 } from './repositories/hotfix-rules-repository.js';
 export {
+  CustomerRulesRepository,
+  CustomerRuleCapExceededError,
+  type CustomerRuleRow,
+  type CustomerRuleStatus,
+  type CreateCustomerRuleInput,
+} from './repositories/customer-rules-repository.js';
+export {
   AuditLogWriter,
   writeAuditEntryTx,
   type ActorType,

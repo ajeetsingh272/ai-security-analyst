@@ -30,6 +30,7 @@ import { awsConnectorRoutes, awsExternalIdSecretFromEnv } from './routes/aws-con
 import { azureConnectorRoutes } from './routes/azure-connector.js';
 import { suppressionsRoutes } from './routes/suppressions.js';
 import { hotfixRulesRoutes, opsTenantIdFromEnv } from './routes/hotfix-rules.js';
+import { customerRulesRoutes } from './routes/customer-rules.js';
 import { opsRoutes } from './routes/ops.js';
 import { pilotRoutes } from './routes/pilot.js';
 import { feedbackRoutes } from './routes/feedback.js';
@@ -164,6 +165,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(azureConnectorRoutes, { pool });
   await app.register(suppressionsRoutes, { pool });
   await app.register(hotfixRulesRoutes, { pool, opsTenantId });
+  await app.register(customerRulesRoutes, { pool });
   await app.register(opsRoutes, { pool, opsTenantId });
   await app.register(pilotRoutes, { pool, opsTenantId });
   await app.register(feedbackRoutes, { pool });
